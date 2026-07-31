@@ -59,7 +59,7 @@ const Segment = React.forwardRef<
 			>
 				<TabsPrimitive.List
 					className={cn(
-						"inline-flex min-h-10 h-auto w-full items-center justify-center rounded-md bg-slate-100 p-1 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
+						"flex h-10 w-full min-w-0 items-center justify-center rounded-md bg-slate-100 p-1 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
 						disabled && "opacity-50 pointer-events-none",
 					)}
 				>
@@ -76,7 +76,7 @@ const Segment = React.forwardRef<
 								disabled={isOptionDisabled}
 								aria-label={accessibleLabel}
 								className={cn(
-									"group inline-flex flex-1 items-center justify-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium ring-offset-white transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-white data-[state=active]:text-slate-950 data-[state=active]:shadow-sm dark:ring-offset-slate-950 dark:focus-visible:ring-slate-300 dark:data-[state=active]:bg-slate-950 dark:data-[state=active]:text-slate-50",
+									"group inline-flex min-w-0 flex-1 basis-0 items-center justify-center overflow-hidden whitespace-nowrap rounded-sm px-2 py-1.5 text-sm font-medium ring-offset-white transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-white data-[state=active]:text-slate-950 data-[state=active]:shadow-sm dark:ring-offset-slate-950 dark:focus-visible:ring-slate-300 dark:data-[state=active]:bg-slate-950 dark:data-[state=active]:text-slate-50",
 									"flex items-center gap-2",
 									option.tooltip && "w-full",
 									option.disabled && "opacity-50 cursor-not-allowed",
@@ -85,7 +85,7 @@ const Segment = React.forwardRef<
 								{showDots && (
 									<div
 										className={cn(
-											"w-3 h-3 rounded-full border-2 transition-all",
+											"h-3 w-3 shrink-0 rounded-full border-2 transition-all",
 											"border-slate-400 bg-transparent",
 											"dark:border-slate-500",
 											value === option.value &&
@@ -95,9 +95,9 @@ const Segment = React.forwardRef<
 									/>
 								)}
 								{option.icon && (
-									<span className="flex-shrink-0">{option.icon}</span>
+									<span className="shrink-0">{option.icon}</span>
 								)}
-								<span>
+								<span className="min-w-0 truncate" title={accessibleLabel}>
 									{option.label}
 									{option.status ? (
 										<sup className="ml-0.5">
@@ -123,7 +123,7 @@ const Segment = React.forwardRef<
 								<TooltipProvider key={option.value} delayDuration={200}>
 									<Tooltip>
 										<TooltipTrigger asChild>
-											<span className="flex flex-1">{trigger}</span>
+											<span className="flex min-w-0 flex-1 basis-0">{trigger}</span>
 										</TooltipTrigger>
 										<TooltipContent
 											side="top"

@@ -1,19 +1,9 @@
 use super::*;
-use crate::core::capability::naming::{NamingKind, resolve_capability_route};
 use crate::mcper::builtin::ClientBuiltinContext;
-use futures::StreamExt;
 use rmcp::ErrorData as McpError;
 use rmcp::model::{GetPromptRequestParams, GetPromptResult, ListPromptsResult, PaginatedRequestParams};
 use rmcp::service::RequestContext;
 use std::collections::HashSet;
-
-fn builtin_prompt_allowed(
-    config_mode: Option<&str>,
-    prompt_name: &str,
-) -> bool {
-    let _ = (config_mode, prompt_name);
-    false
-}
 
 pub(super) async fn list_prompts(
     server: &ProxyServer,
@@ -21,144 +11,16 @@ pub(super) async fn list_prompts(
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<ListPromptsResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
-    let unify_mode = matches!(client.config_mode.as_deref(), Some("unify"));
-    let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
-        server.database.clone(),
-        server.profile_service.clone(),
-    );
-    let snapshot = vis
-        .resolve_snapshot_for_client(&client)
-        .await
-        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-    let visible_server_ids = snapshot.server_ids.iter().cloned().collect::<HashSet<_>>();
-    let unify_direct_exposure_eligible_server_ids = if unify_mode {
-        if let Some(db) = &server.database {
-            crate::core::proxy::server::load_unify_direct_exposure_eligible_server_ids(db).await?
-        } else {
-            HashSet::new()
-        }
-    } else {
-        HashSet::new()
-    };
-    let mut prompts: Vec<rmcp::model::Prompt> = Vec::new();
-    let mut aggregate = crate::core::capability::aggregate::AggregateListStatus::new("prompts");
-
-    if let Some(db) = &server.database {
-        let enabled_servers: Vec<(String, String)> = sqlx::query_as(
-            r#"
-            SELECT sc.id, sc.name
-            FROM server_config sc
-            WHERE sc.enabled = 1
-            ORDER BY sc.name, sc.id
-            "#,
-        )
-        .fetch_all(&db.pool)
-        .await
-        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
-
-        let pool = &server.connection_pool;
-
-        let mut tasks = Vec::new();
-        for (server_id, server_name) in enabled_servers {
-            if !visible_server_ids.contains(&server_id) {
-                continue;
-            }
-            let ctx = crate::core::capability::runtime::ListCtx {
-                capability: crate::core::capability::CapabilityType::Prompts,
-                server_id: server_id.clone(),
-                refresh: Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
-                timeout: Some(std::time::Duration::from_secs(10)),
-                validation_session: None,
-                runtime_identity: client.runtime_identity(),
-                connection_selection: client.connection_selection(server_id.clone()),
-                visibility_snapshot: Some(std::sync::Arc::new(snapshot.clone())),
-                name_domain: crate::core::capability::runtime::NameDomain::External,
-            };
-            let pool = pool.clone();
-            let db = db.clone();
-            let server_name_cloned = server_name.clone();
-            tasks.push(async move {
-                let service = crate::core::capability::read_service::CapabilityReadService::from_runtime(db, pool);
-                let prompts = service
-                    .list(&ctx)
-                    .await
-                    .map_err(|error| error.to_string())
-                    .and_then(|result| {
-                        result
-                            .items
-                            .into_prompts()
-                            .ok_or_else(|| "Prompt listing returned a different capability kind".to_string())
-                    });
-                (server_id, server_name_cloned, prompts)
-            });
-        }
-
-        for (server_id, server_name, result) in futures::stream::iter(tasks)
-            .buffer_unordered(crate::core::capability::facade::concurrency_limit())
-            .collect::<Vec<_>>()
-            .await
-        {
-            let prompt_batch = match result {
-                Ok(prompt_batch) => prompt_batch,
-                Err(error) => {
-                    aggregate.record_failure(&server_id, &server_name, error);
-                    continue;
-                }
-            };
-            let server_prompts = async {
-                if !unify_mode {
-                    return Ok(prompt_batch);
-                }
-                let mut exposed = Vec::new();
-                for prompt in prompt_batch {
-                    let raw_prompt_name = crate::core::proxy::server::resolve_direct_surface_value(
-                        NamingKind::Prompt,
-                        &server_id,
-                        prompt.name.as_ref(),
-                    )
-                    .await?;
-                    if crate::core::proxy::server::unify_directly_exposed_prompt_allowed(
-                        client.unify_workspace.as_ref(),
-                        &unify_direct_exposure_eligible_server_ids,
-                        &server_id,
-                        raw_prompt_name.as_ref(),
-                    ) {
-                        exposed.push(prompt);
-                    }
-                }
-                Ok::<_, anyhow::Error>(exposed)
-            }
-            .await;
-            match server_prompts {
-                Ok(server_prompts) => {
-                    aggregate.record_success();
-                    prompts.extend(server_prompts);
-                }
-                Err(error) => aggregate.record_failure(&server_id, &server_name, error),
-            }
-        }
-    }
-
-    prompts = vis.filter_prompts_with_snapshot(&snapshot, prompts);
-
-    let builtin_prompts = server.builtin_services.prompts();
-    tracing::debug!("Including {} builtin service prompts", builtin_prompts.len());
-    prompts.extend(
-        builtin_prompts
-            .into_iter()
-            .filter(|prompt| builtin_prompt_allowed(client.config_mode.as_deref(), prompt.name.as_ref())),
-    );
-    aggregate
-        .finish_for_result(!prompts.is_empty())
-        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
-
-    // Apply pagination
-    let page = server.paginator.paginate_prompts(&_request, prompts)?;
+    let surface = server.load_active_surface(&client).await?;
+    let page = server.paginator.paginate_prompts(&_request, surface.prompts())?;
 
     tracing::info!(
         total = page.items.len(),
         has_next = page.next_cursor.is_some(),
-        "Proxy listed prompts"
+        consumer_id = %surface.consumer_id,
+        publication_id = %surface.publication_id,
+        generation = surface.generation,
+        "Proxy listed prompts from active Surface publication"
     );
 
     Ok(ListPromptsResult {
@@ -174,7 +36,14 @@ pub(super) async fn get_prompt(
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<GetPromptResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
-    let unify_mode = matches!(client.config_mode.as_deref(), Some("unify"));
+    let surface_entry = server
+        .require_active_surface_entry(
+            &client,
+            mcpmate_capability_store::CapabilityKind::Prompts,
+            request.name.as_ref(),
+        )
+        .await?;
+    let is_builtin = surface_entry.source_server_id == mcpmate_capability_store::BUILTIN_CAPABILITY_SOURCE_ID;
     tracing::debug!("Getting prompt: {}", request.name);
 
     let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
@@ -195,7 +64,7 @@ pub(super) async fn get_prompt(
         unify_workspace: client.unify_workspace.clone(),
     };
 
-    if builtin_prompt_allowed(client.config_mode.as_deref(), request.name.as_ref()) {
+    if is_builtin {
         if let Some(result) = server
             .builtin_services
             .get_prompt_with_context(&request, Some(&builtin_context))
@@ -205,12 +74,19 @@ pub(super) async fn get_prompt(
         }
     }
 
-    let route = resolve_capability_route(NamingKind::Prompt, &request.name)
+    let server_filter = surface_entry.source_server_id;
+    let lookup_name = surface_entry.upstream_key;
+    let server_name: String = sqlx::query_scalar("SELECT name FROM server_config WHERE id = ?")
+        .bind(&server_filter)
+        .fetch_one(
+            &server
+                .database
+                .as_ref()
+                .expect("database required by Surface reader")
+                .pool,
+        )
         .await
-        .map_err(|error| McpError::internal_error(format!("Failed to resolve external prompt name: {error}"), None))?;
-    let server_filter = route.server_id;
-    let server_name = route.server_name;
-    let lookup_name = route.upstream_value;
+        .map_err(|error| McpError::internal_error(format!("Failed to resolve pinned prompt source: {error}"), None))?;
     let canonical_name = request.name.clone();
     let mut filter = HashSet::new();
     filter.insert(server_filter.clone());
@@ -218,55 +94,12 @@ pub(super) async fn get_prompt(
         crate::core::capability::facade::build_prompt_mapping_filtered(&server.connection_pool, Some(&filter))
             .await
             .map_err(|error| McpError::internal_error(error.to_string(), None))?;
-    if !prompt_mapping.contains_key(&lookup_name) {
+    if requires_live_prompt_mapping(Some(&server_filter)) && !prompt_mapping.contains_key(&lookup_name) {
         return Err(McpError::invalid_params(
             format!(
                 "Prompt '{}' is not available from its routed upstream server",
                 canonical_name
             ),
-            None,
-        ));
-    }
-
-    if unify_mode {
-        let Some(db) = &server.database else {
-            return Err(McpError::invalid_params(
-                "Unify prompt direct exposure requires database-backed server metadata".to_string(),
-                None,
-            ));
-        };
-        let eligible_server_ids =
-            crate::core::proxy::server::load_unify_direct_exposure_eligible_server_ids(db).await?;
-        if !crate::core::proxy::server::unify_directly_exposed_prompt_allowed(
-            client.unify_workspace.as_ref(),
-            &eligible_server_ids,
-            &server_filter,
-            lookup_name.as_ref(),
-        ) {
-            return Err(McpError::invalid_params(
-                format!("Prompt '{}' is not directly exposed for this client", canonical_name),
-                None,
-            ));
-        }
-    }
-
-    let snapshot = vis
-        .resolve_snapshot_for_client(&client)
-        .await
-        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-    if let Err(error) = vis
-        .assert_prompt_allowed_with_snapshot(&snapshot, &canonical_name)
-        .await
-    {
-        tracing::warn!(
-            prompt = %canonical_name,
-            client_id = %client.client_id,
-            profile_id = ?client.profile_id,
-            error = %error,
-            "ProxyServer::get_prompt denied by visibility policy"
-        );
-        return Err(McpError::invalid_params(
-            format!("Prompt '{}' is not available for this client", canonical_name),
             None,
         ));
     }
@@ -305,11 +138,26 @@ pub(super) async fn get_prompt(
                     &server_filter,
                     mcpmate_capability_store::CapabilityKind::Prompts,
                     None,
-                    &e.to_string(),
+                    &e,
                 )
                 .await;
             }
             Err(McpError::internal_error(e.to_string(), None))
         }
+    }
+}
+
+fn requires_live_prompt_mapping(target_server_id: Option<&str>) -> bool {
+    target_server_id.is_none()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::requires_live_prompt_mapping;
+
+    #[test]
+    fn pinned_prompt_route_does_not_require_a_warm_mapping() {
+        assert!(!requires_live_prompt_mapping(Some("server-a-id")));
+        assert!(requires_live_prompt_mapping(None));
     }
 }

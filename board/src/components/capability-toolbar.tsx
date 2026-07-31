@@ -51,24 +51,38 @@ type CapabilityToolbarProps = {
 	action?: ReactNode;
 	className?: string;
 	containedFocus?: boolean;
+	/** Use h-8 controls to align with compact bulk toolbars. */
+	compact?: boolean;
 };
 
-const compactDropdownTriggerClass =
-	"relative flex h-9 w-full min-w-9 items-center rounded-md border border-input bg-background px-2 pr-8 text-left text-sm ring-offset-background transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2";
+function getCompactDropdownTriggerClass(compact: boolean) {
+	return cn(
+		"relative flex w-full min-w-9 items-center rounded-md border border-input bg-background px-2 pr-8 text-left text-sm ring-offset-background transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+		compact ? "h-8" : "h-9",
+	);
+}
+
+function getCompactSelectTriggerClass(compact: boolean) {
+	return cn(
+		"relative w-full min-w-9 px-2 pr-8 [&>span]:min-w-0 [&>span]:truncate [&>svg]:pointer-events-none [&>svg]:absolute [&>svg]:right-2.5 [&>svg]:top-1/2 [&>svg]:-translate-y-1/2",
+		compact ? "h-8" : "h-9",
+	);
+}
+
 const containedFocusClass =
 	"focus:ring-inset focus:ring-offset-0 focus-visible:ring-inset focus-visible:ring-offset-0";
 const compactDropdownLabelClass = "min-w-0 flex-1 truncate";
 const compactDropdownIconClass =
 	"pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 shrink-0 opacity-50";
-const compactSelectTriggerClass =
-	"relative h-9 w-full min-w-9 px-2 pr-8 [&>span]:min-w-0 [&>span]:truncate [&>svg]:pointer-events-none [&>svg]:absolute [&>svg]:right-2.5 [&>svg]:top-1/2 [&>svg]:-translate-y-1/2";
 
 function CapabilityToolbarMultiSelect({
 	filter,
 	containedFocus,
+	compact = false,
 }: {
 	filter: CapabilityToolbarMultiFilter;
 	containedFocus?: boolean;
+	compact?: boolean;
 }) {
 	return (
 		<DropdownMenu>
@@ -77,7 +91,7 @@ function CapabilityToolbarMultiSelect({
 					type="button"
 					title={filter.label}
 					className={cn(
-						compactDropdownTriggerClass,
+						getCompactDropdownTriggerClass(compact),
 						containedFocus && containedFocusClass,
 					)}
 				>
@@ -121,16 +135,18 @@ function CapabilityToolbarMultiSelect({
 function CapabilityToolbarSingleSelect({
 	filter,
 	containedFocus,
+	compact = false,
 }: {
 	filter: CapabilityToolbarSingleFilter;
 	containedFocus?: boolean;
+	compact?: boolean;
 }) {
 	return (
 		<Select value={filter.value} onValueChange={filter.onValueChange}>
 			<SelectTrigger
 				title={filter.label}
 				className={cn(
-					compactSelectTriggerClass,
+					getCompactSelectTriggerClass(compact),
 					containedFocus && containedFocusClass,
 				)}
 			>
@@ -157,6 +173,7 @@ export function CapabilityToolbar({
 	action,
 	className,
 	containedFocus = false,
+	compact = false,
 }: CapabilityToolbarProps) {
 	const gridColumns = [
 		"minmax(8rem,2fr)",
@@ -180,22 +197,29 @@ export function CapabilityToolbar({
 				placeholder={searchPlaceholder}
 				value={searchValue}
 				onChange={(event) => onSearchChange(event.target.value)}
-				className={cn("h-9 min-w-0", containedFocus && containedFocusClass)}
+				className={cn(
+					"min-w-0",
+					compact ? "h-8" : "h-9",
+					containedFocus && containedFocusClass,
+				)}
 			/>
 			{serverFilter ? (
 				<CapabilityToolbarMultiSelect
 					filter={serverFilter}
 					containedFocus={containedFocus}
+					compact={compact}
 				/>
 			) : null}
 			<CapabilityToolbarMultiSelect
 				filter={kindFilter}
 				containedFocus={containedFocus}
+				compact={compact}
 			/>
 			{statusFilter ? (
 				<CapabilityToolbarSingleSelect
 					filter={statusFilter}
 					containedFocus={containedFocus}
+					compact={compact}
 				/>
 			) : null}
 			{action ? (

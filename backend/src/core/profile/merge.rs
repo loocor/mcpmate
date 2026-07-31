@@ -54,9 +54,10 @@ impl ProfileMerger {
             let tools_any: i64 = sqlx::query_scalar(
                 r#"
                 SELECT COUNT(1)
-                FROM profile_tool cst
-                JOIN profile cs ON cst.profile_id = cs.id
-                WHERE cs.is_active = 1
+                FROM profile_capability_refs pcr
+                JOIN capability_refs cr ON cr.ref_id = pcr.ref_id
+                JOIN profile p ON pcr.profile_id = p.id
+                WHERE p.is_active = 1 AND cr.kind = 'tools'
                 "#,
             )
             .fetch_one(&self.db.pool)
@@ -79,9 +80,10 @@ impl ProfileMerger {
             let res_any: i64 = sqlx::query_scalar(
                 r#"
                 SELECT COUNT(1)
-                FROM profile_resource csr
-                JOIN profile cs ON csr.profile_id = cs.id
-                WHERE cs.is_active = 1
+                FROM profile_capability_refs pcr
+                JOIN capability_refs cr ON cr.ref_id = pcr.ref_id
+                JOIN profile p ON pcr.profile_id = p.id
+                WHERE p.is_active = 1 AND cr.kind = 'resources'
                 "#,
             )
             .fetch_one(&self.db.pool)
@@ -112,9 +114,10 @@ impl ProfileMerger {
             let pro_any: i64 = sqlx::query_scalar(
                 r#"
                 SELECT COUNT(1)
-                FROM profile_prompt csp
-                JOIN profile cs ON csp.profile_id = cs.id
-                WHERE cs.is_active = 1
+                FROM profile_capability_refs pcr
+                JOIN capability_refs cr ON cr.ref_id = pcr.ref_id
+                JOIN profile p ON pcr.profile_id = p.id
+                WHERE p.is_active = 1 AND cr.kind = 'prompts'
                 "#,
             )
             .fetch_one(&self.db.pool)

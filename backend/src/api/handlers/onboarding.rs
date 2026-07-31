@@ -354,7 +354,7 @@ mod tests {
     use crate::clients::{
         ClientConfigService,
         service::settings::ActiveClientSettingsUpdate,
-        source::{ClientConfigSource, DbTemplateSource, FileTemplateSource, TemplateRoot},
+        source::{FileTemplateSource, TemplateRoot, db_client_config_source},
     };
     use crate::common::constants::database::tables;
     use crate::config::{
@@ -428,6 +428,9 @@ mod tests {
         initialize_server_tables(&db_pool).await.expect("init server tables");
         initialize_profile_tables(&db_pool).await.expect("init profile tables");
         initialize_client_table(&db_pool).await.expect("init client table");
+        crate::config::database::initialize_capability_catalog(&db_pool)
+            .await
+            .expect("init capability catalog");
         initialize_system_settings(&db_pool)
             .await
             .expect("init system settings");
@@ -451,12 +454,14 @@ mod tests {
             .await
             .expect("seed runtime rows");
 
-        let runtime_source: Arc<dyn ClientConfigSource> =
-            Arc::new(DbTemplateSource::new(Arc::new(db_pool.clone())).expect("runtime source"));
+        let pool = Arc::new(db_pool);
         let client_service = Arc::new(
-            ClientConfigService::with_source(Arc::new(db_pool.clone()), runtime_source)
-                .await
-                .expect("client service"),
+            ClientConfigService::with_source(
+                pool.clone(),
+                db_client_config_source(pool.clone()).expect("runtime source"),
+            )
+            .await
+            .expect("client service"),
         );
 
         let state = Arc::new(AppState {
@@ -471,11 +476,12 @@ mod tests {
             audit_database: None,
             audit_service: None,
             config_application_state: Arc::new(ConfigApplicationStateManager::new()),
-            unified_query: None,
             client_service: Some(client_service),
             inspector_calls: Arc::new(InspectorCallRegistry::new()),
             inspector_sessions: Arc::new(InspectorSessionManager::new()),
-            oauth_manager: RwLock::new(Some(Arc::new(crate::core::oauth::OAuthManager::new(db_pool.clone())))),
+            oauth_manager: RwLock::new(Some(Arc::new(crate::core::oauth::OAuthManager::new(
+                pool.as_ref().clone(),
+            )))),
             secret_store: RwLock::new(None),
             secret_store_readiness: RwLock::new(crate::api::routes::unavailable_secret_store_readiness(
                 "test_unavailable",
@@ -485,7 +491,7 @@ mod tests {
         TestContext {
             _temp_dir: temp_dir,
             state,
-            pool: db_pool,
+            pool: pool.as_ref().clone(),
         }
     }
 

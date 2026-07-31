@@ -72,12 +72,15 @@ pub struct ServerManageReq {
     #[schemars(description = "Server ID")]
     pub id: String,
 
-    #[schemars(description = "Server management action: enable|disable")]
+    #[schemars(description = "Server management action: enable|disable|allow_direct_exposure|deny_direct_exposure")]
     pub action: ServerManageAction,
 
     #[serde(default)]
     #[schemars(description = "Whether to sync client configuration")]
     pub sync: bool,
+
+    #[schemars(description = "Exact capability catalog revision set displayed before management")]
+    pub source_revision_set: super::CatalogRevisionSet,
 }
 
 /// Server management action enum
@@ -88,6 +91,10 @@ pub enum ServerManageAction {
     Enable,
     #[schemars(description = "Disable the server")]
     Disable,
+    #[schemars(description = "Allow the server in consumer direct exposure surfaces")]
+    AllowDirectExposure,
+    #[schemars(description = "Remove the server from consumer direct exposure surfaces")]
+    DenyDirectExposure,
 }
 
 impl<'de> serde::Deserialize<'de> for ServerManageAction {
@@ -99,8 +106,10 @@ impl<'de> serde::Deserialize<'de> for ServerManageAction {
         match s.to_ascii_lowercase().as_str() {
             "enable" => Ok(ServerManageAction::Enable),
             "disable" => Ok(ServerManageAction::Disable),
+            "allow_direct_exposure" => Ok(ServerManageAction::AllowDirectExposure),
+            "deny_direct_exposure" => Ok(ServerManageAction::DenyDirectExposure),
             other => Err(serde::de::Error::custom(format!(
-                "invalid server action '{}', allowed: enable|disable (case-insensitive)",
+                "invalid server action '{}', allowed: enable|disable|allow_direct_exposure|deny_direct_exposure (case-insensitive)",
                 other
             ))),
         }
@@ -118,6 +127,14 @@ pub struct ServerCapabilityReq {
     #[serde(default)]
     #[schemars(description = "Refresh strategy: auto|force|cache")]
     pub refresh: Option<ServerRefreshStrategy>,
+}
+
+/// Request to refresh the complete capability catalog for a server.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Request to refresh the complete capability catalog for a server")]
+pub struct ServerCapabilityRefreshReq {
+    #[schemars(description = "Server ID")]
+    pub id: String,
 }
 
 /// Request for a single cached server capability detail.
@@ -298,6 +315,8 @@ pub struct CapabilityKindSummary {
     pub current_available: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_kind: Option<mcpmate_capability_store::KindFailureKind>,
 }
 
 /// Server capability state derived from one durable catalog snapshot.
@@ -332,6 +351,7 @@ mod capability_summary_tests {
             current_count,
             current_available,
             last_error: last_error.map(str::to_string),
+            failure_kind: None,
         }
     }
 
@@ -401,6 +421,23 @@ mod capability_summary_tests {
         assert_eq!(values[4]["revision"], 42);
         assert_eq!(values[4]["observedAt"], "2026-07-20T10:00:00Z");
     }
+
+    #[test]
+    fn capability_summary_serializes_typed_authentication_failure() {
+        let capability = CapabilityKindSummary {
+            declaration: DeclarationState::Unknown,
+            inventory: InventoryState::Failed,
+            current_count: 0,
+            current_available: false,
+            last_error: Some("authorization required".to_string()),
+            failure_kind: Some(mcpmate_capability_store::KindFailureKind::AuthRequired),
+        };
+
+        let value = serde_json::to_value(summary(SnapshotState::Unavailable, capability))
+            .expect("serialize capability summary");
+
+        assert_eq!(value["tools"]["failureKind"], "auth_required");
+    }
 }
 
 /// Standard upstream server identity observed during MCP initialize.
@@ -430,7 +467,7 @@ pub struct ServerDetailsData {
     pub enabled: bool,
     /// Is globally enabled (server_config.enabled)
     pub globally_enabled: bool,
-    /// Is enabled in any active profile (profile_server.enabled)
+    /// Is enabled in any active profile through a server relationship.
     pub enabled_in_profile: bool,
     /// Whether this server can be directly exposed in Unify mode
     pub unify_direct_exposure_eligible: bool,
@@ -481,6 +518,8 @@ pub struct ServerDetailsData {
     /// Remediation state for a non-canonical legacy namespace.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub namespace_issue: Option<ServerNamespaceIssue>,
+    /// Exact capability catalog revision set represented by this response.
+    pub source_revision_set: super::CatalogRevisionSet,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -733,6 +772,9 @@ pub struct ServerToolsData {
     pub items: Vec<serde_json::Value>,
     /// Response state
     pub state: String,
+    /// Failure detail when this capability kind is unavailable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub degraded_reason: Option<String>,
     /// Metadata about the response
     pub meta: ServerCapabilityMeta,
 }
@@ -745,6 +787,9 @@ pub struct ServerResourcesData {
     pub items: Vec<serde_json::Value>,
     /// Response state
     pub state: String,
+    /// Failure detail when this capability kind is unavailable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub degraded_reason: Option<String>,
     /// Metadata about the response
     pub meta: ServerCapabilityMeta,
 }
@@ -757,6 +802,9 @@ pub struct ServerResourceTemplatesData {
     pub items: Vec<serde_json::Value>,
     /// Response state
     pub state: String,
+    /// Failure detail when this capability kind is unavailable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub degraded_reason: Option<String>,
     /// Metadata about the response
     pub meta: ServerCapabilityMeta,
 }
@@ -769,6 +817,9 @@ pub struct ServerPromptsData {
     pub items: Vec<serde_json::Value>,
     /// Response state
     pub state: String,
+    /// Failure detail when this capability kind is unavailable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub degraded_reason: Option<String>,
     /// Metadata about the response
     pub meta: ServerCapabilityMeta,
 }
@@ -783,6 +834,45 @@ pub struct ServerCapabilityDetailData {
     pub state: String,
     /// Metadata about the response
     pub meta: ServerCapabilityMeta,
+}
+
+/// Result of refreshing a server's complete capability catalog.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "Server capability catalog refresh result")]
+pub struct ServerCapabilityRefreshData {
+    /// Refreshed server ID.
+    pub server_id: String,
+    /// Current catalog revision after the refresh.
+    pub catalog_revision: i64,
+    /// Whether the refreshed observation changed the semantic catalog.
+    pub catalog_changed: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Clone, Copy, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ServerCapabilityAuthenticationCode {
+    AuthRequired,
+    Unauthorized,
+    Forbidden,
+    InsufficientScope,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Clone)]
+pub struct ServerCapabilityAuthenticationFailure {
+    pub code: ServerCapabilityAuthenticationCode,
+    pub reason: String,
+}
+
+/// All capability kinds for one server after a single discovery pass.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(description = "All capability kinds for one server")]
+pub struct ServerCapabilityListsData {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authentication: Option<ServerCapabilityAuthenticationFailure>,
+    pub tools: ServerToolsData,
+    pub resources: ServerResourcesData,
+    pub prompts: ServerPromptsData,
+    pub resource_templates: ServerResourceTemplatesData,
 }
 
 /// Server prompt arguments response
@@ -1072,6 +1162,9 @@ pub struct ServersImportData {
     /// Detailed error information for failed servers
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_details: Option<HashMap<String, String>>,
+    /// Runtime pool convergence error after records were persisted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_sync_error: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Clone)]
@@ -1133,6 +1226,16 @@ api_resp!(
     ServerCapabilityDetailResp,
     ServerCapabilityDetailData,
     "Server capability detail API response"
+);
+api_resp!(
+    ServerCapabilityRefreshResp,
+    ServerCapabilityRefreshData,
+    "Server capability catalog refresh API response"
+);
+api_resp!(
+    ServerCapabilityListsResp,
+    ServerCapabilityListsData,
+    "All server capability kinds API response"
 );
 api_resp!(ServersImportResp, ServersImportData, "Import servers API response");
 api_resp!(

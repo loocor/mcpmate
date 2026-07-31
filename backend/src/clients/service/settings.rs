@@ -1,17 +1,20 @@
 use super::ClientConfigService;
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
-    CapabilitySource, ClientCapabilityConfig, ClientCapabilityConfigState, ClientConfigFileParse,
-    ClientConfigFileState, ContainerType, FormatRule, UnifyDirectCapabilityIds, UnifyDirectExposureConfig,
-    UnifyDirectExposureDiagnostics, UnifyDirectExposureIntent, UnifyDirectPromptSurface,
-    UnifyDirectPromptSurfaceDiagnostic, UnifyDirectResourceSurface, UnifyDirectResourceSurfaceDiagnostic,
-    UnifyDirectTemplateSurface, UnifyDirectTemplateSurfaceDiagnostic, UnifyDirectToolSurface,
-    UnifyDirectToolSurfaceDiagnostic, canonical_config_transport_key,
+    AttachmentState, CapabilitySource, ClientCapabilityConfig, ClientCapabilityConfigState, ClientConfigFileParse,
+    ClientConfigFileState, ClientConnectionMode, ContainerType, FirstContactBehavior, FormatRule,
+    UnifyDirectCapabilityRefs, UnifyDirectExposureConfig, UnifyDirectExposureDiagnostics, UnifyDirectExposureIntent,
+    UnifyDirectPromptSurface, UnifyDirectPromptSurfaceDiagnostic, UnifyDirectResourceSurface,
+    UnifyDirectResourceSurfaceDiagnostic, UnifyDirectTemplateSurface, UnifyDirectTemplateSurfaceDiagnostic,
+    UnifyDirectToolSurface, UnifyDirectToolSurfaceDiagnostic, UnifyRouteMode, canonical_config_transport_key,
 };
-use crate::clients::service::core::{ClientStateRow, RuntimeClientMetadata};
+use crate::clients::service::core::{ClientStateRow, PersistedTemplateConfig, RuntimeClientMetadata};
 use crate::common::profile::{ProfileRole, ProfileType};
 use crate::config::database::Database;
 use crate::config::models::Profile;
+use crate::core::capability::materializer::{
+    MaterializationCoordinator, MaterializationTrigger, revoke_managed_surface_in_transaction,
+};
 use crate::core::proxy::server::{ClientContext, ClientIdentitySource, ClientTransport};
 use crate::system::paths::get_path_service;
 use serde_json::{Map, Value, json};
@@ -57,16 +60,31 @@ struct UnifyDirectExposureInventory {
     prompts: HashMap<String, HashSet<String>>,
     resources: HashMap<String, HashSet<String>>,
     templates: HashMap<String, HashSet<String>>,
-    tool_ids: HashMap<String, UnifyDirectToolSurface>,
-    prompt_ids: HashMap<String, UnifyDirectPromptSurface>,
-    resource_ids: HashMap<String, UnifyDirectResourceSurface>,
-    template_ids: HashMap<String, UnifyDirectTemplateSurface>,
+    tool_refs: HashMap<String, UnifyDirectToolSurface>,
+    prompt_refs: HashMap<String, UnifyDirectPromptSurface>,
+    resource_refs: HashMap<String, UnifyDirectResourceSurface>,
+    template_refs: HashMap<String, UnifyDirectTemplateSurface>,
+}
+
+struct PreparedCapabilityClientInsert {
+    id: String,
+    display_name: String,
+    config_path: Option<String>,
+    approval_status: &'static str,
+    connection_mode: &'static str,
+    attachment_state: &'static str,
+    template_identifier: Option<String>,
+    persisted_config: PersistedTemplateConfig,
+}
+
+struct PreparedCustomProfile {
+    id: String,
+    name: String,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct ActiveClientSettingsUpdate {
     pub display_name: Option<String>,
-    pub config_mode: Option<String>,
     pub transport: Option<String>,
     pub client_version: Option<String>,
     pub config_file_state: Option<ClientConfigFileState>,
@@ -91,17 +109,9 @@ fn config_file_state_to_connection_mode(state: ClientConfigFileState) -> &'stati
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveClientSettingsResult {
-    pub old_effective_mode: String,
-    pub new_effective_mode: String,
     pub display_name_source: &'static str,
     pub approval_status_source: &'static str,
     pub config_file_state_source: &'static str,
-}
-
-impl ActiveClientSettingsResult {
-    pub fn effective_mode_changed(&self) -> bool {
-        self.old_effective_mode != self.new_effective_mode
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,13 +146,6 @@ fn unify_direct_exposure_references_server(
 
 fn serialize_json<T: serde::Serialize>(value: &T) -> ConfigResult<String> {
     serde_json::to_string(value).map_err(|err| ConfigError::DataAccessError(err.to_string()))
-}
-
-fn retain_known_capability_ids<V>(
-    ids: Vec<String>,
-    valid_ids: &HashMap<String, V>,
-) -> Vec<String> {
-    ids.into_iter().filter(|id| valid_ids.contains_key(id)).collect()
 }
 
 fn can_apply_first_initialize_observation(state: &ClientStateRow) -> ConfigResult<bool> {
@@ -290,12 +293,10 @@ impl ClientConfigService {
         &self,
         explicit_mode: Option<&str>,
     ) -> ConfigResult<String> {
-        match explicit_mode.map(str::trim).filter(|mode| !mode.is_empty()) {
-            Some(mode) => Ok(mode.to_string()),
-            None => crate::config::client::init::resolve_default_client_config_mode(&self.db_pool)
-                .await
-                .map_err(|err| ConfigError::DataAccessError(err.to_string())),
-        }
+        let default_mode = crate::config::client::init::resolve_default_client_config_mode(&self.db_pool)
+            .await
+            .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+        Ok(crate::config::client::init::effective_client_config_mode(explicit_mode, &default_mode).to_string())
     }
 
     pub async fn get_effective_config_mode(
@@ -373,21 +374,18 @@ impl ClientConfigService {
         Ok(())
     }
 
-    /// Update client settings (config_mode, transport, client_version)
-    /// - config_mode: optional, only update if provided
+    /// Update client settings (transport and client_version).
     /// - transport: optional, only update if provided; must be one of: auto, sse, stdio, streamable_http
     /// - client_version: optional, only update if provided
     pub async fn set_client_settings(
         &self,
         identifier: &str,
-        config_mode: Option<String>,
         transport: Option<String>,
         client_version: Option<String>,
     ) -> ConfigResult<()> {
         self.set_active_client_settings(
             identifier,
             ActiveClientSettingsUpdate {
-                config_mode,
                 transport,
                 client_version,
                 ..ActiveClientSettingsUpdate::default()
@@ -404,7 +402,6 @@ impl ClientConfigService {
     ) -> ConfigResult<ActiveClientSettingsResult> {
         tracing::info!(
             client = %identifier,
-            config_mode = ?update.config_mode,
             transport = ?update.transport,
             client_version = ?update.client_version,
             config_file_state = ?update.config_file_state,
@@ -435,13 +432,6 @@ impl ClientConfigService {
             None => (self.resolve_client_name(identifier).await?, "stored"),
         };
         let existing_state = self.fetch_state(identifier).await?;
-        let old_effective_mode = self
-            .resolve_effective_mode_from_explicit(
-                existing_state.as_ref().and_then(|state| state.config_mode.as_deref()),
-            )
-            .await?;
-        let requested_config_mode = update.config_mode.clone();
-
         let raw_config_path = update.config_path.as_deref().map(str::trim);
         let normalized_config_path = raw_config_path.filter(|value| !value.is_empty()).map(str::to_string);
         let clear_config_artifacts = matches!(update.config_file_state, Some(ClientConfigFileState::WithoutConfigFile));
@@ -490,10 +480,6 @@ impl ClientConfigService {
             .await?;
 
         self.update_client_names(identifier, &name).await?;
-
-        if let Some(mode) = update.config_mode {
-            self.update_config_mode(identifier, &mode).await?;
-        }
 
         if let Some(tr) = update.transport {
             self.update_transport(identifier, &tr).await?;
@@ -566,16 +552,15 @@ impl ClientConfigService {
             self.ensure_local_config_target_metadata(identifier).await?;
         }
 
-        let new_effective_mode = self
-            .resolve_effective_mode_from_explicit(
-                requested_config_mode.as_deref().or(Some(old_effective_mode.as_str())),
-            )
-            .await?;
+        self.notify_managed_consumer_surface_bootstrap(
+            identifier,
+            "consumer_registration",
+            format!("register:{identifier}"),
+        )
+        .await?;
 
         tracing::info!(client = %identifier, "set_active_client_settings: complete");
         Ok(ActiveClientSettingsResult {
-            old_effective_mode,
-            new_effective_mode,
             display_name_source,
             approval_status_source,
             config_file_state_source,
@@ -604,34 +589,6 @@ impl ClientConfigService {
         .execute(&*self.db_pool)
         .await
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
-
-        Ok(())
-    }
-
-    /// Update config_mode
-    async fn update_config_mode(
-        &self,
-        identifier: &str,
-        mode: &str,
-    ) -> ConfigResult<()> {
-        tracing::info!(client = %identifier, config_mode = %mode, "Updating config_mode");
-
-        let result =
-            sqlx::query("UPDATE client SET config_mode = ?, updated_at = CURRENT_TIMESTAMP WHERE identifier = ?")
-                .bind(mode)
-                .bind(identifier)
-                .execute(&*self.db_pool)
-                .await
-                .map_err(|e| {
-                    tracing::error!(client = %identifier, error = %e, "Failed to update config_mode");
-                    ConfigError::DataAccessError(e.to_string())
-                })?;
-
-        tracing::info!(
-            client = %identifier,
-            rows_affected = %result.rows_affected(),
-            "config_mode updated"
-        );
 
         Ok(())
     }
@@ -998,7 +955,7 @@ impl ClientConfigService {
                 capability_config.custom_profile_id.as_deref(),
             )
             .await?;
-        let raw_unify_direct_exposure = state.unify_direct_exposure_intent()?;
+        let raw_unify_direct_exposure = self.load_unify_direct_exposure_intent(identifier).await?;
         let resolved = self
             .resolve_unify_direct_exposure_intent(identifier, &capability_config, &raw_unify_direct_exposure)
             .await?;
@@ -1022,13 +979,25 @@ impl ClientConfigService {
             .map(|state| state.unify_direct_exposure))
     }
 
+    pub async fn catalog_revision_set(&self) -> ConfigResult<HashMap<String, i64>> {
+        crate::core::capability::materializer::SurfaceAuthoringLoader::load_catalog_revision_set(&self.db_pool)
+            .await
+            .map_err(|error| ConfigError::DataAccessError(error.to_string()))
+    }
+
     pub async fn update_capability_config_state_and_invalidate(
         &self,
         identifier: &str,
+        config_mode_update: Option<String>,
         capability_source: CapabilitySource,
         selected_profile_ids: Vec<String>,
         unify_direct_exposure_update: Option<UnifyDirectExposureIntent>,
-    ) -> ConfigResult<(ClientCapabilityConfigState, bool)> {
+        source_revision_set: HashMap<String, i64>,
+    ) -> ConfigResult<(
+        ClientCapabilityConfigState,
+        bool,
+        Option<crate::core::capability::materializer::MaterializationCommit>,
+    )> {
         let visibility_service = crate::core::profile::visibility::ProfileVisibilityService::new(
             Some(Arc::new(Database {
                 pool: self.db_pool.as_ref().clone(),
@@ -1052,12 +1021,17 @@ impl ClientConfigService {
             };
 
         let old_state = self.get_capability_config_state(identifier).await?;
-        let effective_mode = self.get_effective_config_mode(identifier).await?;
-        let resolve_unify_workspace = |state: &ClientCapabilityConfigState| {
-            (effective_mode == "unify").then(|| state.unify_direct_exposure.clone())
+        let old_effective_mode = self.get_effective_config_mode(identifier).await?;
+        let new_effective_mode = match config_mode_update.as_deref() {
+            Some(mode) => self.resolve_effective_mode_from_explicit(Some(mode)).await?,
+            None => old_effective_mode.clone(),
+        };
+        let resolve_unify_workspace = |mode: &str, state: &ClientCapabilityConfigState| {
+            (mode == "unify").then(|| state.unify_direct_exposure.clone())
         };
         let old_fingerprint = if let Some(state) = old_state.as_ref() {
-            let context = build_client_context(&effective_mode, resolve_unify_workspace(state));
+            let context =
+                build_client_context(&old_effective_mode, resolve_unify_workspace(&old_effective_mode, state));
             Some(
                 visibility_service
                     .resolve_snapshot_for_client(&context)
@@ -1069,16 +1043,21 @@ impl ClientConfigService {
             None
         };
 
-        let state = self
+        let (state, materialization) = self
             .set_capability_config_state(
                 identifier,
+                config_mode_update,
                 capability_source,
                 selected_profile_ids,
                 unify_direct_exposure_update,
+                source_revision_set,
             )
             .await?;
 
-        let new_context = build_client_context(&effective_mode, resolve_unify_workspace(&state));
+        let new_context = build_client_context(
+            &new_effective_mode,
+            resolve_unify_workspace(&new_effective_mode, &state),
+        );
         let new_fingerprint = visibility_service
             .resolve_snapshot_for_client(&new_context)
             .await
@@ -1103,7 +1082,7 @@ impl ClientConfigService {
             .map(|fingerprint| fingerprint != &new_fingerprint)
             .unwrap_or(has_visible_direct_surface);
 
-        Ok((state, visible_surface_changed))
+        Ok((state, visible_surface_changed, materialization))
     }
 
     pub async fn update_capability_config_and_invalidate(
@@ -1111,10 +1090,18 @@ impl ClientConfigService {
         identifier: &str,
         capability_source: CapabilitySource,
         selected_profile_ids: Vec<String>,
+        source_revision_set: HashMap<String, i64>,
     ) -> ConfigResult<ClientCapabilityConfig> {
-        self.update_capability_config_state_and_invalidate(identifier, capability_source, selected_profile_ids, None)
-            .await
-            .map(|(state, _)| state.capability_config)
+        self.update_capability_config_state_and_invalidate(
+            identifier,
+            None,
+            capability_source,
+            selected_profile_ids,
+            None,
+            source_revision_set,
+        )
+        .await
+        .map(|(state, _, _)| state.capability_config)
     }
 
     pub async fn reconcile_unify_direct_exposure_for_server(
@@ -1130,7 +1117,7 @@ impl ClientConfigService {
             }
 
             let capability_config = row.capability_config()?;
-            let raw_unify_direct_exposure = row.unify_direct_exposure_intent()?;
+            let raw_unify_direct_exposure = self.load_unify_direct_exposure_intent(&identifier).await?;
             let resolved = self
                 .resolve_unify_direct_exposure_intent(&identifier, &capability_config, &raw_unify_direct_exposure)
                 .await?;
@@ -1138,12 +1125,18 @@ impl ClientConfigService {
                 continue;
             }
 
-            let (state, visible_surface_changed) = self
+            let (state, visible_surface_changed, _) = self
                 .update_capability_config_state_and_invalidate(
                     &identifier,
+                    None,
                     capability_config.capability_source,
                     capability_config.selected_profile_ids,
                     None,
+                    crate::core::capability::materializer::SurfaceAuthoringLoader::load_catalog_revision_set(
+                        &self.db_pool,
+                    )
+                    .await
+                    .map_err(|error| ConfigError::DataAccessError(error.to_string()))?,
                 )
                 .await?;
 
@@ -1170,23 +1163,27 @@ impl ClientConfigService {
     async fn set_capability_config_state(
         &self,
         identifier: &str,
+        config_mode_update: Option<String>,
         capability_source: CapabilitySource,
         selected_profile_ids: Vec<String>,
         unify_direct_exposure_update: Option<UnifyDirectExposureIntent>,
-    ) -> ConfigResult<ClientCapabilityConfigState> {
+        source_revision_set: HashMap<String, i64>,
+    ) -> ConfigResult<(
+        ClientCapabilityConfigState,
+        Option<crate::core::capability::materializer::MaterializationCommit>,
+    )> {
         let name = self.resolve_client_name(identifier).await?;
-        self.ensure_state_row_with_name(identifier, &name).await?;
+        let prepared_client = self.prepare_capability_client_insert(identifier, &name).await?;
 
         let selected_profile_ids = self.normalize_selected_profile_ids(capability_source, selected_profile_ids)?;
         self.validate_selected_profile_ids(&selected_profile_ids).await?;
 
-        let custom_profile_id = match capability_source {
+        let prepared_custom_profile = match capability_source {
             CapabilitySource::Activated | CapabilitySource::Profiles => None,
-            CapabilitySource::Custom => Some(self.ensure_custom_profile(identifier).await?),
+            CapabilitySource::Custom => Some(self.prepare_custom_profile(identifier).await?),
         };
-        let custom_profile_missing = self
-            .resolve_custom_profile_missing(capability_source, custom_profile_id.as_deref())
-            .await?;
+        let mut custom_profile_id = prepared_custom_profile.as_ref().map(|profile| profile.id.clone());
+        let custom_profile_missing = false;
         let selected_profile_ids_json = if selected_profile_ids.is_empty() {
             None
         } else {
@@ -1196,13 +1193,10 @@ impl ClientConfigService {
             )
         };
 
-        let existing_unify_direct_exposure = self
-            .fetch_state(identifier)
-            .await?
-            .map(|row| row.unify_direct_exposure_intent())
-            .transpose()?
-            .unwrap_or_default();
-        let requested_unify_direct_exposure = unify_direct_exposure_update.unwrap_or(existing_unify_direct_exposure);
+        let existing_unify_direct_exposure = self.load_unify_direct_exposure_intent(identifier).await?;
+        let requested_unify_direct_exposure = self.normalize_unify_direct_exposure_intent(
+            unify_direct_exposure_update.unwrap_or(existing_unify_direct_exposure),
+        );
         let resolved_unify_direct_exposure = self
             .resolve_unify_direct_exposure_intent(
                 identifier,
@@ -1214,45 +1208,272 @@ impl ClientConfigService {
                 &requested_unify_direct_exposure,
             )
             .await?;
-        let unify_direct_exposure_intent_json =
-            if resolved_unify_direct_exposure.intent == UnifyDirectExposureIntent::default() {
-                None
-            } else {
-                Some(serialize_json(&resolved_unify_direct_exposure.intent)?)
-            };
-
+        let default_config_mode = crate::config::client::init::resolve_default_client_config_mode(&self.db_pool)
+            .await
+            .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+        let mut transaction = self
+            .db_pool
+            .begin()
+            .await
+            .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+        self.ensure_capability_client_in_transaction(&mut transaction, identifier, &name, &prepared_client)
+            .await?;
+        if let Some(prepared_profile) = &prepared_custom_profile {
+            custom_profile_id = Some(
+                self.ensure_custom_profile_in_transaction(&mut transaction, identifier, prepared_profile)
+                    .await?,
+            );
+        }
+        let consumer_id = identifier.to_string();
         sqlx::query(
             r#"
             UPDATE client
-            SET capability_source = ?,
+            SET config_mode = COALESCE(?, config_mode),
+                capability_source = ?,
                 selected_profile_ids = ?,
                 custom_profile_id = ?,
-                unify_direct_exposure_intent = ?,
                 governance_kind = 'active',
                 updated_at = CURRENT_TIMESTAMP
             WHERE identifier = ?
             "#,
         )
+        .bind(config_mode_update.as_deref())
         .bind(capability_source.as_str())
         .bind(selected_profile_ids_json)
         .bind(custom_profile_id.as_deref())
-        .bind(unify_direct_exposure_intent_json)
         .bind(identifier)
-        .execute(&*self.db_pool)
+        .execute(&mut *transaction)
         .await
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+        self.persist_unify_direct_exposure_intent(&mut transaction, &consumer_id, &requested_unify_direct_exposure)
+            .await?;
+        let managed_state: (Option<String>, String) =
+            sqlx::query_as("SELECT config_mode, approval_status FROM client WHERE identifier = ?")
+                .bind(&consumer_id)
+                .fetch_one(&mut *transaction)
+                .await
+                .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+        let effective_config_mode =
+            crate::config::client::init::effective_client_config_mode(managed_state.0.as_deref(), &default_config_mode);
+        let materialization = if managed_state.1 == "approved"
+            && crate::config::client::init::is_managed_client_config_mode(effective_config_mode)
+        {
+            self.materialize_managed_surface_in_transaction(
+                &mut transaction,
+                &consumer_id,
+                &default_config_mode,
+                &MaterializationTrigger::new(
+                    "management_save",
+                    format!("client-capability-config:{consumer_id}"),
+                    source_revision_set,
+                    "client_management",
+                ),
+            )
+            .await
+            .map_err(|error| match error {
+                mcpmate_capability_store::CatalogError::ConcurrencyConflict { .. } => {
+                    ConfigError::ConcurrencyConflict {
+                        details: error.to_string(),
+                    }
+                }
+                _ => ConfigError::DataAccessError(error.to_string()),
+            })?
+        } else {
+            MaterializationCoordinator::new(self.db_pool.as_ref().clone())
+                .verify_catalog_revision_set_in_transaction(&mut transaction, &source_revision_set)
+                .await
+                .map_err(|error| match error {
+                    mcpmate_capability_store::CatalogError::ConcurrencyConflict { .. } => {
+                        ConfigError::ConcurrencyConflict {
+                            details: error.to_string(),
+                        }
+                    }
+                    _ => ConfigError::DataAccessError(error.to_string()),
+                })?;
+            revoke_managed_surface_in_transaction(
+                self.db_pool.as_ref(),
+                &mut transaction,
+                &consumer_id,
+                "client-capability-config",
+            )
+            .await
+            .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+            None
+        };
+        transaction
+            .commit()
+            .await
+            .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
 
-        Ok(ClientCapabilityConfigState {
-            capability_config: ClientCapabilityConfig {
-                capability_source,
-                selected_profile_ids,
-                custom_profile_id,
+        Ok((
+            ClientCapabilityConfigState {
+                capability_config: ClientCapabilityConfig {
+                    capability_source,
+                    selected_profile_ids,
+                    custom_profile_id,
+                },
+                custom_profile_missing,
+                unify_direct_exposure_intent: requested_unify_direct_exposure,
+                unify_direct_exposure: resolved_unify_direct_exposure.config,
+                unify_direct_exposure_diagnostics: resolved_unify_direct_exposure.diagnostics,
             },
-            custom_profile_missing,
-            unify_direct_exposure_intent: resolved_unify_direct_exposure.intent,
-            unify_direct_exposure: resolved_unify_direct_exposure.config,
-            unify_direct_exposure_diagnostics: resolved_unify_direct_exposure.diagnostics,
+            materialization,
+        ))
+    }
+
+    async fn load_unify_direct_exposure_intent(
+        &self,
+        identifier: &str,
+    ) -> ConfigResult<UnifyDirectExposureIntent> {
+        let consumer: Option<(String, String)> =
+            sqlx::query_as("SELECT identifier, unify_route_mode FROM client WHERE identifier = ?")
+                .bind(identifier)
+                .fetch_optional(&*self.db_pool)
+                .await
+                .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+        let Some((consumer_id, route_mode)) = consumer else {
+            return Ok(UnifyDirectExposureIntent::default());
+        };
+        let route_mode = route_mode.parse::<UnifyRouteMode>().map_err(|error| {
+            ConfigError::DataAccessError(format!(
+                "Invalid unify route mode '{route_mode}' for Consumer '{consumer_id}': {error}"
+            ))
+        })?;
+        let server_ids: Vec<String> = sqlx::query_scalar(
+            "SELECT server_id FROM direct_exposure_servers WHERE consumer_id = ? ORDER BY server_id",
+        )
+        .bind(&consumer_id)
+        .fetch_all(&*self.db_pool)
+        .await
+        .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+        let refs: Vec<(String, String)> = sqlx::query_as(
+            r#"
+            SELECT der.ref_id, cr.kind
+            FROM direct_exposure_refs der
+            JOIN capability_refs cr ON cr.ref_id = der.ref_id
+            WHERE der.consumer_id = ? AND der.enabled = 1
+            ORDER BY cr.kind, der.ref_id
+            "#,
+        )
+        .bind(&consumer_id)
+        .fetch_all(&*self.db_pool)
+        .await
+        .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+        let mut capability_refs = UnifyDirectCapabilityRefs::default();
+        for (ref_id, kind) in refs {
+            match kind.as_str() {
+                "tools" => capability_refs.tool_refs.push(ref_id),
+                "prompts" => capability_refs.prompt_refs.push(ref_id),
+                "resources" => capability_refs.resource_refs.push(ref_id),
+                "resource_templates" => capability_refs.template_refs.push(ref_id),
+                _ => {
+                    return Err(ConfigError::DataAccessError(format!(
+                        "Unknown Capability kind '{kind}' for Direct Exposure"
+                    )));
+                }
+            }
+        }
+        Ok(UnifyDirectExposureIntent {
+            route_mode,
+            server_ids,
+            capability_refs,
         })
+    }
+
+    async fn persist_unify_direct_exposure_intent(
+        &self,
+        transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        consumer_id: &str,
+        intent: &UnifyDirectExposureIntent,
+    ) -> ConfigResult<()> {
+        let capability_refs = if intent.route_mode == crate::clients::models::UnifyRouteMode::CapabilityLevel {
+            let refs = self.normalize_unify_direct_capability_refs(intent.capability_refs.clone());
+            self.validate_unify_direct_capability_ref_kinds(transaction, &refs)
+                .await?;
+            Some(refs)
+        } else {
+            None
+        };
+        sqlx::query("UPDATE client SET unify_route_mode = ?, updated_at = CURRENT_TIMESTAMP WHERE identifier = ?")
+            .bind(intent.route_mode.as_str())
+            .bind(consumer_id)
+            .execute(&mut **transaction)
+            .await
+            .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+        sqlx::query("DELETE FROM direct_exposure_refs WHERE consumer_id = ?")
+            .bind(consumer_id)
+            .execute(&mut **transaction)
+            .await
+            .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+        sqlx::query("DELETE FROM direct_exposure_servers WHERE consumer_id = ?")
+            .bind(consumer_id)
+            .execute(&mut **transaction)
+            .await
+            .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+        match intent.route_mode {
+            crate::clients::models::UnifyRouteMode::BrokerOnly => {}
+            crate::clients::models::UnifyRouteMode::ServerLevel => {
+                for server_id in self.normalize_selected_server_ids_for_unify(intent.server_ids.clone()) {
+                    sqlx::query(
+                        "INSERT INTO direct_exposure_servers (consumer_id, server_id, new_ref_policy) VALUES (?, ?, 'follow')",
+                    )
+                    .bind(consumer_id)
+                    .bind(server_id)
+                    .execute(&mut **transaction)
+                    .await
+                    .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+                }
+            }
+            crate::clients::models::UnifyRouteMode::CapabilityLevel => {
+                let refs = capability_refs.expect("capability-level Direct Exposure validates typed refs");
+                for ref_id in refs
+                    .tool_refs
+                    .into_iter()
+                    .chain(refs.prompt_refs)
+                    .chain(refs.resource_refs)
+                    .chain(refs.template_refs)
+                {
+                    sqlx::query("INSERT INTO direct_exposure_refs (consumer_id, ref_id, enabled) VALUES (?, ?, 1)")
+                        .bind(consumer_id)
+                        .bind(ref_id)
+                        .execute(&mut **transaction)
+                        .await
+                        .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn validate_unify_direct_capability_ref_kinds(
+        &self,
+        transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        refs: &UnifyDirectCapabilityRefs,
+    ) -> ConfigResult<()> {
+        for (expected_kind, ref_ids) in [
+            ("tools", &refs.tool_refs),
+            ("prompts", &refs.prompt_refs),
+            ("resources", &refs.resource_refs),
+            ("resource_templates", &refs.template_refs),
+        ] {
+            for ref_id in ref_ids {
+                let actual_kind: Option<String> =
+                    sqlx::query_scalar("SELECT kind FROM capability_refs WHERE ref_id = ?")
+                        .bind(ref_id)
+                        .fetch_optional(&mut **transaction)
+                        .await
+                        .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+                let actual_kind = actual_kind.ok_or_else(|| {
+                    ConfigError::DataAccessError(format!("Direct Exposure Capability Ref not found: {ref_id}"))
+                })?;
+                if actual_kind != expected_kind {
+                    return Err(ConfigError::DataAccessError(format!(
+                        "Direct Exposure Capability Ref {ref_id} expected {expected_kind} but catalog Ref is {actual_kind}"
+                    )));
+                }
+            }
+        }
+        Ok(())
     }
 
     async fn resolve_custom_profile_missing(
@@ -1330,17 +1551,20 @@ impl ClientConfigService {
             Vec::new()
         };
 
-        let capability_level_tool_surfaces = if intent.route_mode
-            == crate::clients::models::UnifyRouteMode::CapabilityLevel
-        {
-            self.resolve_tool_surfaces_for_capability_ids(&intent.capability_ids.tool_ids, &inventory, &mut diagnostics)
-        } else {
-            Vec::new()
-        };
+        let capability_level_tool_surfaces =
+            if intent.route_mode == crate::clients::models::UnifyRouteMode::CapabilityLevel {
+                self.resolve_tool_surfaces_for_capability_refs(
+                    &intent.capability_refs.tool_refs,
+                    &inventory,
+                    &mut diagnostics,
+                )
+            } else {
+                Vec::new()
+            };
         let capability_level_prompt_surfaces =
             if intent.route_mode == crate::clients::models::UnifyRouteMode::CapabilityLevel {
-                self.resolve_prompt_surfaces_for_capability_ids(
-                    &intent.capability_ids.prompt_ids,
+                self.resolve_prompt_surfaces_for_capability_refs(
+                    &intent.capability_refs.prompt_refs,
                     &inventory,
                     &mut diagnostics,
                 )
@@ -1349,8 +1573,8 @@ impl ClientConfigService {
             };
         let capability_level_resource_surfaces =
             if intent.route_mode == crate::clients::models::UnifyRouteMode::CapabilityLevel {
-                self.resolve_resource_surfaces_for_capability_ids(
-                    &intent.capability_ids.resource_ids,
+                self.resolve_resource_surfaces_for_capability_refs(
+                    &intent.capability_refs.resource_refs,
                     &inventory,
                     &mut diagnostics,
                 )
@@ -1359,8 +1583,8 @@ impl ClientConfigService {
             };
         let capability_level_template_surfaces =
             if intent.route_mode == crate::clients::models::UnifyRouteMode::CapabilityLevel {
-                self.resolve_template_surfaces_for_capability_ids(
-                    &intent.capability_ids.template_ids,
+                self.resolve_template_surfaces_for_capability_refs(
+                    &intent.capability_refs.template_refs,
                     &inventory,
                     &mut diagnostics,
                 )
@@ -1573,8 +1797,8 @@ impl ClientConfigService {
                 .then(left.reason.cmp(&right.reason))
         });
         diagnostics.invalid_template_surfaces.dedup();
-        diagnostics.invalid_capability_ids.sort();
-        diagnostics.invalid_capability_ids.dedup();
+        diagnostics.invalid_capability_refs.sort();
+        diagnostics.invalid_capability_refs.dedup();
 
         let resolved_intent = UnifyDirectExposureIntent {
             route_mode: intent.route_mode,
@@ -1583,10 +1807,10 @@ impl ClientConfigService {
             } else {
                 Vec::new()
             },
-            capability_ids: if intent.route_mode == crate::clients::models::UnifyRouteMode::CapabilityLevel {
-                self.resolve_valid_unify_direct_capability_ids(&intent.capability_ids, &inventory)
+            capability_refs: if intent.route_mode == crate::clients::models::UnifyRouteMode::CapabilityLevel {
+                self.normalize_unify_direct_capability_refs(intent.capability_refs.clone())
             } else {
-                UnifyDirectCapabilityIds::default()
+                UnifyDirectCapabilityRefs::default()
             },
         };
 
@@ -1611,11 +1835,14 @@ impl ClientConfigService {
     async fn load_unify_direct_exposure_inventory(&self) -> ConfigResult<UnifyDirectExposureInventory> {
         let tool_rows: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
             r#"
-            SELECT sc.id, st.tool_name, st.unique_name
+            SELECT sc.id, cr.origin_key, cr.ref_id
             FROM server_config sc
-            LEFT JOIN server_tools st ON st.server_id = sc.id
+            LEFT JOIN capability_refs cr
+              ON cr.server_id = sc.id
+             AND cr.kind = 'tools'
+             AND cr.state = 'active'
             WHERE sc.enabled = 1 AND sc.unify_direct_exposure_eligible = 1
-            ORDER BY sc.id, st.tool_name
+            ORDER BY sc.id, cr.origin_key
             "#,
         )
         .fetch_all(&*self.db_pool)
@@ -1623,11 +1850,14 @@ impl ClientConfigService {
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
         let prompt_rows: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
             r#"
-            SELECT sc.id, sp.prompt_name, sp.unique_name
+            SELECT sc.id, cr.origin_key, cr.ref_id
             FROM server_config sc
-            LEFT JOIN server_prompts sp ON sp.server_id = sc.id
+            LEFT JOIN capability_refs cr
+              ON cr.server_id = sc.id
+             AND cr.kind = 'prompts'
+             AND cr.state = 'active'
             WHERE sc.enabled = 1 AND sc.unify_direct_exposure_eligible = 1
-            ORDER BY sc.id, sp.prompt_name
+            ORDER BY sc.id, cr.origin_key
             "#,
         )
         .fetch_all(&*self.db_pool)
@@ -1635,11 +1865,14 @@ impl ClientConfigService {
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
         let resource_rows: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
             r#"
-            SELECT sc.id, sr.resource_uri, sr.unique_uri
+            SELECT sc.id, cr.origin_key, cr.ref_id
             FROM server_config sc
-            LEFT JOIN server_resources sr ON sr.server_id = sc.id
+            LEFT JOIN capability_refs cr
+              ON cr.server_id = sc.id
+             AND cr.kind = 'resources'
+             AND cr.state = 'active'
             WHERE sc.enabled = 1 AND sc.unify_direct_exposure_eligible = 1
-            ORDER BY sc.id, sr.resource_uri
+            ORDER BY sc.id, cr.origin_key
             "#,
         )
         .fetch_all(&*self.db_pool)
@@ -1647,11 +1880,14 @@ impl ClientConfigService {
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
         let template_rows: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
             r#"
-            SELECT sc.id, srt.uri_template, srt.unique_name
+            SELECT sc.id, cr.origin_key, cr.ref_id
             FROM server_config sc
-            LEFT JOIN server_resource_templates srt ON srt.server_id = sc.id
+            LEFT JOIN capability_refs cr
+              ON cr.server_id = sc.id
+             AND cr.kind = 'resource_templates'
+             AND cr.state = 'active'
             WHERE sc.enabled = 1 AND sc.unify_direct_exposure_eligible = 1
-            ORDER BY sc.id, srt.uri_template
+            ORDER BY sc.id, cr.origin_key
             "#,
         )
         .fetch_all(&*self.db_pool)
@@ -1665,7 +1901,7 @@ impl ClientConfigService {
                 entry.insert(tool_name.clone());
                 if let Some(unique_name) = unique_name {
                     inventory
-                        .tool_ids
+                        .tool_refs
                         .insert(unique_name, UnifyDirectToolSurface { server_id, tool_name });
                 }
             }
@@ -1676,7 +1912,7 @@ impl ClientConfigService {
                 entry.insert(prompt_name.clone());
                 if let Some(unique_name) = unique_name {
                     inventory
-                        .prompt_ids
+                        .prompt_refs
                         .insert(unique_name, UnifyDirectPromptSurface { server_id, prompt_name });
                 }
             }
@@ -1686,7 +1922,7 @@ impl ClientConfigService {
             if let Some(resource_uri) = resource_uri {
                 entry.insert(resource_uri.clone());
                 if let Some(unique_uri) = unique_uri {
-                    inventory.resource_ids.insert(
+                    inventory.resource_refs.insert(
                         unique_uri,
                         UnifyDirectResourceSurface {
                             server_id,
@@ -1701,7 +1937,7 @@ impl ClientConfigService {
             if let Some(uri_template) = uri_template {
                 entry.insert(uri_template.clone());
                 if let Some(unique_name) = unique_name {
-                    inventory.template_ids.insert(
+                    inventory.template_refs.insert(
                         unique_name,
                         UnifyDirectTemplateSurface {
                             server_id,
@@ -1745,14 +1981,37 @@ impl ClientConfigService {
                 r#"
                 SELECT DISTINCT sc.id
                 FROM server_config sc
-                JOIN profile_server ps ON sc.id = ps.server_id
-                WHERE ps.profile_id IN ({placeholders})
-                  AND ps.enabled = 1
-                  AND sc.enabled = 1
+                WHERE sc.enabled = 1
+                  AND (
+                    EXISTS (
+                      SELECT 1 FROM profile_server_relationships psr
+                      WHERE psr.profile_id IN ({placeholders})
+                        AND psr.server_id = sc.id
+                        AND psr.enabled = 1
+                    )
+                    OR EXISTS (
+                      SELECT 1
+                      FROM profile_capability_refs pcr
+                      JOIN capability_refs cr ON cr.ref_id = pcr.ref_id
+                      WHERE pcr.profile_id IN ({placeholders})
+                        AND cr.server_id = sc.id
+                        AND pcr.enabled = 1
+                        AND NOT EXISTS (
+                          SELECT 1
+                          FROM profile_server_relationships gate
+                          WHERE gate.profile_id = pcr.profile_id
+                            AND gate.server_id = cr.server_id
+                            AND gate.enabled = 0
+                        )
+                    )
+                  )
                 ORDER BY sc.name, sc.id
                 "#,
             );
             let mut query = sqlx::query_scalar::<_, String>(&sql);
+            for profile_id in &profile_ids {
+                query = query.bind(profile_id);
+            }
             for profile_id in &profile_ids {
                 query = query.bind(profile_id);
             }
@@ -1793,72 +2052,72 @@ impl ClientConfigService {
         }
     }
 
-    fn resolve_tool_surfaces_for_capability_ids(
+    fn resolve_tool_surfaces_for_capability_refs(
         &self,
-        capability_ids: &[String],
+        capability_refs: &[String],
         inventory: &UnifyDirectExposureInventory,
         diagnostics: &mut UnifyDirectExposureDiagnostics,
     ) -> Vec<UnifyDirectToolSurface> {
-        self.normalize_unify_direct_ids(capability_ids.to_vec())
+        self.normalize_unify_direct_ids(capability_refs.to_vec())
             .into_iter()
-            .filter_map(|capability_id| match inventory.tool_ids.get(&capability_id) {
+            .filter_map(|capability_id| match inventory.tool_refs.get(&capability_id) {
                 Some(surface) => Some(surface.clone()),
                 None => {
-                    diagnostics.invalid_capability_ids.push(capability_id);
+                    diagnostics.invalid_capability_refs.push(capability_id);
                     None
                 }
             })
             .collect()
     }
 
-    fn resolve_prompt_surfaces_for_capability_ids(
+    fn resolve_prompt_surfaces_for_capability_refs(
         &self,
-        capability_ids: &[String],
+        capability_refs: &[String],
         inventory: &UnifyDirectExposureInventory,
         diagnostics: &mut UnifyDirectExposureDiagnostics,
     ) -> Vec<UnifyDirectPromptSurface> {
-        self.normalize_unify_direct_ids(capability_ids.to_vec())
+        self.normalize_unify_direct_ids(capability_refs.to_vec())
             .into_iter()
-            .filter_map(|capability_id| match inventory.prompt_ids.get(&capability_id) {
+            .filter_map(|capability_id| match inventory.prompt_refs.get(&capability_id) {
                 Some(surface) => Some(surface.clone()),
                 None => {
-                    diagnostics.invalid_capability_ids.push(capability_id);
+                    diagnostics.invalid_capability_refs.push(capability_id);
                     None
                 }
             })
             .collect()
     }
 
-    fn resolve_resource_surfaces_for_capability_ids(
+    fn resolve_resource_surfaces_for_capability_refs(
         &self,
-        capability_ids: &[String],
+        capability_refs: &[String],
         inventory: &UnifyDirectExposureInventory,
         diagnostics: &mut UnifyDirectExposureDiagnostics,
     ) -> Vec<UnifyDirectResourceSurface> {
-        self.normalize_unify_direct_ids(capability_ids.to_vec())
+        self.normalize_unify_direct_ids(capability_refs.to_vec())
             .into_iter()
-            .filter_map(|capability_id| match inventory.resource_ids.get(&capability_id) {
+            .filter_map(|capability_id| match inventory.resource_refs.get(&capability_id) {
                 Some(surface) => Some(surface.clone()),
                 None => {
-                    diagnostics.invalid_capability_ids.push(capability_id);
+                    diagnostics.invalid_capability_refs.push(capability_id);
                     None
                 }
             })
             .collect()
     }
 
-    fn resolve_template_surfaces_for_capability_ids(
+    fn resolve_template_surfaces_for_capability_refs(
         &self,
-        capability_ids: &[String],
+        capability_refs: &[String],
         inventory: &UnifyDirectExposureInventory,
         diagnostics: &mut UnifyDirectExposureDiagnostics,
     ) -> Vec<UnifyDirectTemplateSurface> {
-        self.normalize_unify_direct_ids(capability_ids.to_vec())
+        self.normalize_unify_direct_ids(capability_refs.to_vec())
             .into_iter()
-            .filter_map(|capability_id| match inventory.template_ids.get(&capability_id) {
+            .filter_map(|capability_id| match inventory.template_refs.get(&capability_id) {
                 Some(surface) => Some(surface.clone()),
                 None => {
-                    diagnostics.invalid_capability_ids.push(capability_id);
+                    diagnostics.invalid_capability_refs.push(capability_id);
                     None
                 }
             })
@@ -1999,29 +2258,34 @@ impl ClientConfigService {
         normalized
     }
 
-    fn normalize_unify_direct_capability_ids(
+    fn normalize_unify_direct_capability_refs(
         &self,
-        capability_ids: UnifyDirectCapabilityIds,
-    ) -> UnifyDirectCapabilityIds {
-        UnifyDirectCapabilityIds {
-            tool_ids: self.normalize_unify_direct_ids(capability_ids.tool_ids),
-            prompt_ids: self.normalize_unify_direct_ids(capability_ids.prompt_ids),
-            resource_ids: self.normalize_unify_direct_ids(capability_ids.resource_ids),
-            template_ids: self.normalize_unify_direct_ids(capability_ids.template_ids),
+        capability_refs: UnifyDirectCapabilityRefs,
+    ) -> UnifyDirectCapabilityRefs {
+        UnifyDirectCapabilityRefs {
+            tool_refs: self.normalize_unify_direct_ids(capability_refs.tool_refs),
+            prompt_refs: self.normalize_unify_direct_ids(capability_refs.prompt_refs),
+            resource_refs: self.normalize_unify_direct_ids(capability_refs.resource_refs),
+            template_refs: self.normalize_unify_direct_ids(capability_refs.template_refs),
         }
     }
 
-    fn resolve_valid_unify_direct_capability_ids(
+    fn normalize_unify_direct_exposure_intent(
         &self,
-        capability_ids: &UnifyDirectCapabilityIds,
-        inventory: &UnifyDirectExposureInventory,
-    ) -> UnifyDirectCapabilityIds {
-        let capability_ids = self.normalize_unify_direct_capability_ids(capability_ids.clone());
-        UnifyDirectCapabilityIds {
-            tool_ids: retain_known_capability_ids(capability_ids.tool_ids, &inventory.tool_ids),
-            prompt_ids: retain_known_capability_ids(capability_ids.prompt_ids, &inventory.prompt_ids),
-            resource_ids: retain_known_capability_ids(capability_ids.resource_ids, &inventory.resource_ids),
-            template_ids: retain_known_capability_ids(capability_ids.template_ids, &inventory.template_ids),
+        intent: UnifyDirectExposureIntent,
+    ) -> UnifyDirectExposureIntent {
+        match intent.route_mode {
+            crate::clients::models::UnifyRouteMode::BrokerOnly => UnifyDirectExposureIntent::default(),
+            crate::clients::models::UnifyRouteMode::ServerLevel => UnifyDirectExposureIntent {
+                route_mode: intent.route_mode,
+                server_ids: self.normalize_selected_server_ids_for_unify(intent.server_ids),
+                capability_refs: UnifyDirectCapabilityRefs::default(),
+            },
+            crate::clients::models::UnifyRouteMode::CapabilityLevel => UnifyDirectExposureIntent {
+                route_mode: intent.route_mode,
+                server_ids: Vec::new(),
+                capability_refs: self.normalize_unify_direct_capability_refs(intent.capability_refs),
+            },
         }
     }
 
@@ -2107,6 +2371,166 @@ impl ClientConfigService {
         });
         normalized.dedup();
         normalized
+    }
+
+    async fn prepare_capability_client_insert(
+        &self,
+        identifier: &str,
+        name: &str,
+    ) -> ConfigResult<PreparedCapabilityClientInsert> {
+        let first_contact_behavior = self.get_first_contact_behavior().await?;
+        let approval_status = match first_contact_behavior {
+            FirstContactBehavior::Deny => "suspended",
+            FirstContactBehavior::Review => "pending",
+            FirstContactBehavior::Allow => "approved",
+        };
+        let platform = crate::system::paths::PathService::get_current_platform();
+        let template = self.template_source.get_template(identifier, platform).await?;
+        let display_name = template
+            .as_ref()
+            .and_then(|entry| entry.display_name.clone())
+            .unwrap_or_else(|| name.to_string());
+        let config_path = template
+            .as_ref()
+            .and_then(Self::extract_runtime_config_path_from_template);
+        let connection_mode = if config_path.is_some() {
+            ClientConnectionMode::LocalConfigDetected.as_str()
+        } else {
+            ClientConnectionMode::Manual.as_str()
+        };
+        let attachment_state = if config_path.is_some() {
+            AttachmentState::Detached.as_str()
+        } else {
+            AttachmentState::NotApplicable.as_str()
+        };
+        Ok(PreparedCapabilityClientInsert {
+            id: crate::generate_id!("clnt"),
+            display_name,
+            config_path,
+            approval_status,
+            connection_mode,
+            attachment_state,
+            template_identifier: template.as_ref().map(|entry| entry.identifier.clone()),
+            persisted_config: template
+                .as_ref()
+                .map(PersistedTemplateConfig::from_template)
+                .unwrap_or_default(),
+        })
+    }
+
+    async fn ensure_capability_client_in_transaction(
+        &self,
+        transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        identifier: &str,
+        name: &str,
+        prepared: &PreparedCapabilityClientInsert,
+    ) -> ConfigResult<()> {
+        sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO client (
+                id, name, display_name, identifier, config_path, backup_policy, backup_limit,
+                approval_status, governance_kind, connection_mode, registration_origin, runtime_observed,
+                template_identifier, config_format, protocol_revision, container_type, container_keys,
+                storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config,
+                managed_source, transports, config_file_parse, attachment_state
+            )
+            VALUES (?, ?, ?, ?, ?, 'keep_n', 5, ?, 'passive', ?, 'manual', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&prepared.id)
+        .bind(name)
+        .bind(&prepared.display_name)
+        .bind(identifier)
+        .bind(prepared.config_path.as_deref())
+        .bind(prepared.approval_status)
+        .bind(prepared.connection_mode)
+        .bind(prepared.template_identifier.as_deref())
+        .bind(prepared.persisted_config.config_format.as_deref())
+        .bind(prepared.persisted_config.protocol_revision.as_deref())
+        .bind(prepared.persisted_config.container_type.as_deref())
+        .bind(prepared.persisted_config.container_keys.as_deref())
+        .bind(prepared.persisted_config.storage_kind.as_deref())
+        .bind(prepared.persisted_config.storage_adapter.as_deref())
+        .bind(prepared.persisted_config.storage_path_strategy.as_deref())
+        .bind(prepared.persisted_config.merge_strategy.as_deref())
+        .bind(prepared.persisted_config.keep_original_config)
+        .bind(prepared.persisted_config.managed_source.as_deref())
+        .bind(prepared.persisted_config.transports.as_deref())
+        .bind(prepared.persisted_config.config_file_parse.as_deref())
+        .bind(prepared.attachment_state)
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+        sqlx::query("UPDATE client SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE identifier = ?")
+            .bind(name)
+            .bind(identifier)
+            .execute(&mut **transaction)
+            .await
+            .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+        Ok(())
+    }
+
+    async fn prepare_custom_profile(
+        &self,
+        identifier: &str,
+    ) -> ConfigResult<PreparedCustomProfile> {
+        let name = format!("{}_custom", identifier);
+        let id = match crate::config::profile::get_profile_by_name(&self.db_pool, &name)
+            .await
+            .map_err(|error| ConfigError::DataAccessError(error.to_string()))?
+        {
+            Some(profile) => {
+                if profile.profile_type != ProfileType::HostApp {
+                    return Err(ConfigError::DataAccessError(format!(
+                        "Profile '{}' already exists but is not host_app",
+                        name
+                    )));
+                }
+                profile
+                    .id
+                    .ok_or_else(|| ConfigError::DataAccessError(format!("Profile '{}' is missing an id", name)))?
+            }
+            None => crate::generate_id!("prof"),
+        };
+        Ok(PreparedCustomProfile { id, name })
+    }
+
+    async fn ensure_custom_profile_in_transaction(
+        &self,
+        transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        identifier: &str,
+        prepared: &PreparedCustomProfile,
+    ) -> ConfigResult<String> {
+        if let Some((id, profile_type)) =
+            sqlx::query_as::<_, (String, String)>("SELECT id, type FROM profile WHERE name = ?")
+                .bind(&prepared.name)
+                .fetch_optional(&mut **transaction)
+                .await
+                .map_err(|error| ConfigError::DataAccessError(error.to_string()))?
+        {
+            if profile_type != ProfileType::HostApp.as_str() {
+                return Err(ConfigError::DataAccessError(format!(
+                    "Profile '{}' already exists but is not host_app",
+                    prepared.name
+                )));
+            }
+            return Ok(id);
+        }
+        sqlx::query(
+            r#"
+            INSERT INTO profile (
+                id, name, description, type, role, multi_select,
+                priority, is_active, is_default
+            ) VALUES (?, ?, ?, 'host_app', 'user', 0, 0, 0, 0)
+            "#,
+        )
+        .bind(&prepared.id)
+        .bind(&prepared.name)
+        .bind(format!("Custom profile for {}", identifier))
+        .execute(&mut **transaction)
+        .await
+        .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+        Ok(prepared.id.clone())
     }
 
     async fn ensure_custom_profile(

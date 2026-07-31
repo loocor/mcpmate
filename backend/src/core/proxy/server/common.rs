@@ -98,6 +98,7 @@ pub fn unify_directly_exposed_resource_allowed(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn unify_directly_exposed_resource_route_allowed(
     workspace: Option<&UnifyDirectExposureConfig>,
     eligible_server_ids: &HashSet<String>,
@@ -176,7 +177,54 @@ pub struct ClientContext {
     pub observed_client_info: Option<ObservedClientInfo>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ConsumerAccessContext {
+    pub consumer_id: String,
+    pub assurance: ConsumerAssurance,
+    pub credential_id_or_local_binding: String,
+    pub audit_source: ClientIdentitySource,
+    pub session_handle: Option<String>,
+    pub observed_client_info: Option<ObservedClientInfo>,
+    pub connection_mode: crate::core::capability::ConnectionMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConsumerAssurance {
+    TrustedLocalLegacy,
+    VerifiedCredential,
+}
+
 impl ClientContext {
+    pub fn consumer_access_context(
+        &self,
+        consumer_id: impl Into<String>,
+    ) -> Result<ConsumerAccessContext> {
+        let assurance = match self.source {
+            ClientIdentitySource::VerifiedCredential => ConsumerAssurance::VerifiedCredential,
+            ClientIdentitySource::ManagedQuery | ClientIdentitySource::ManagedHeader => {
+                ConsumerAssurance::TrustedLocalLegacy
+            }
+            ClientIdentitySource::SessionBinding => {
+                return Err(anyhow!(
+                    "session handle cannot establish Consumer assurance without original identity provenance"
+                ));
+            }
+        };
+        let credential_id_or_local_binding = match assurance {
+            ConsumerAssurance::VerifiedCredential => format!("verified-consumer:{}", self.client_id),
+            ConsumerAssurance::TrustedLocalLegacy => "managed-local-endpoint".to_string(),
+        };
+        Ok(ConsumerAccessContext {
+            consumer_id: consumer_id.into(),
+            assurance,
+            credential_id_or_local_binding,
+            audit_source: self.source,
+            session_handle: self.session_id.clone(),
+            observed_client_info: self.observed_client_info.clone(),
+            connection_mode: self.connection_mode(),
+        })
+    }
+
     pub fn runtime_identity(&self) -> Option<crate::core::capability::RuntimeIdentity> {
         self.surface_fingerprint
             .clone()
@@ -222,7 +270,19 @@ pub enum ClientTransport {
 pub enum ClientIdentitySource {
     ManagedQuery,
     ManagedHeader,
+    VerifiedCredential,
     SessionBinding,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManagedEndpointTrust {
+    LocalOnly,
+    VerifiedCredentialRequired,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedConsumerCredential {
+    pub consumer_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -621,7 +681,7 @@ fn resolve_bound_request_context_parts(
         unify_workspace: binding.unify_workspace.clone(),
         surface_fingerprint: binding.surface_fingerprint.clone(),
         transport: transport_from_parts(Some(parts)),
-        source: ClientIdentitySource::SessionBinding,
+        source: binding.source,
         observed_client_info: binding.observed_client_info.clone(),
     }))
 }
@@ -701,8 +761,29 @@ fn resolve_managed_context(
 }
 
 fn resolve_managed_client_id(parts: &axum::http::request::Parts) -> Result<(String, ClientIdentitySource)> {
-    resolve_optional_managed_client_id(parts)?
-        .ok_or_else(|| anyhow!("Managed client_id side-band is required; clientInfo is observation-only"))
+    let declared = resolve_optional_managed_client_id(parts)?;
+    match parts.extensions.get::<ManagedEndpointTrust>() {
+        Some(ManagedEndpointTrust::LocalOnly) => {
+            declared.ok_or_else(|| anyhow!("Managed client_id side-band is required; clientInfo is observation-only"))
+        }
+        Some(ManagedEndpointTrust::VerifiedCredentialRequired) => {
+            let credential = parts
+                .extensions
+                .get::<VerifiedConsumerCredential>()
+                .ok_or_else(|| anyhow!("Verified Consumer credential is required for non-local managed requests"))?;
+            if let Some((declared_id, _)) = declared
+                && declared_id != credential.consumer_id
+            {
+                return Err(anyhow!(
+                    "Declared managed client_id '{}' does not match verified Consumer '{}'",
+                    declared_id,
+                    credential.consumer_id
+                ));
+            }
+            Ok((credential.consumer_id.clone(), ClientIdentitySource::VerifiedCredential))
+        }
+        None => Err(anyhow!("Managed endpoint trust was not established by server wiring")),
+    }
 }
 
 fn resolve_optional_managed_client_id(
@@ -903,6 +984,11 @@ impl UnifiedHttpServer {
             .route_service(&self.config.streamable_http_path, streamable_http_service)
             .layer(axum::middleware::from_fn(move |request, next| {
                 bind_managed_session_after_initialize(client_context_resolver.clone(), request, next)
+            }))
+            .layer(axum::Extension(if self.config.bind_address.ip().is_loopback() {
+                ManagedEndpointTrust::LocalOnly
+            } else {
+                ManagedEndpointTrust::VerifiedCredentialRequired
             }));
 
         let listener = tokio::net::TcpListener::bind(self.config.bind_address)
@@ -1056,6 +1142,7 @@ mod tests {
                 HeaderValue::from_str(managed_profile_id).unwrap(),
             );
         }
+        request.extensions_mut().insert(ManagedEndpointTrust::LocalOnly);
         request.into_parts().0
     }
 
@@ -1146,7 +1233,7 @@ mod tests {
         assert_eq!(context.session_id.as_deref(), Some("sess-123"));
         assert_eq!(context.profile_id.as_deref(), Some("profile-a"));
         assert_eq!(context.surface_fingerprint.as_deref(), Some("fp-123"));
-        assert_eq!(context.source, ClientIdentitySource::SessionBinding);
+        assert_eq!(context.source, ClientIdentitySource::ManagedQuery);
         assert_eq!(
             context.observed_client_info.as_ref().map(|info| info.name.as_str()),
             Some("bridge")
@@ -1251,6 +1338,46 @@ mod tests {
         assert_eq!(identity.client_id, "claude-code");
         assert_eq!(identity.profile_id.as_deref(), Some("profile-a"));
         assert_eq!(identity.surface_fingerprint, "fp-123");
+    }
+
+    #[test]
+    fn consumer_assurance_preserves_original_managed_provenance() {
+        let context = ClientContext {
+            client_id: "claude-code".to_string(),
+            session_id: Some("sess-123".to_string()),
+            profile_id: None,
+            config_mode: Some("hosted".to_string()),
+            unify_workspace: None,
+            surface_fingerprint: Some("fp-123".to_string()),
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedHeader,
+            observed_client_info: None,
+        };
+
+        let access = context
+            .consumer_access_context("claude-code")
+            .expect("managed provenance");
+        assert_eq!(access.assurance, ConsumerAssurance::TrustedLocalLegacy);
+        assert_eq!(access.audit_source, ClientIdentitySource::ManagedHeader);
+        assert_eq!(access.credential_id_or_local_binding, "managed-local-endpoint");
+        assert_eq!(access.session_handle.as_deref(), Some("sess-123"));
+    }
+
+    #[test]
+    fn session_binding_alone_cannot_establish_consumer_assurance() {
+        let context = ClientContext {
+            client_id: "claude-code".to_string(),
+            session_id: Some("sess-123".to_string()),
+            profile_id: None,
+            config_mode: Some("hosted".to_string()),
+            unify_workspace: None,
+            surface_fingerprint: Some("fp-123".to_string()),
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::SessionBinding,
+            observed_client_info: None,
+        };
+
+        assert!(context.consumer_access_context("claude-code").is_err());
     }
 
     #[test]

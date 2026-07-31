@@ -31,30 +31,6 @@ impl CapabilityType {
             CapabilityType::ResourceTemplates => "resource_templates",
         }
     }
-
-    /// Convert to existing capability type
-    pub fn to_existing(&self) -> crate::api::handlers::server::capability::CapabilityType {
-        match self {
-            CapabilityType::Tools => crate::api::handlers::server::capability::CapabilityType::Tools,
-            CapabilityType::Resources => crate::api::handlers::server::capability::CapabilityType::Resources,
-            CapabilityType::Prompts => crate::api::handlers::server::capability::CapabilityType::Prompts,
-            CapabilityType::ResourceTemplates => {
-                crate::api::handlers::server::capability::CapabilityType::ResourceTemplates
-            }
-        }
-    }
-
-    /// Convert from existing capability type
-    pub fn from_existing(existing: crate::api::handlers::server::capability::CapabilityType) -> Self {
-        match existing {
-            crate::api::handlers::server::capability::CapabilityType::Tools => CapabilityType::Tools,
-            crate::api::handlers::server::capability::CapabilityType::Resources => CapabilityType::Resources,
-            crate::api::handlers::server::capability::CapabilityType::Prompts => CapabilityType::Prompts,
-            crate::api::handlers::server::capability::CapabilityType::ResourceTemplates => {
-                CapabilityType::ResourceTemplates
-            }
-        }
-    }
 }
 
 impl fmt::Display for CapabilityType {

@@ -260,6 +260,7 @@ const TEMPLATE_KIND_KEYS: Array<keyof CapabilityRecord> = [
 ];
 
 const INSPECT_SESSION_GRACE_MS = 30_000;
+const INSPECT_SESSION_KEEPALIVE_MS = 60_000;
 const INSPECTOR_OPERATIONS: InspectorKind[] = [
 	"tool",
 	"prompt",
@@ -544,10 +545,14 @@ export function InspectorDrawer({
 	const pendingNativeSessionRef = useRef<{
 		serverId: string;
 		promise: Promise<InspectorSessionOpenData>;
+		cancelled: boolean;
 	} | null>(null);
 	const nativeSessionCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(
 		null,
 	);
+	const nativeSessionRecoveryPendingRef = useRef(false);
+	const [nativeSessionRecoveryPending, setNativeSessionRecoveryPending] =
+		useState(false);
 	const mountedRef = useRef(true);
 	const [view, setView] = useState<"response" | "events">("response");
 	const [operationMenuOpen, setOperationMenuOpen] = useState(false);
@@ -622,9 +627,15 @@ export function InspectorDrawer({
 		};
 	}, []);
 
-	useEffect(() => {
-		nativeSessionRef.current = nativeSession;
-	}, [nativeSession]);
+	const setNativeSessionState = useCallback(
+		(session: InspectorSessionOpenData | null) => {
+			nativeSessionRef.current = session;
+			if (mountedRef.current) {
+				setNativeSession(session);
+			}
+		},
+		[],
+	);
 
 	const clearNativeSessionCloseTimer = useCallback(() => {
 		if (nativeSessionCloseTimer.current) {
@@ -644,32 +655,64 @@ export function InspectorDrawer({
 				mountedRef.current &&
 				nativeSessionRef.current?.session_id === session.session_id
 			) {
-				setNativeSession(null);
-				nativeSessionRef.current = null;
+				setNativeSessionState(null);
 			}
 		},
-		[],
+		[setNativeSessionState],
 	);
+
+	const closePendingNativeSession = useCallback(() => {
+		const pending = pendingNativeSessionRef.current;
+		pendingNativeSessionRef.current = null;
+		if (!pending) {
+			return;
+		}
+		pending.cancelled = true;
+	}, []);
 
 	const invalidateNativeSession = useCallback(() => {
 		clearNativeSessionCloseTimer();
-		pendingNativeSessionRef.current = null;
+		closePendingNativeSession();
 		const current = nativeSessionRef.current;
-		nativeSessionRef.current = null;
-		if (mountedRef.current) {
-			setNativeSession(null);
-		}
+		setNativeSessionState(null);
 		if (current) {
 			void closeNativeSession(current);
 		}
-	}, [clearNativeSessionCloseTimer, closeNativeSession]);
+	}, [
+		clearNativeSessionCloseTimer,
+		closeNativeSession,
+		closePendingNativeSession,
+		setNativeSessionState,
+	]);
+
+	const handleNativeSessionUnavailable = useCallback(() => {
+		if (activeCallIdRef.current) {
+			nativeSessionRecoveryPendingRef.current = true;
+			if (mountedRef.current) {
+				setNativeSessionRecoveryPending(true);
+			}
+			return;
+		}
+		invalidateNativeSession();
+	}, [invalidateNativeSession]);
 
 	const scheduleNativeSessionClose = useCallback(
 		(session: InspectorSessionOpenData) => {
 			clearNativeSessionCloseTimer();
-			nativeSessionCloseTimer.current = setTimeout(() => {
+			const closeWhenIdle = () => {
+				if (activeCallIdRef.current) {
+					nativeSessionCloseTimer.current = setTimeout(
+						closeWhenIdle,
+						INSPECT_SESSION_GRACE_MS,
+					);
+					return;
+				}
 				void closeNativeSession(session);
-			}, INSPECT_SESSION_GRACE_MS);
+			};
+			nativeSessionCloseTimer.current = setTimeout(
+				closeWhenIdle,
+				INSPECT_SESSION_GRACE_MS,
+			);
 		},
 		[clearNativeSessionCloseTimer, closeNativeSession],
 	);
@@ -690,7 +733,10 @@ export function InspectorDrawer({
 		const pending = pendingNativeSessionRef.current;
 		if (pending?.serverId === serverId) {
 			const session = await pending.promise;
-			return session.session_id;
+			return pending.cancelled ? undefined : session.session_id;
+		}
+		if (pending) {
+			closePendingNativeSession();
 		}
 
 		if (current) {
@@ -714,25 +760,27 @@ export function InspectorDrawer({
 				}
 				return response.data;
 			});
-		pendingNativeSessionRef.current = {
+		const pendingSession = {
 			serverId,
 			promise: pendingPromise,
+			cancelled: false,
 		};
+		pendingNativeSessionRef.current = pendingSession;
 
 		try {
 			const session = await pendingPromise;
-			if (pendingNativeSessionRef.current?.promise !== pendingPromise) {
+			if (
+				pendingSession.cancelled ||
+				pendingNativeSessionRef.current !== pendingSession
+			) {
 				void closeNativeSession(session);
 				return undefined;
 			}
 			pendingNativeSessionRef.current = null;
-			if (mountedRef.current) {
-				setNativeSession(session);
-			}
-			nativeSessionRef.current = session;
+			setNativeSessionState(session);
 			return session.session_id;
 		} catch (error) {
-			if (pendingNativeSessionRef.current?.promise === pendingPromise) {
+			if (pendingNativeSessionRef.current === pendingSession) {
 				pendingNativeSessionRef.current = null;
 			}
 			throw error;
@@ -740,14 +788,39 @@ export function InspectorDrawer({
 	}, [
 		clearNativeSessionCloseTimer,
 		closeNativeSession,
+		closePendingNativeSession,
 		serverId,
 		serverName,
+		setNativeSessionState,
 		timeoutMs,
 	]);
+
+	const refreshNativeSession = useCallback(
+		async (session: InspectorSessionOpenData) => {
+			const response = await inspectorApi.sessionRefresh({
+				session_id: session.session_id,
+			});
+			if (!response?.success || !response.data) {
+				throw new Error(
+					response?.error
+						? String(response.error)
+						: "Failed to refresh inspector session",
+				);
+			}
+			if (nativeSessionRef.current?.session_id !== session.session_id) {
+				return;
+			}
+			setNativeSessionState(response.data);
+		},
+		[setNativeSessionState],
+	);
 
 	useEffect(() => {
 		const current = nativeSessionRef.current;
 		if (!current) {
+			if (!open || mode !== "native") {
+				closePendingNativeSession();
+			}
 			return;
 		}
 
@@ -756,8 +829,16 @@ export function InspectorDrawer({
 			return;
 		}
 
+		closePendingNativeSession();
 		scheduleNativeSessionClose(current);
-	}, [clearNativeSessionCloseTimer, mode, open, scheduleNativeSessionClose, serverId]);
+	}, [
+		clearNativeSessionCloseTimer,
+		closePendingNativeSession,
+		mode,
+		open,
+		scheduleNativeSessionClose,
+		serverId,
+	]);
 
 	useEffect(() => {
 		if (!open || mode !== "native") {
@@ -769,16 +850,82 @@ export function InspectorDrawer({
 				error instanceof Error ? error.message : String(error ?? ""),
 			);
 		});
-	}, [ensureNativeSession, mode, open, t]);
+	}, [
+		ensureNativeSession,
+		mode,
+		nativeSession?.session_id,
+		nativeSessionRecoveryPending,
+		open,
+		t,
+	]);
+
+	useEffect(() => {
+		if (
+			!open ||
+			mode !== "native" ||
+			!nativeSession?.session_id ||
+			nativeSessionRecoveryPending
+		) {
+			return;
+		}
+
+		let cancelled = false;
+		const refresh = async () => {
+			const current = nativeSessionRef.current;
+			if (!current) {
+				return;
+			}
+			try {
+				await refreshNativeSession(current);
+			} catch (error) {
+				if (cancelled) {
+					return;
+				}
+				console.warn("Failed to refresh inspector session", error);
+				if (
+					isInspectorSessionUnavailableError(error) &&
+					nativeSessionRef.current?.session_id === current.session_id
+				) {
+					handleNativeSessionUnavailable();
+				}
+			}
+		};
+
+		const interval = window.setInterval(() => {
+			void refresh();
+		}, INSPECT_SESSION_KEEPALIVE_MS);
+
+		return () => {
+			cancelled = true;
+			window.clearInterval(interval);
+		};
+	}, [
+		handleNativeSessionUnavailable,
+		mode,
+		nativeSession?.session_id,
+		nativeSessionRecoveryPending,
+		open,
+		refreshNativeSession,
+	]);
+
+	useEffect(() => {
+		if (activeCallId || !nativeSessionRecoveryPendingRef.current) {
+			return;
+		}
+		nativeSessionRecoveryPendingRef.current = false;
+		setNativeSessionRecoveryPending(false);
+		invalidateNativeSession();
+	}, [activeCallId, invalidateNativeSession]);
 
 	useEffect(() => {
 		return () => {
+			closePendingNativeSession();
 			const current = nativeSessionRef.current;
 			if (current) {
 				scheduleNativeSessionClose(current);
 			}
 		};
-	}, [scheduleNativeSessionClose]);
+	}, [closePendingNativeSession, scheduleNativeSessionClose]);
 
 	useEffect(() => {
 		if (propItemKey !== lastPropKeyRef.current) {
@@ -1344,7 +1491,7 @@ export function InspectorDrawer({
 				requestedMode === "native" &&
 				isInspectorSessionUnavailableError(error)
 			) {
-				invalidateNativeSession();
+				handleNativeSessionUnavailable();
 			}
 			if (activeOptionListKeyRef.current === requestedListKey) {
 				setCapOptionsError(
@@ -1359,7 +1506,7 @@ export function InspectorDrawer({
 		}
 	}, [
 		ensureNativeSession,
-		invalidateNativeSession,
+		handleNativeSessionUnavailable,
 		activeKind,
 		mode,
 		optionListKey,
@@ -1793,7 +1940,7 @@ export function InspectorDrawer({
 				);
 			} catch (error) {
 				if (mode === "native" && isInspectorSessionUnavailableError(error)) {
-					invalidateNativeSession();
+					handleNativeSessionUnavailable();
 				}
 				onLog?.({
 					id: newLogId(),
@@ -1812,7 +1959,7 @@ export function InspectorDrawer({
 		},
 		[
 			ensureNativeSession,
-			invalidateNativeSession,
+			handleNativeSessionUnavailable,
 			mode,
 			onLog,
 			proxyAvailable,
@@ -2004,7 +2151,7 @@ export function InspectorDrawer({
 			}
 		} catch (e) {
 			if (mode === "native" && isInspectorSessionUnavailableError(e)) {
-				invalidateNativeSession();
+				handleNativeSessionUnavailable();
 			}
 			onLog?.({
 				id: newLogId(),
@@ -2057,15 +2204,16 @@ export function InspectorDrawer({
 
 	const displaySessionId =
 		mode === "native" ? nativeSession?.session_id : undefined;
-	const sessionActive = Boolean(displaySessionId);
+	const sessionActive =
+		Boolean(displaySessionId) && !nativeSessionRecoveryPending;
 	const sessionIndicator =
-		activeKind === "tool" && mode === "native" ? (
+		mode === "native" ? (
 			<TooltipProvider delayDuration={150}>
 				<Tooltip>
 					<TooltipTrigger asChild>
-						<button
-							type="button"
-							className="inline-flex h-8 w-8 items-center justify-center text-slate-500 transition hover:text-slate-700 dark:text-slate-300 dark:hover:text-slate-100"
+						<span
+							role="status"
+							className="inline-flex h-8 w-8 items-center justify-center text-slate-500 dark:text-slate-300"
 							aria-label={
 								sessionActive ? t("session.active") : t("session.pending")
 							}
@@ -2075,7 +2223,7 @@ export function InspectorDrawer({
 							) : (
 								<AlertCircle className="h-5 w-5 text-amber-500" />
 							)}
-						</button>
+						</span>
 					</TooltipTrigger>
 					<TooltipContent
 						side="left"
@@ -2187,7 +2335,6 @@ export function InspectorDrawer({
 							</DrawerTitle>
 							<DrawerDescription>{t("subtitle")}</DrawerDescription>
 						</div>
-						{sessionIndicator}
 					</div>
 				</DrawerHeader>
 
@@ -2288,25 +2435,36 @@ export function InspectorDrawer({
 									</div>
 									<div className="space-y-1">
 										<Label>{t("form.server")}</Label>
-										<TooltipProvider delayDuration={200}>
-											<Tooltip>
-												<TooltipTrigger asChild>
-													<Input
-														value={serverName || serverId || "-"}
-														disabled
-														className="h-9"
-													/>
-												</TooltipTrigger>
-												{serverName && serverId ? (
-													<TooltipPortal>
-														<TooltipContent side="top" align="start">
-															<p className="text-xs">ID: {serverId}</p>
-															<TooltipArrow />
-														</TooltipContent>
-													</TooltipPortal>
-												) : null}
-											</Tooltip>
-										</TooltipProvider>
+										<div className="relative">
+											<TooltipProvider delayDuration={200}>
+												<Tooltip>
+													<TooltipTrigger asChild>
+														<Input
+															value={serverName || serverId || "-"}
+															readOnly
+															aria-readonly="true"
+															className="h-9 cursor-default pr-10 text-slate-600 dark:text-slate-300"
+														/>
+													</TooltipTrigger>
+													{serverName && serverId ? (
+														<TooltipPortal>
+															<TooltipContent side="top" align="start">
+																<p className="text-xs">ID: {serverId}</p>
+																<TooltipArrow />
+															</TooltipContent>
+														</TooltipPortal>
+													) : null}
+												</Tooltip>
+											</TooltipProvider>
+											{sessionIndicator ? (
+												<div
+													className="absolute inset-y-0 right-1 flex items-center"
+													data-prevent-collapse="true"
+												>
+													{sessionIndicator}
+												</div>
+											) : null}
+										</div>
 									</div>
 								</div>
 

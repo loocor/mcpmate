@@ -1,6 +1,7 @@
 import { resolveApiUrl } from "../../lib/api";
 import type {
 	ClientCheckData,
+	CatalogRevisionSet,
 	ConfigSuit,
 	ConfigSuitListResponse,
 	ServerListResponse,
@@ -17,6 +18,7 @@ interface ProfileListPayload {
 	profile: OperatorProfileRow[];
 	total: number;
 	timestamp: string;
+	source_revision_set: CatalogRevisionSet;
 }
 
 interface OperatorProfileRow {
@@ -111,7 +113,11 @@ function readStringArray(record: Record<string, unknown>, field: string, context
 	return value;
 }
 
-function profileRowToConfigSuit(row: unknown, index: number): ConfigSuit {
+function profileRowToConfigSuit(
+	row: unknown,
+	index: number,
+	sourceRevisionSet: CatalogRevisionSet,
+): ConfigSuit {
 	const context = `Operator profile row ${index}`;
 	assertRecord(row, context);
 
@@ -126,6 +132,7 @@ function profileRowToConfigSuit(row: unknown, index: number): ConfigSuit {
 		is_default: readBoolean(row, "is_default", context),
 		role: readOptionalString(row, "role", context),
 		allowed_operations: readStringArray(row, "allowed_operations", context),
+		source_revision_set: sourceRevisionSet,
 	};
 }
 
@@ -134,7 +141,18 @@ export async function listOperatorProfiles(): Promise<ConfigSuitListResponse> {
 	if (!Array.isArray(data.profile)) {
 		throw new Error("Operator profiles response is missing profile list");
 	}
-	return { suits: data.profile.map(profileRowToConfigSuit) };
+	assertRecord(data.source_revision_set, "Operator profile revision set");
+	for (const [serverId, revision] of Object.entries(data.source_revision_set)) {
+		if (!serverId || typeof revision !== "number" || !Number.isSafeInteger(revision)) {
+			throw new Error("Operator profile revision set is malformed");
+		}
+	}
+	return {
+		suits: data.profile.map((profile, index) =>
+			profileRowToConfigSuit(profile, index, data.source_revision_set),
+		),
+		source_revision_set: data.source_revision_set,
+	};
 }
 
 export async function listOperatorServers(): Promise<ServerListResponse> {

@@ -80,10 +80,15 @@ pub enum AuditAction {
     DesktopManagedCoreStop,
     CapabilityGrant,
     CapabilityRevoke,
+    SurfaceReviewResolve,
+    SurfacePublish,
+    SurfaceRollback,
+    SurfaceReconciliation,
     // Profile server management
     ProfileServerEnable,
     ProfileServerDisable,
     ProfileServerRemove,
+    ProfileServerReplace,
     // Server instance management
     ServerInstanceDisconnect,
     ServerInstanceForceDisconnect,
@@ -153,9 +158,13 @@ impl AuditAction {
             | Self::FirstContactBehaviorUpdate
             | Self::InspectorTimeoutUpdate => AuditCategory::Management,
             Self::CapabilityGrant | Self::CapabilityRevoke => AuditCategory::ProfileConfig,
-            Self::ProfileServerEnable | Self::ProfileServerDisable | Self::ProfileServerRemove => {
-                AuditCategory::ProfileConfig
+            Self::SurfaceReviewResolve | Self::SurfacePublish | Self::SurfaceRollback | Self::SurfaceReconciliation => {
+                AuditCategory::CapabilityControl
             }
+            Self::ProfileServerEnable
+            | Self::ProfileServerDisable
+            | Self::ProfileServerRemove
+            | Self::ProfileServerReplace => AuditCategory::ProfileConfig,
             Self::ServerInstanceDisconnect
             | Self::ServerInstanceForceDisconnect
             | Self::ServerInstanceReconnect

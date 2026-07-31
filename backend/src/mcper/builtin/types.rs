@@ -10,8 +10,7 @@ pub struct ServerDetail {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ToolDetail {
-    pub association_id: String,
-    pub server_tool_id: String,
+    pub ref_id: String,
     pub server_id: String,
     pub server_name: String,
     pub tool_name: String,

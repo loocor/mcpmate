@@ -1,12 +1,12 @@
 pub mod adapters;
-pub mod discovery;
 pub mod analyzer;
-pub mod mutate;
 pub mod detector;
+pub mod discovery;
 pub mod document;
 pub mod engine;
 pub mod error;
 pub mod models;
+pub mod mutate;
 pub mod service;
 pub mod source;
 pub mod storage;

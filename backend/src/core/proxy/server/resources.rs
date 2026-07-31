@@ -1,16 +1,15 @@
 use super::*;
-use crate::core::capability::naming::NamingKind;
+#[cfg(test)]
+use crate::core::capability::resource_registry::resolve_resource_route;
 use crate::core::capability::resource_registry::{
-    ResolvedResourceRoute, resolve_resource_route, rewrite_read_resource_result,
+    ResolvedResourceRoute, ResourceRouteSource, rewrite_read_resource_result,
 };
-use futures::StreamExt;
 use rmcp::ErrorData as McpError;
 use rmcp::model::{
     ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParams, ReadResourceRequestParams,
     ReadResourceResult,
 };
 use rmcp::service::RequestContext;
-use std::collections::HashSet;
 
 #[derive(Debug)]
 pub(super) struct ResolvedExternalResourceTarget {
@@ -28,6 +27,7 @@ impl ResolvedExternalResourceTarget {
     }
 }
 
+#[cfg(test)]
 pub(super) async fn resolve_external_resource_target(
     pool: &sqlx::Pool<sqlx::Sqlite>,
     external_uri: &str,
@@ -48,53 +48,37 @@ pub(super) async fn resolve_authorized_external_resource_target(
             None,
         ));
     };
-    let target = resolve_external_resource_target(&db.pool, external_uri)
+    let surface_route = server.resolve_active_resource_route(client, external_uri).await?;
+    let server_name: String = sqlx::query_scalar("SELECT name FROM server_config WHERE id = ?")
+        .bind(&surface_route.source_server_id)
+        .fetch_one(&db.pool)
         .await
-        .map_err(|error| McpError::invalid_params(format!("Invalid external resource URI: {error}"), None))?;
-    let canonical_uri = target.canonical_uri().to_string();
-
-    if matches!(client.config_mode.as_deref(), Some("unify")) {
-        let eligible_server_ids =
-            crate::core::proxy::server::load_unify_direct_exposure_eligible_server_ids(db).await?;
-        if !crate::core::proxy::server::unify_directly_exposed_resource_route_allowed(
-            client.unify_workspace.as_ref(),
-            &eligible_server_ids,
-            &target.server_id,
-            &target.route,
-        ) {
-            return Err(McpError::invalid_params(
-                format!("Resource '{canonical_uri}' is not directly exposed for this client"),
+        .map_err(|error| {
+            McpError::internal_error(format!("Failed to resolve pinned Resource source: {error}"), None)
+        })?;
+    let source = match (surface_route.upstream_template, surface_route.template_arguments) {
+        (Some(upstream_template), Some(arguments)) => ResourceRouteSource::Template {
+            upstream_template,
+            arguments,
+        },
+        (None, None) => ResourceRouteSource::Listed,
+        _ => {
+            return Err(McpError::internal_error(
+                "Active Surface Resource route has inconsistent template metadata".to_string(),
                 None,
             ));
         }
-    }
-
-    let visibility = crate::core::profile::visibility::ProfileVisibilityService::new(
-        server.database.clone(),
-        server.profile_service.clone(),
-    );
-    let snapshot = visibility
-        .resolve_snapshot_for_client(client)
-        .await
-        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
-    if let Err(error) = visibility
-        .assert_resource_allowed_with_snapshot(&snapshot, &canonical_uri)
-        .await
-    {
-        tracing::warn!(
-            resource = %canonical_uri,
-            client_id = %client.client_id,
-            profile_id = ?client.profile_id,
-            error = %error,
-            "External resource access denied by visibility policy"
-        );
-        return Err(McpError::invalid_params(
-            format!("Resource '{canonical_uri}' is not available for this client"),
-            None,
-        ));
-    }
-
-    Ok(target)
+    };
+    Ok(ResolvedExternalResourceTarget {
+        server_id: surface_route.source_server_id.clone(),
+        route: ResolvedResourceRoute {
+            server_id: surface_route.source_server_id,
+            server_name,
+            external_uri: surface_route.external_uri,
+            upstream_uri: surface_route.upstream_uri,
+            source,
+        },
+    })
 }
 
 fn map_resource_read_error(error: anyhow::Error) -> McpError {
@@ -115,135 +99,16 @@ pub(super) async fn list_resources(
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<ListResourcesResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
-    let unify_mode = matches!(client.config_mode.as_deref(), Some("unify"));
-    let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
-        server.database.clone(),
-        server.profile_service.clone(),
-    );
-    let snapshot = vis
-        .resolve_snapshot_for_client(&client)
-        .await
-        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-    let visible_server_ids = snapshot.server_ids.iter().cloned().collect::<HashSet<_>>();
-    let unify_direct_exposure_eligible_server_ids = if unify_mode {
-        if let Some(db) = &server.database {
-            crate::core::proxy::server::load_unify_direct_exposure_eligible_server_ids(db).await?
-        } else {
-            HashSet::new()
-        }
-    } else {
-        HashSet::new()
-    };
-    let mut resources: Vec<rmcp::model::Resource> = Vec::new();
-    let mut aggregate = crate::core::capability::aggregate::AggregateListStatus::new("resources");
-
-    if let Some(db) = &server.database {
-        let enabled_servers: Vec<(String, String)> = sqlx::query_as(
-            r#"
-            SELECT sc.id, sc.name
-            FROM server_config sc
-            WHERE sc.enabled = 1
-            ORDER BY sc.name, sc.id
-            "#,
-        )
-        .fetch_all(&db.pool)
-        .await
-        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
-
-        let pool = &server.connection_pool;
-
-        let mut tasks = Vec::new();
-        for (server_id, server_name) in enabled_servers {
-            if !visible_server_ids.contains(&server_id) {
-                continue;
-            }
-            let ctx = crate::core::capability::runtime::ListCtx {
-                capability: crate::core::capability::CapabilityType::Resources,
-                server_id: server_id.clone(),
-                refresh: Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
-                timeout: Some(std::time::Duration::from_secs(10)),
-                validation_session: None,
-                runtime_identity: client.runtime_identity(),
-                connection_selection: client.connection_selection(server_id.clone()),
-                visibility_snapshot: Some(std::sync::Arc::new(snapshot.clone())),
-                name_domain: crate::core::capability::runtime::NameDomain::External,
-            };
-            let pool = pool.clone();
-            let db = db.clone();
-            tasks.push(async move {
-                let service = crate::core::capability::read_service::CapabilityReadService::from_runtime(db, pool);
-                let resources = service
-                    .list(&ctx)
-                    .await
-                    .map_err(|error| error.to_string())
-                    .and_then(|result| {
-                        result
-                            .items
-                            .into_resources()
-                            .ok_or_else(|| "Resource listing returned a different capability kind".to_string())
-                    });
-                (server_id, server_name, resources)
-            });
-        }
-
-        for (server_id, server_name, result) in futures::stream::iter(tasks)
-            .buffer_unordered(crate::core::capability::facade::concurrency_limit())
-            .collect::<Vec<_>>()
-            .await
-        {
-            let resource_batch = match result {
-                Ok(resource_batch) => resource_batch,
-                Err(error) => {
-                    aggregate.record_failure(&server_id, &server_name, error);
-                    continue;
-                }
-            };
-            let server_resources = async {
-                if !unify_mode {
-                    return Ok(resource_batch);
-                }
-                let mut exposed = Vec::new();
-                for resource in resource_batch {
-                    let raw_resource_uri = crate::core::proxy::server::resolve_direct_surface_value(
-                        NamingKind::Resource,
-                        &server_id,
-                        resource.uri.as_ref(),
-                    )
-                    .await?;
-                    if crate::core::proxy::server::unify_directly_exposed_resource_allowed(
-                        client.unify_workspace.as_ref(),
-                        &unify_direct_exposure_eligible_server_ids,
-                        &server_id,
-                        raw_resource_uri.as_ref(),
-                    ) {
-                        exposed.push(resource);
-                    }
-                }
-                Ok::<_, anyhow::Error>(exposed)
-            }
-            .await;
-            match server_resources {
-                Ok(server_resources) => {
-                    aggregate.record_success();
-                    resources.extend(server_resources);
-                }
-                Err(error) => aggregate.record_failure(&server_id, &server_name, error),
-            }
-        }
-    }
-
-    resources = vis.filter_resources_with_snapshot(&snapshot, resources, Vec::new()).0;
-    aggregate
-        .finish_for_result(!resources.is_empty())
-        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
-
-    // Apply pagination
-    let page = server.paginator.paginate_resources(&_request, resources)?;
+    let surface = server.load_active_surface(&client).await?;
+    let page = server.paginator.paginate_resources(&_request, surface.resources())?;
 
     tracing::info!(
         total = page.items.len(),
         has_next = page.next_cursor.is_some(),
-        "Proxy listed resources"
+        consumer_id = %surface.consumer_id,
+        publication_id = %surface.publication_id,
+        generation = surface.generation,
+        "Proxy listed resources from active Surface publication"
     );
 
     Ok(ListResourcesResult {
@@ -259,144 +124,18 @@ pub(super) async fn list_resource_templates(
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<ListResourceTemplatesResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
-    let unify_mode = matches!(client.config_mode.as_deref(), Some("unify"));
-    let vis = crate::core::profile::visibility::ProfileVisibilityService::new(
-        server.database.clone(),
-        server.profile_service.clone(),
-    );
-    let snapshot = vis
-        .resolve_snapshot_for_client(&client)
-        .await
-        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-    let visible_server_ids = snapshot.server_ids.iter().cloned().collect::<HashSet<_>>();
-    let Some(db_ref) = &server.database else {
-        tracing::warn!("Database not available for server filtering; returning empty list");
-        return Ok(ListResourceTemplatesResult {
-            resource_templates: Vec::new(),
-            next_cursor: None,
-            ..Default::default()
-        });
-    };
-    let unify_direct_exposure_eligible_server_ids = if unify_mode {
-        crate::core::proxy::server::load_unify_direct_exposure_eligible_server_ids(db_ref).await?
-    } else {
-        HashSet::new()
-    };
-
-    let mut resource_templates: Vec<rmcp::model::ResourceTemplate> = Vec::new();
-    let mut aggregate = crate::core::capability::aggregate::AggregateListStatus::new("resource templates");
-
-    if let Some(db) = &server.database {
-        let enabled_servers: Vec<(String, String)> = sqlx::query_as(
-            r#"
-            SELECT sc.id, sc.name
-            FROM server_config sc
-            WHERE sc.enabled = 1
-            ORDER BY sc.name, sc.id
-            "#,
-        )
-        .fetch_all(&db.pool)
-        .await
-        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
-
-        let pool = &server.connection_pool;
-
-        let mut tasks = Vec::new();
-        for (server_id, server_name) in enabled_servers {
-            if !visible_server_ids.contains(&server_id) {
-                continue;
-            }
-            let ctx = crate::core::capability::runtime::ListCtx {
-                capability: crate::core::capability::CapabilityType::ResourceTemplates,
-                server_id: server_id.clone(),
-                refresh: Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
-                timeout: Some(std::time::Duration::from_secs(10)),
-                validation_session: None,
-                runtime_identity: client.runtime_identity(),
-                connection_selection: client.connection_selection(server_id.clone()),
-                visibility_snapshot: Some(std::sync::Arc::new(snapshot.clone())),
-                name_domain: crate::core::capability::runtime::NameDomain::External,
-            };
-            let pool = pool.clone();
-            let db = db.clone();
-            tasks.push(async move {
-                let service = crate::core::capability::read_service::CapabilityReadService::from_runtime(db, pool);
-                let templates = service
-                    .list(&ctx)
-                    .await
-                    .map_err(|error| error.to_string())
-                    .and_then(|result| {
-                        result
-                            .items
-                            .into_resource_templates()
-                            .ok_or_else(|| "Resource template listing returned a different capability kind".to_string())
-                    });
-                (server_id, server_name, templates)
-            });
-        }
-
-        for (server_id, server_name, result) in futures::stream::iter(tasks)
-            .buffer_unordered(crate::core::capability::facade::concurrency_limit())
-            .collect::<Vec<_>>()
-            .await
-        {
-            let template_batch = match result {
-                Ok(template_batch) => template_batch,
-                Err(error) => {
-                    aggregate.record_failure(&server_id, &server_name, error);
-                    continue;
-                }
-            };
-            let server_templates = async {
-                if !unify_mode {
-                    return Ok(template_batch);
-                }
-                let mut exposed = Vec::new();
-                for resource_template in template_batch {
-                    let raw_uri_template = crate::core::proxy::server::resolve_direct_surface_value(
-                        NamingKind::ResourceTemplate,
-                        &server_id,
-                        resource_template.uri_template.as_ref(),
-                    )
-                    .await?;
-                    if crate::core::proxy::server::unify_directly_exposed_template_allowed(
-                        client.unify_workspace.as_ref(),
-                        &unify_direct_exposure_eligible_server_ids,
-                        &server_id,
-                        &raw_uri_template,
-                    ) {
-                        exposed.push(resource_template);
-                    }
-                }
-                Ok::<_, anyhow::Error>(exposed)
-            }
-            .await;
-            match server_templates {
-                Ok(server_templates) => {
-                    aggregate.record_success();
-                    resource_templates.extend(server_templates);
-                }
-                Err(error) => aggregate.record_failure(&server_id, &server_name, error),
-            }
-        }
-    }
-
-    let resource_templates = vis
-        .filter_resources_with_snapshot(&snapshot, Vec::new(), resource_templates)
-        .1;
-    aggregate
-        .finish_for_result(!resource_templates.is_empty())
-        .map_err(|error| McpError::internal_error(error.to_string(), None))?;
-
-    // Apply pagination
+    let surface = server.load_active_surface(&client).await?;
     let page = server
         .paginator
-        .paginate_resource_templates(&_request, resource_templates)?;
+        .paginate_resource_templates(&_request, surface.resource_templates())?;
 
     tracing::info!(
         total = page.items.len(),
         has_next = page.next_cursor.is_some(),
-        "Proxy listed resource templates"
+        consumer_id = %surface.consumer_id,
+        publication_id = %surface.publication_id,
+        generation = surface.generation,
+        "Proxy listed Resource Templates from active Surface publication"
     );
 
     Ok(ListResourceTemplatesResult {
@@ -448,7 +187,7 @@ pub(super) async fn read_resource(
                     &server_filter,
                     mcpmate_capability_store::CapabilityKind::Resources,
                     None,
-                    &e.to_string(),
+                    &e,
                 )
                 .await;
             }

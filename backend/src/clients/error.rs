@@ -61,6 +61,9 @@ pub enum ConfigError {
     #[error("Data access failed: {0}")]
     DataAccessError(String),
 
+    #[error("Concurrent catalog change: {details}")]
+    ConcurrencyConflict { details: String },
+
     #[error("Client {identifier} is disabled and cannot be managed by MCPMate")]
     ClientDisabled { identifier: String },
 

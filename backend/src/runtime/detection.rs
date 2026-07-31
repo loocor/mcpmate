@@ -3,10 +3,7 @@
 //! Uses the unified resolver (managed → PATH → UV python) to locate commands,
 //! then probes each with `--version` to confirm it actually works.
 
-use std::{
-    process::Output,
-    time::Duration,
-};
+use std::{process::Output, time::Duration};
 
 use super::resolver::CommandResolver;
 use crate::common::MCPMatePaths;
@@ -73,12 +70,7 @@ impl RuntimeDetector {
     ) -> Option<RuntimeDetection> {
         let resolved = self.resolver.resolve(probe.command)?;
 
-        if let Some(output) = run_runtime_check_command(
-            resolved.path.as_os_str(),
-            probe.args,
-        )
-        .await
-        {
+        if let Some(output) = run_runtime_check_command(resolved.path.as_os_str(), probe.args).await {
             return Some(RuntimeDetection {
                 name: name.to_string(),
                 available: true,
@@ -114,11 +106,7 @@ async fn run_command_with_timeout(
     match tokio::time::timeout(timeout, command.output()).await {
         Ok(Ok(output)) if output.status.success() => Some(output),
         Ok(Ok(output)) => {
-            tracing::warn!(
-                "Runtime check command {:?} failed: exit={}",
-                program,
-                output.status
-            );
+            tracing::warn!("Runtime check command {:?} failed: exit={}", program, output.status);
             None
         }
         Ok(Err(e)) => {
@@ -157,7 +145,12 @@ mod tests {
     #[tokio::test]
     async fn runtime_check_command_times_out_for_long_running_process() {
         #[cfg(unix)]
-        let result = run_command_with_timeout(std::ffi::OsStr::new("sh"), &["-c", "sleep 1"], Duration::from_millis(50)).await;
+        let result = run_command_with_timeout(
+            std::ffi::OsStr::new("sh"),
+            &["-c", "sleep 1"],
+            Duration::from_millis(50),
+        )
+        .await;
 
         #[cfg(windows)]
         let result = run_command_with_timeout(

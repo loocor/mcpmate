@@ -36,7 +36,8 @@ use mcpmate::{
 };
 use mcpmate_capability_store::{
     CapabilityCatalog, CapabilityKind, DeclarationState, DerivedCapabilityCache, InventoryState, KindObservation,
-    SnapshotState, SqliteCapabilityCatalog,
+    SnapshotState, SqliteCapabilityCatalog, SqliteSurfaceStore, SurfaceManifest, SurfaceManifestEntryInput,
+    SurfacePublication,
 };
 use rmcp::{
     ServerHandler, ServiceExt as _,
@@ -51,28 +52,6 @@ use tokio::{
     sync::{Mutex, RwLock},
 };
 use tower::ServiceExt as _;
-
-struct EnvVarGuard {
-    key: &'static str,
-}
-
-impl EnvVarGuard {
-    fn set(
-        key: &'static str,
-        value: &str,
-    ) -> Self {
-        // SAFETY: these process-wide import retry keys are isolated by serial_test.
-        unsafe { std::env::set_var(key, value) };
-        Self { key }
-    }
-}
-
-impl Drop for EnvVarGuard {
-    fn drop(&mut self) {
-        // SAFETY: paired with set under the same serial test scope.
-        unsafe { std::env::remove_var(self.key) };
-    }
-}
 
 #[derive(Clone, Copy, Debug)]
 enum SurfaceKind {
@@ -151,6 +130,13 @@ fn build_proxy(database: Arc<Database>) -> ProxyServer {
 fn build_app_state(database: Arc<Database>) -> Arc<AppState> {
     let config = Arc::new(Config::default());
     let connection_pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(config, Some(database.clone()))));
+    build_app_state_with_pool(database, connection_pool)
+}
+
+fn build_app_state_with_pool(
+    database: Arc<Database>,
+    connection_pool: Arc<Mutex<UpstreamConnectionPool>>,
+) -> Arc<AppState> {
     let inspector_calls = Arc::new(InspectorCallRegistry::new());
     inspector_service::set_call_registry(inspector_calls.clone());
 
@@ -163,7 +149,40 @@ fn build_app_state(database: Arc<Database>) -> Arc<AppState> {
         audit_database: None,
         audit_service: None,
         config_application_state: Arc::new(ConfigApplicationStateManager::new()),
-        unified_query: None,
+        client_service: None,
+        inspector_calls,
+        inspector_sessions: Arc::new(InspectorSessionManager::new()),
+        oauth_manager: RwLock::new(None),
+        secret_store: RwLock::new(None),
+        secret_store_readiness: RwLock::new(mcpmate::api::routes::unavailable_secret_store_readiness(
+            "test_unavailable",
+        )),
+    })
+}
+
+async fn build_capability_refresh_app_state(
+    database: Arc<Database>,
+    server_id: &str,
+) -> Arc<AppState> {
+    let (_, server_config) = load_server_config_strict(&database, server_id, None)
+        .await
+        .expect("load capability refresh server config");
+    let config = Arc::new(Config {
+        mcp_servers: HashMap::from([(server_id.to_string(), server_config)]),
+        ..Default::default()
+    });
+    let inspector_calls = Arc::new(InspectorCallRegistry::new());
+    inspector_service::set_call_registry(inspector_calls.clone());
+
+    Arc::new(AppState {
+        connection_pool: Arc::new(Mutex::new(UpstreamConnectionPool::new(config, Some(database.clone())))),
+        metrics_collector: Arc::new(MetricsCollector::new(std::time::Duration::from_secs(1))),
+        http_proxy: None,
+        profile_merge_service: None,
+        database: Some(database),
+        audit_database: None,
+        audit_service: None,
+        config_application_state: Arc::new(ConfigApplicationStateManager::new()),
         client_service: None,
         inspector_calls,
         inspector_sessions: Arc::new(InspectorSessionManager::new()),
@@ -180,6 +199,7 @@ fn write_counted_stdio_fixture(temp_dir: &TempDir) -> PathBuf {
     let script = r#"
 import json
 import sys
+import time
 
 counter_path = sys.argv[1]
 label = sys.argv[2]
@@ -200,6 +220,7 @@ for line in sys.stdin:
         continue
     if mode in (
         "count_methods",
+        "undeclared_count_methods",
         "method_not_found_templates_count_methods",
         "paginated_tools_method_not_found_templates_count_methods",
     ):
@@ -212,18 +233,26 @@ for line in sys.stdin:
     if method == "initialize":
         if mode not in (
             "count_methods",
+            "undeclared_count_methods",
             "method_not_found_templates_count_methods",
             "paginated_tools_method_not_found_templates_count_methods",
         ):
             with open(counter_path, "a", encoding="utf-8") as counter:
                 counter.write("start\n")
                 counter.flush()
+        capabilities = {} if mode == "undeclared_count_methods" else {
+            "tools": {}, "prompts": {}, "resources": {}
+        }
         reply(request_id, {
             "protocolVersion": protocol_version,
-            "capabilities": {"tools": {}, "prompts": {}, "resources": {}},
+            "capabilities": capabilities,
             "serverInfo": {"name": label, "version": "1.0.0"}
         })
     elif method == "tools/list":
+        if mode == "slow_tools":
+            time.sleep(0.25)
+        elif mode == "batch_slow_tools":
+            time.sleep(2.0)
         if mode == "paginated_tools_method_not_found_templates_count_methods":
             cursor = (request.get("params") or {}).get("cursor")
             if cursor is None:
@@ -620,12 +649,65 @@ async fn bind_client(
                 unify_workspace: None,
                 surface_fingerprint: None,
                 transport: ClientTransport::StreamableHttp,
-                source: ClientIdentitySource::SessionBinding,
+                source: ClientIdentitySource::ManagedQuery,
                 observed_client_info: None,
             },
         )
         .await
         .expect("bind managed client session");
+}
+
+async fn publish_current_surface(
+    database: &Database,
+    consumer_id: &str,
+    server_ids: &[&str],
+) {
+    sqlx::query(
+        "INSERT INTO client (id, name, identifier, config_mode, approval_status) VALUES (?, ?, ?, 'hosted', 'approved')",
+    )
+        .bind(consumer_id)
+        .bind(consumer_id)
+        .bind(consumer_id)
+        .execute(&database.pool)
+        .await
+        .expect("insert managed Consumer");
+    let catalog = SqliteCapabilityCatalog::new(database.pool.clone());
+    let mut entries = Vec::new();
+    for server_id in server_ids {
+        let snapshot = catalog
+            .load_snapshot(server_id)
+            .await
+            .expect("load current catalog snapshot")
+            .expect("current catalog snapshot exists");
+        entries.extend(snapshot.records.into_iter().map(|record| {
+            let kind = record.kind();
+            SurfaceManifestEntryInput::new(record.ref_id, record.capability_id, kind, record.external_key)
+        }));
+    }
+    let manifest = SurfaceManifest::compile(consumer_id, entries).expect("compile current Surface manifest");
+    let store = SqliteSurfaceStore::new(database.pool.clone());
+    let mut transaction = database.pool.begin().await.expect("begin Surface publication");
+    store
+        .insert_manifest_in_transaction(&mut transaction, &manifest)
+        .await
+        .expect("insert current Surface manifest");
+    store
+        .publish_and_bind_in_transaction(
+            &mut transaction,
+            &SurfacePublication::new(
+                format!("publication-{consumer_id}"),
+                consumer_id,
+                manifest.manifest_id,
+                None,
+                "test_fixture",
+                "test",
+                None,
+            ),
+            None,
+        )
+        .await
+        .expect("publish current Surface");
+    transaction.commit().await.expect("commit current Surface publication");
 }
 
 async fn call_managed_mcp_list(
@@ -669,17 +751,25 @@ async fn read_json(response: axum::response::Response) -> Value {
 }
 
 #[test]
-fn public_capability_surfaces_do_not_bypass_the_read_service() {
+fn public_capability_surfaces_use_their_authoritative_readers() {
     for path in [
         "src/core/proxy/server/tools.rs",
         "src/core/proxy/server/prompts.rs",
         "src/core/proxy/server/resources.rs",
-        "src/mcper/builtin/broker.rs",
-        "src/api/handlers/server/tools.rs",
-        "src/api/handlers/server/prompts.rs",
-        "src/api/handlers/server/resources.rs",
-        "src/api/handlers/server/capability.rs",
     ] {
+        let source = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(path))
+            .unwrap_or_else(|error| panic!("read {path}: {error}"));
+        assert!(
+            source.contains("load_active_surface"),
+            "{path} does not list from the active Surface publication"
+        );
+        assert!(
+            !source.contains("CapabilityReadService::from_runtime"),
+            "{path} recomputes a managed Consumer surface at request time"
+        );
+    }
+
+    for path in ["src/mcper/builtin/broker.rs", "src/api/handlers/server/capability.rs"] {
         let source = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(path))
             .unwrap_or_else(|error| panic!("read {path}: {error}"));
         assert!(
@@ -689,6 +779,27 @@ fn public_capability_surfaces_do_not_bypass_the_read_service() {
         assert!(
             source.contains("CapabilityReadService::from_runtime"),
             "{path} does not call the unique CapabilityReadService"
+        );
+    }
+
+    for path in [
+        "src/api/handlers/server/tools.rs",
+        "src/api/handlers/server/prompts.rs",
+        "src/api/handlers/server/resources.rs",
+    ] {
+        let source = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(path))
+            .unwrap_or_else(|error| panic!("read {path}: {error}"));
+        assert!(
+            !source.contains("runtime::list("),
+            "{path} bypasses CapabilityReadService"
+        );
+        assert!(
+            source.contains("list_server_capability"),
+            "{path} does not route through the shared capability list reader"
+        );
+        assert!(
+            !source.contains("CapabilityReadService::from_runtime"),
+            "{path} should not construct CapabilityReadService directly"
         );
     }
 
@@ -981,27 +1092,22 @@ async fn validation_sync_template_method_not_found_is_unsupported_complete() {
         "paginated_tools_method_not_found_templates_count_methods",
     )
     .await;
-    let (_, server_config) = load_server_config_strict(&database, server_id, None)
+    let state = build_capability_refresh_app_state(database.clone(), server_id).await;
+    let app = Router::new()
+        .route("/", post(server_handlers::refresh_server_capabilities))
+        .with_state(state);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(json!({"id": server_id}).to_string()))
+                .expect("build validation refresh request"),
+        )
         .await
-        .expect("load validation config");
-    let pool = Mutex::new(UpstreamConnectionPool::new(
-        Arc::new(Config {
-            mcp_servers: HashMap::from([(server_id.to_string(), server_config)]),
-            ..Default::default()
-        }),
-        Some(database.clone()),
-    ));
-
-    server_config::capabilities::sync_via_connection_pool(
-        &pool,
-        &database.pool,
-        database.capability_cache.as_ref(),
-        server_id,
-        server_name,
-        5,
-    )
-    .await
-    .expect("MethodNotFound must be a successful unsupported observation");
+        .expect("call validation refresh");
+    assert_eq!(response.status(), StatusCode::OK);
 
     let snapshot = SqliteCapabilityCatalog::new(database.pool.clone())
         .load_snapshot(server_id)
@@ -1049,7 +1155,170 @@ async fn validation_sync_template_method_not_found_is_unsupported_complete() {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn validation_sync_terminal_failure_records_scoped_evidence() {
+async fn management_discovery_skips_capability_kinds_not_declared_at_initialize() {
+    let temp_dir = TempDir::new().expect("create test directory");
+    let database = open_database(temp_dir.path().join("undeclared-capabilities.db")).await;
+    let script = write_counted_stdio_fixture(&temp_dir);
+    let operations = temp_dir.path().join("undeclared-capabilities.log");
+    let server_id = "server-undeclared-capabilities";
+    let server_name = "undeclared_capabilities";
+    insert_stdio_server_with_mode(
+        &database,
+        &script,
+        &operations,
+        server_id,
+        server_name,
+        "undeclared_count_methods",
+    )
+    .await;
+    let state = build_capability_refresh_app_state(database.clone(), server_id).await;
+    let app = Router::new()
+        .route("/", post(server_handlers::refresh_server_capabilities))
+        .with_state(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(json!({"id": server_id}).to_string()))
+                .expect("build validation refresh request"),
+        )
+        .await
+        .expect("call validation refresh");
+    assert_eq!(response.status(), StatusCode::OK);
+    for operation in [
+        "tools/list",
+        "prompts/list",
+        "resources/list",
+        "resources/templates/list",
+    ] {
+        assert_eq!(
+            operation_count(&operations, operation),
+            0,
+            "undeclared capability must not be requested: {operation}"
+        );
+    }
+    let snapshot = SqliteCapabilityCatalog::new(database.pool.clone())
+        .load_snapshot(server_id)
+        .await
+        .expect("load capability snapshot")
+        .expect("capability snapshot exists");
+    assert!(snapshot.kind_states.iter().all(|state| {
+        state.declaration == DeclarationState::Unsupported && state.inventory == InventoryState::Complete
+    }));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn server_capability_refresh_commits_one_complete_catalog_observation() {
+    let temp_dir = TempDir::new().expect("create test directory");
+    let database = open_database(temp_dir.path().join("server-capability-refresh.db")).await;
+    let script = write_counted_stdio_fixture(&temp_dir);
+    let operations = temp_dir.path().join("server-capability-refresh.log");
+    let server_id = "server-capability-refresh";
+    let server_name = "capability_refresh_fixture";
+    insert_stdio_server_with_mode(&database, &script, &operations, server_id, server_name, "count_methods").await;
+    let state = build_capability_refresh_app_state(database.clone(), server_id).await;
+    let app = Router::new().merge(mcpmate::api::routes::server::routes(state));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/mcp/servers/capabilities/refresh")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&json!({ "id": server_id })).expect("encode refresh request"),
+                ))
+                .expect("build capability refresh request"),
+        )
+        .await
+        .expect("call capability refresh route");
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("read capability refresh response");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "capability refresh failed: {}",
+        String::from_utf8_lossy(&bytes)
+    );
+    let body: Value = serde_json::from_slice(&bytes).expect("decode capability refresh response");
+
+    assert_eq!(body.pointer("/data/server_id"), Some(&json!(server_id)));
+    assert_eq!(body.pointer("/data/catalog_revision"), Some(&json!(1)));
+    assert_eq!(body.pointer("/data/catalog_changed"), Some(&json!(true)));
+    for operation in [
+        "initialize",
+        "tools/list",
+        "prompts/list",
+        "resources/list",
+        "resources/templates/list",
+    ] {
+        assert_eq!(
+            operation_count(&operations, operation),
+            1,
+            "server refresh must execute {operation} exactly once"
+        );
+    }
+
+    let snapshot = SqliteCapabilityCatalog::new(database.pool.clone())
+        .load_snapshot(server_id)
+        .await
+        .expect("load refreshed catalog")
+        .expect("refreshed catalog exists");
+    assert_eq!(snapshot.revision, 1);
+    assert_eq!(snapshot.records.len(), 4);
+    assert_eq!(snapshot.kind_states.len(), 4);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/mcp/servers/capabilities/refresh")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&json!({ "id": server_id })).expect("encode second refresh request"),
+                ))
+                .expect("build second capability refresh request"),
+        )
+        .await
+        .expect("call capability refresh route a second time");
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("read second capability refresh response");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "second capability refresh failed: {}",
+        String::from_utf8_lossy(&bytes)
+    );
+    let body: Value = serde_json::from_slice(&bytes).expect("decode second capability refresh response");
+    assert_eq!(body.pointer("/data/catalog_revision"), Some(&json!(1)));
+    assert_eq!(body.pointer("/data/catalog_changed"), Some(&json!(false)));
+    for operation in [
+        "initialize",
+        "tools/list",
+        "prompts/list",
+        "resources/list",
+        "resources/templates/list",
+    ] {
+        assert_eq!(
+            operation_count(&operations, operation),
+            2,
+            "each server refresh must execute {operation} exactly once"
+        );
+    }
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn validation_sync_kind_failure_records_scoped_evidence() {
     let temp_dir = TempDir::new().expect("create test directory");
     let database = open_database(temp_dir.path().join("validation-terminal-failure.db")).await;
     let script = write_counted_stdio_fixture(&temp_dir);
@@ -1057,31 +1326,25 @@ async fn validation_sync_terminal_failure_records_scoped_evidence() {
     let server_id = "server-validation-terminal-failure";
     let server_name = "validation_failure_fixture";
     insert_stdio_server_with_mode(&database, &script, &counter, server_id, server_name, "fail_resources").await;
-    let (_, server_config) = load_server_config_strict(&database, server_id, None)
-        .await
-        .expect("load validation config");
-    let pool = Mutex::new(UpstreamConnectionPool::new(
-        Arc::new(Config {
-            mcp_servers: HashMap::from([(server_id.to_string(), server_config)]),
-            ..Default::default()
-        }),
-        Some(database.clone()),
-    ));
     let mut receiver = EventBus::global().subscribe_async();
 
-    let error = server_config::capabilities::sync_via_connection_pool(
-        &pool,
-        &database.pool,
-        database.capability_cache.as_ref(),
-        server_id,
-        server_name,
-        5,
-    )
-    .await
-    .expect_err("resource inventory failure must remain visible to CRUD callers");
+    let state = build_capability_refresh_app_state(database.clone(), server_id).await;
+    let app = Router::new().merge(mcpmate::api::routes::server::routes(state));
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/mcp/servers/capabilities/refresh")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(json!({"id": server_id}).to_string()))
+                .expect("build failing validation refresh request"),
+        )
+        .await
+        .expect("call failing validation refresh");
     assert!(
-        error.to_string().contains("resources/list"),
-        "typed operation was lost: {error:#}"
+        response.status().is_server_error(),
+        "inventory failure must remain visible to refresh callers"
     );
 
     let snapshot = SqliteCapabilityCatalog::new(database.pool.clone())
@@ -1089,17 +1352,55 @@ async fn validation_sync_terminal_failure_records_scoped_evidence() {
         .await
         .expect("load validation failure")
         .expect("validation failure evidence exists");
-    assert_eq!(snapshot.state, SnapshotState::Unavailable);
+    assert_eq!(snapshot.state, SnapshotState::Ready);
     assert_eq!(snapshot.server_name, server_name);
-    let expected_identity = format!("instance=Some(\"validation-{server_name}-api\") generation=None");
-    let reason = snapshot.last_error.as_deref().expect("failure reason exists");
+    let resources = snapshot
+        .kind_states
+        .iter()
+        .find(|state| state.kind == CapabilityKind::Resources)
+        .expect("resource failure state exists");
+    assert_eq!(resources.inventory, InventoryState::Failed);
+    let reason = resources.error.as_deref().expect("resource failure reason exists");
     assert!(reason.contains(&format!(
         "server_id={server_id} server_name={server_name} kinds=[resources]"
     )));
-    assert!(reason.contains(&expected_identity), "owner evidence mismatch: {reason}");
+    assert!(
+        reason.contains(&format!("instance=Some(\"validation-{server_name}-")) && reason.contains("generation=Some("),
+        "owner evidence mismatch: {reason}"
+    );
     assert!(
         reason.contains("resource inventory failed"),
         "upstream cause missing: {reason}"
+    );
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!("/mcp/servers/capabilities/lists?id={server_id}&refresh=auto"))
+                .body(axum::body::Body::empty())
+                .expect("build batch list request"),
+        )
+        .await
+        .expect("call batch list route");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = serde_json::from_slice(
+        &to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read batch list response"),
+    )
+    .expect("decode batch list response");
+    assert_eq!(body.pointer("/data/resources/state"), Some(&json!("failed")));
+    assert_eq!(body.pointer("/data/resources/items"), Some(&json!([])));
+    assert!(
+        body.pointer("/data/resources/degraded_reason")
+            .and_then(Value::as_str)
+            .is_some_and(|reason| reason.contains("resource inventory failed"))
+    );
+    assert_eq!(body.pointer("/data/tools/state"), Some(&json!("ok")));
+    assert_eq!(
+        body.pointer("/data/tools/items/0/name"),
+        Some(&json!("validation_failure_fixture_tool"))
     );
 
     let mut events = CatalogEventCounts::default();
@@ -1233,9 +1534,7 @@ async fn event_driven_validation_template_method_not_found_is_unsupported_comple
 
 #[tokio::test]
 #[serial_test::serial]
-async fn import_retry_records_terminal_inventory_failure_once() {
-    let _retry_guard = EnvVarGuard::set("MCPMATE_IMPORT_CAP_SYNC_RETRIES", "1");
-    let _backoff_guard = EnvVarGuard::set("MCPMATE_IMPORT_CAP_SYNC_BACKOFF_MS", "1");
+async fn import_kind_failure_records_one_scoped_observation() {
     let temp_dir = TempDir::new().expect("create test directory");
     let database = open_database(temp_dir.path().join("import-terminal-failure.db")).await;
     let script = write_counted_stdio_fixture(&temp_dir);
@@ -1248,9 +1547,8 @@ async fn import_retry_records_terminal_inventory_failure_once() {
     )));
     let mut receiver = EventBus::global().subscribe_async();
     let outcome = server_config::import_batch(
-        &database.pool,
-        database.capability_cache.clone(),
-        &pool,
+        database.clone(),
+        Some(&pool),
         HashMap::from([(
             server_name.to_string(),
             ServersImportConfig {
@@ -1292,17 +1590,27 @@ async fn import_retry_records_terminal_inventory_failure_once() {
     })
     .await
     .expect("terminal import failure must become durable evidence");
-    assert_eq!(snapshot.state, SnapshotState::Unavailable);
+    assert_eq!(snapshot.state, SnapshotState::Ready);
     assert_eq!(
         snapshot.revision, 1,
-        "intermediate retry failures must not commit evidence"
+        "one import discovery must commit one catalog observation"
     );
-    let reason = snapshot.last_error.as_deref().expect("import failure reason exists");
+    let resources = snapshot
+        .kind_states
+        .iter()
+        .find(|state| state.kind == CapabilityKind::Resources)
+        .expect("resource failure state exists");
+    assert_eq!(resources.inventory, InventoryState::Failed);
+    let reason = resources
+        .error
+        .as_deref()
+        .expect("import resource failure reason exists");
     assert!(reason.contains(&format!(
         "server_id={server_id} server_name={server_name} kinds=[resources]"
     )));
-    assert!(reason.contains("generation=None"));
+    assert!(reason.contains("generation=Some("));
     assert!(reason.contains("resource inventory failed"));
+    assert_eq!(start_count(&counter), 1, "one import must create one discovery owner");
 
     let mut events = CatalogEventCounts::default();
     tokio::time::timeout(Duration::from_secs(1), async {
@@ -1317,6 +1625,242 @@ async fn import_retry_records_terminal_inventory_failure_once() {
         events.observe(event);
     }
     events.assert_exactly_one(&server_id);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn import_and_management_read_share_one_discovery_owner() {
+    let temp_dir = TempDir::new().expect("create test directory");
+    let database = open_database(temp_dir.path().join("import-management-single-flight.db")).await;
+    let script = write_counted_stdio_fixture(&temp_dir);
+    let counter = temp_dir.path().join("import-management-single-flight.log");
+    let server_name = "import_management_single_flight";
+    let python = which::which("python3").expect("python3 is required for the import fixture");
+    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+        Arc::new(Config::default()),
+        Some(database.clone()),
+    )));
+
+    let outcome = server_config::import_batch(
+        database.clone(),
+        Some(&pool),
+        HashMap::from([(
+            server_name.to_string(),
+            ServersImportConfig {
+                kind: "stdio".to_string(),
+                command: Some(python.to_string_lossy().into_owned()),
+                args: Some(vec![
+                    script.to_string_lossy().into_owned(),
+                    counter.to_string_lossy().into_owned(),
+                    server_name.to_string(),
+                    protocol::CURRENT_VERSION.to_string(),
+                    "slow_tools".to_string(),
+                ]),
+                url: None,
+                env: None,
+                headers: None,
+                source: None,
+                meta: None,
+            },
+        )]),
+        server_config::ImportOptions::dashboard_import(false, None),
+    )
+    .await
+    .expect("schedule imported capability discovery");
+    assert!(outcome.scheduled);
+
+    let server = server_config::get_server(&database.pool, server_name)
+        .await
+        .expect("load imported server")
+        .expect("imported server exists");
+    let server_id = server.id.expect("imported server has stable id");
+    assert!(
+        pool.lock().await.config.mcp_servers.contains_key(&server_id),
+        "completed import must synchronize the production pool configuration"
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while start_count(&counter) == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("import discovery owner must start");
+
+    let app = Router::new()
+        .route("/", get(server_handlers::server_capability_lists))
+        .with_state(build_app_state_with_pool(database.clone(), pool.clone()));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/?id={server_id}"))
+                .body(axum::body::Body::empty())
+                .expect("build management capability request"),
+        )
+        .await
+        .expect("call management capability list");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    assert_eq!(
+        start_count(&counter),
+        1,
+        "import and management reads must join the same per-server discovery"
+    );
+    let snapshot = SqliteCapabilityCatalog::new(database.pool.clone())
+        .load_snapshot(&server_id)
+        .await
+        .expect("load imported capability catalog")
+        .expect("imported capability catalog exists");
+    assert_eq!(snapshot.state, SnapshotState::Ready);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn refresh_and_management_read_share_one_discovery_owner() {
+    let temp_dir = TempDir::new().expect("create test directory");
+    let database = open_database(temp_dir.path().join("refresh-management-single-flight.db")).await;
+    let script = write_counted_stdio_fixture(&temp_dir);
+    let counter = temp_dir.path().join("refresh-management-single-flight.log");
+    let server_id = "server-refresh-management-single-flight";
+    let server_name = "refresh_management_single_flight";
+    insert_stdio_server_with_mode(&database, &script, &counter, server_id, server_name, "slow_tools").await;
+    let state = build_capability_refresh_app_state(database, server_id).await;
+    let app = Router::new()
+        .route("/refresh", post(server_handlers::refresh_server_capabilities))
+        .route("/lists", get(server_handlers::server_capability_lists))
+        .with_state(state);
+
+    let refresh_app = app.clone();
+    let refresh = tokio::spawn(async move {
+        refresh_app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/refresh")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(json!({"id": server_id}).to_string()))
+                    .expect("build capability refresh request"),
+            )
+            .await
+            .expect("call capability refresh")
+    });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while start_count(&counter) == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("refresh discovery owner must start");
+
+    let list_response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/lists?id={server_id}"))
+                .body(axum::body::Body::empty())
+                .expect("build management capability request"),
+        )
+        .await
+        .expect("call management capability list");
+    let refresh_response = refresh.await.expect("join capability refresh");
+    assert_eq!(refresh_response.status(), StatusCode::OK);
+    assert_eq!(list_response.status(), StatusCode::OK);
+    assert_eq!(
+        start_count(&counter),
+        1,
+        "refresh and management reads must join the same per-server discovery"
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn batch_import_starts_two_servers_without_serializing_discovery() {
+    let temp_dir = TempDir::new().expect("create test directory");
+    let database = open_database(temp_dir.path().join("batch-import-discovery.db")).await;
+    let script = write_counted_stdio_fixture(&temp_dir);
+    let python = which::which("python3").expect("python3 is required for the import fixture");
+    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+        Arc::new(Config::default()),
+        Some(database.clone()),
+    )));
+    let fixtures = ["batch_discovery_one", "batch_discovery_two", "batch_discovery_three"]
+        .into_iter()
+        .map(|server_name| {
+            let counter = temp_dir.path().join(format!("{server_name}.log"));
+            (server_name.to_string(), counter)
+        })
+        .collect::<Vec<_>>();
+    let items = fixtures
+        .iter()
+        .map(|(server_name, counter)| {
+            let config = ServersImportConfig {
+                kind: "stdio".to_string(),
+                command: Some(python.to_string_lossy().into_owned()),
+                args: Some(vec![
+                    script.to_string_lossy().into_owned(),
+                    counter.to_string_lossy().into_owned(),
+                    server_name.clone(),
+                    protocol::CURRENT_VERSION.to_string(),
+                    "batch_slow_tools".to_string(),
+                ]),
+                url: None,
+                env: None,
+                headers: None,
+                source: None,
+                meta: None,
+            };
+            (server_name.clone(), config)
+        })
+        .collect();
+
+    let outcome = server_config::import_batch(
+        database.clone(),
+        Some(&pool),
+        items,
+        server_config::ImportOptions::dashboard_import(false, None),
+    )
+    .await
+    .expect("schedule batch capability discovery");
+    assert_eq!(outcome.imported.len(), 3);
+
+    tokio::time::timeout(Duration::from_millis(1500), async {
+        loop {
+            let starts = fixtures.iter().map(|(_, counter)| start_count(counter)).sum::<usize>();
+            if starts >= 2 {
+                assert_eq!(starts, 2, "batch discovery concurrency must remain bounded");
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("two imported servers must begin discovery concurrently");
+
+    let catalog = SqliteCapabilityCatalog::new(database.pool.clone());
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let mut ready = 0;
+            for (server_name, _) in &fixtures {
+                let server = server_config::get_server(&database.pool, server_name)
+                    .await
+                    .expect("load imported server")
+                    .expect("imported server exists");
+                let server_id = server.id.expect("imported server has stable id");
+                if catalog
+                    .load_snapshot(&server_id)
+                    .await
+                    .expect("load imported catalog")
+                    .is_some_and(|snapshot| snapshot.state == SnapshotState::Ready)
+                {
+                    ready += 1;
+                }
+            }
+            if ready == fixtures.len() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("all imported capability catalogs must become ready");
 }
 
 #[tokio::test]
@@ -1474,7 +2018,7 @@ async fn successful_production_startup_has_one_capability_sync_owner() {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn missing_and_invalidated_catalog_recover_through_each_mcp_list_surface() {
+async fn active_publication_never_recovers_or_recomputes_during_mcp_list_requests() {
     let temp_dir = TempDir::new().expect("create test directory");
     let database = open_database(temp_dir.path().join("mcp-recovery.db")).await;
     let script = write_counted_stdio_fixture(&temp_dir);
@@ -1490,64 +2034,54 @@ async fn missing_and_invalidated_catalog_recover_through_each_mcp_list_surface()
     )
     .await;
     let profile_id = insert_active_profile(&database, &["server-target", "server-unrelated"]).await;
+    commit_ready_catalog(&database, "server-target", "target_fixture", true).await;
     commit_ready_catalog(&database, "server-unrelated", "unrelated_fixture", false).await;
 
-    let proxy = build_proxy(database.clone());
     let client_id = "capability-surface-client";
+    publish_current_surface(&database, client_id, &["server-target"]).await;
+    let proxy = build_proxy(database.clone());
     let session_id = "capability-surface-session";
     bind_client(&proxy, client_id, session_id, &profile_id).await;
     let (context, client_service_guard, server_service_guard) = downstream_request_context(client_id, session_id).await;
 
+    let mut published = Vec::new();
     for kind in SurfaceKind::ALL {
-        let starts_before = start_count(&target_counter);
-        let first = call_managed_mcp_list(&proxy, kind, context.clone()).await;
+        let payload = call_managed_mcp_list(&proxy, kind, context.clone()).await;
         assert!(
-            first
+            payload
                 .pointer(kind.protocol_items_pointer())
                 .and_then(Value::as_array)
                 .is_some_and(|items| !items.is_empty()),
-            "{} missing-catalog recovery returned no protocol items: {first}",
+            "{} active publication returned no protocol items: {payload}",
             kind.label()
         );
-        assert_eq!(
-            start_count(&target_counter),
-            starts_before + 1,
-            "{} missing catalog should start only the target upstream once",
-            kind.label()
-        );
-        assert_eq!(
-            start_count(&unrelated_counter),
-            0,
-            "{} target recovery must not start an unrelated enabled server",
-            kind.label()
-        );
+        published.push((kind, payload));
+    }
+    SqliteCapabilityCatalog::new(database.pool.clone())
+        .invalidate_server("server-target", "public surface invalidation test")
+        .await
+        .expect("invalidate target catalog");
+    database.capability_cache.invalidate_server("server-target").await;
 
-        SqliteCapabilityCatalog::new(database.pool.clone())
-            .invalidate_server("server-target", "public surface invalidation test")
-            .await
-            .expect("invalidate target catalog");
-        database.capability_cache.invalidate_server("server-target").await;
-
-        let recovered = call_managed_mcp_list(&proxy, kind, context.clone()).await;
+    for (kind, expected) in published {
+        let after_invalidation = call_managed_mcp_list(&proxy, kind, context.clone()).await;
         assert_eq!(
-            start_count(&target_counter),
-            starts_before + 2,
-            "{} invalidated catalog should start only the target upstream once",
-            kind.label()
-        );
-        assert_eq!(
-            start_count(&unrelated_counter),
-            0,
-            "{} invalidated recovery must leave the unrelated server stopped",
-            kind.label()
-        );
-        assert_eq!(
-            first,
-            recovered,
-            "{} recovery changed the protocol payload",
+            expected,
+            after_invalidation,
+            "{} request-time read changed the pinned publication",
             kind.label()
         );
     }
+    assert_eq!(
+        start_count(&target_counter),
+        0,
+        "managed MCP list requests must not start the target upstream"
+    );
+    assert_eq!(
+        start_count(&unrelated_counter),
+        0,
+        "managed MCP list requests must not start an unrelated upstream"
+    );
 
     drop((client_service_guard, server_service_guard));
 }
@@ -1563,11 +2097,12 @@ async fn ready_sqlite_catalog_survives_restart_through_each_mcp_list_surface_wit
     insert_stdio_server(&first_database, &script, &counter, "server-restart", "restart_fixture").await;
     let profile_id = insert_active_profile(&first_database, &["server-restart"]).await;
     commit_ready_catalog(&first_database, "server-restart", "restart_fixture", true).await;
+    let client_id = "restart-client";
+    publish_current_surface(&first_database, client_id, &["server-restart"]).await;
     first_database.pool.close().await;
 
     let restarted_database = open_database(database_path).await;
     let proxy = build_proxy(restarted_database);
-    let client_id = "restart-client";
     let session_id = "restart-session";
     bind_client(&proxy, client_id, session_id, &profile_id).await;
     let (context, client_service_guard, server_service_guard) = downstream_request_context(client_id, session_id).await;
@@ -1594,7 +2129,7 @@ async fn ready_sqlite_catalog_survives_restart_through_each_mcp_list_surface_wit
 
 #[tokio::test]
 #[serial_test::serial]
-async fn invalidated_full_catalog_does_not_resurrect_an_unselected_prompt_after_tool_recovery() {
+async fn invalidated_catalog_cannot_mutate_a_pinned_surface_without_materialization() {
     let temp_dir = TempDir::new().expect("create test directory");
     let database = open_database(temp_dir.path().join("mcp-invalidated-full.db")).await;
     let script = write_counted_stdio_fixture(&temp_dir);
@@ -1639,8 +2174,9 @@ async fn invalidated_full_catalog_does_not_resurrect_an_unselected_prompt_after_
             .any(|record| record.kind() == CapabilityKind::Prompts)
     );
 
-    let proxy = build_proxy(database.clone());
     let client_id = "invalidated-full-client";
+    publish_current_surface(&database, client_id, &[server_id]).await;
+    let proxy = build_proxy(database.clone());
     let session_id = "invalidated-full-session";
     bind_client(&proxy, client_id, session_id, &profile_id).await;
     let (context, client_service_guard, server_service_guard) = downstream_request_context(client_id, session_id).await;
@@ -1658,30 +2194,26 @@ async fn invalidated_full_catalog_does_not_resurrect_an_unselected_prompt_after_
         .expect("invalidate full catalog");
     database.capability_cache.invalidate_server(server_id).await;
 
-    let recovered_tools = call_managed_mcp_list(&proxy, SurfaceKind::Tools, context.clone()).await;
+    let pinned_tools = call_managed_mcp_list(&proxy, SurfaceKind::Tools, context.clone()).await;
     assert!(
-        recovered_tools.to_string().contains("current_fixture_tool"),
-        "tool recovery did not return the current live payload: {recovered_tools}"
+        pinned_tools.to_string().contains("current_fixture_tool"),
+        "pinned Surface did not retain the published tool: {pinned_tools}"
     );
     assert_eq!(
         start_count(&counter),
-        1,
-        "tool recovery did not start upstream exactly once"
+        0,
+        "tool list recomputed an invalidated catalog at request time"
     );
 
-    let recovered_prompts = call_managed_mcp_list(&proxy, SurfaceKind::Prompts, context.clone()).await;
+    let pinned_prompts = call_managed_mcp_list(&proxy, SurfaceKind::Prompts, context.clone()).await;
     assert_eq!(
         start_count(&counter),
-        2,
-        "prompt read reused the invalidated Complete state instead of starting upstream"
+        0,
+        "prompt list recomputed an invalidated catalog at request time"
     );
     assert!(
-        recovered_prompts.to_string().contains("current_fixture_prompt"),
-        "prompt recovery did not return the current live payload: {recovered_prompts}"
-    );
-    assert!(
-        !recovered_prompts.to_string().contains("Stale invalidated prompt"),
-        "prompt recovery resurrected the invalidated payload: {recovered_prompts}"
+        pinned_prompts.to_string().contains("Stale invalidated prompt"),
+        "catalog invalidation mutated the active publication: {pinned_prompts}"
     );
 
     drop((client_service_guard, server_service_guard));
@@ -1794,41 +2326,50 @@ async fn isolated_restart_reset_parity_preserves_catalog_and_target_only_recover
         .with_state(build_app_state(first_database.clone()));
 
     for (kind_index, kind) in SurfaceKind::ALL.into_iter().enumerate() {
-        let live = call_rest_list(&first_app, kind, target_id).await;
-        assert_eq!(
-            live.pointer("/data/meta/source"),
-            Some(&json!("live")),
-            "{} initial discovery did not report live source: {live}",
-            kind.label()
-        );
-        assert_eq!(
-            live.pointer("/data/meta/cache_hit"),
-            Some(&json!(false)),
-            "{} live discovery was incorrectly reported as a cache hit",
-            kind.label()
-        );
+        let response = call_rest_list(&first_app, kind, target_id).await;
+        if kind_index == 0 {
+            assert_eq!(
+                response.pointer("/data/meta/source"),
+                Some(&json!("live")),
+                "{} initial discovery did not report live source: {response}",
+                kind.label()
+            );
+            assert_eq!(
+                response.pointer("/data/meta/cache_hit"),
+                Some(&json!(false)),
+                "{} live discovery was incorrectly reported as a cache hit",
+                kind.label()
+            );
+        } else {
+            assert_eq!(
+                response.pointer("/data/meta/cache_hit"),
+                Some(&json!(true)),
+                "{} follow-up kind read should come from the warmed catalog: {response}",
+                kind.label()
+            );
+        }
         assert!(
-            live.pointer("/data/items")
+            response
+                .pointer("/data/items")
                 .and_then(Value::as_array)
                 .is_some_and(|items| items.len() == 1),
-            "{} live discovery returned the wrong payload: {live}",
-            kind.label()
-        );
-        let memory = call_rest_list(&first_app, kind, target_id).await;
-        assert_eq!(
-            memory.pointer("/data/meta/source"),
-            Some(&json!("memory_cache")),
-            "{} immediate second read did not use the process-local LRU: {memory}",
+            "{} discovery returned the wrong payload: {response}",
             kind.label()
         );
         assert_eq!(
             start_count(&target_counter),
-            kind_index + 1,
-            "{} LRU read unexpectedly restarted upstream",
+            1,
+            "{} discovery unexpectedly restarted upstream",
             kind.label()
         );
     }
-    assert_eq!(start_count(&target_counter), SurfaceKind::ALL.len());
+    let memory = call_rest_list(&first_app, SurfaceKind::Tools, target_id).await;
+    assert_eq!(
+        memory.pointer("/data/meta/source"),
+        Some(&json!("memory_cache")),
+        "immediate second read did not use the process-local LRU: {memory}"
+    );
+    assert_eq!(start_count(&target_counter), 1);
     assert_eq!(start_count(&unrelated_counter), 0);
 
     let catalog = SqliteCapabilityCatalog::new(first_database.pool.clone());
@@ -1838,7 +2379,7 @@ async fn isolated_restart_reset_parity_preserves_catalog_and_target_only_recover
         .expect("load live snapshot")
         .expect("live snapshot exists");
     assert_eq!(live_snapshot.state, SnapshotState::Ready);
-    assert_eq!(live_snapshot.revision, SurfaceKind::ALL.len() as i64);
+    assert_eq!(live_snapshot.revision, 1);
     assert_eq!(live_snapshot.kind_states.len(), SurfaceKind::ALL.len());
     assert!(live_snapshot.kind_states.iter().all(|state| {
         state.declaration == mcpmate_capability_store::DeclarationState::Supported
@@ -1857,12 +2398,19 @@ async fn isolated_restart_reset_parity_preserves_catalog_and_target_only_recover
             .fetch_all(&first_database.pool)
             .await
             .expect("load kind revisions");
-    let record_revisions: Vec<i64> =
-        sqlx::query_scalar("SELECT catalog_revision FROM capability_records WHERE server_id = ? ORDER BY position")
-            .bind(target_id)
-            .fetch_all(&first_database.pool)
-            .await
-            .expect("load record revisions");
+    let record_revisions: Vec<i64> = sqlx::query_scalar(
+        r#"
+            SELECT c.catalog_revision
+            FROM capability_ref_current c
+            JOIN capability_refs r ON r.ref_id = c.ref_id
+            WHERE r.server_id = ? AND r.state = 'active'
+            ORDER BY r.kind, r.origin_key
+            "#,
+    )
+    .bind(target_id)
+    .fetch_all(&first_database.pool)
+    .await
+    .expect("load record revisions");
     assert_eq!(snapshot_revision, live_snapshot.revision);
     assert_eq!(kind_revisions, vec![snapshot_revision; SurfaceKind::ALL.len()]);
     assert_eq!(record_revisions, vec![snapshot_revision; SurfaceKind::ALL.len()]);
@@ -1916,7 +2464,7 @@ async fn isolated_restart_reset_parity_preserves_catalog_and_target_only_recover
             kind.label()
         );
     }
-    assert_eq!(start_count(&target_counter), SurfaceKind::ALL.len());
+    assert_eq!(start_count(&target_counter), 1);
     assert_eq!(start_count(&unrelated_counter), 0);
 
     let before_reset = SqliteCapabilityCatalog::new(restarted_database.pool.clone())
@@ -1962,7 +2510,7 @@ async fn isolated_restart_reset_parity_preserves_catalog_and_target_only_recover
             .and_then(Value::as_array)
             .is_some_and(|items| items.len() == 1)
     );
-    assert_eq!(start_count(&target_counter), SurfaceKind::ALL.len() + 1);
+    assert_eq!(start_count(&target_counter), 2);
     assert_eq!(start_count(&unrelated_counter), 0);
 
     let recovered_snapshot = catalog
@@ -1996,7 +2544,7 @@ async fn isolated_restart_reset_parity_preserves_catalog_and_target_only_recover
         recovered_snapshot
             .kind_states
             .iter()
-            .all(|state| { state.kind == CapabilityKind::Tools || state.inventory == InventoryState::Unknown })
+            .all(|state| state.inventory == InventoryState::Complete)
     );
     let unrelated_final = catalog
         .load_snapshot(unrelated_id)
@@ -2018,15 +2566,30 @@ async fn isolated_restart_reset_parity_preserves_catalog_and_target_only_recover
             .fetch_one(&restarted_database.pool)
             .await
             .expect("load recovered kind revision count");
-    let distinct_record_revisions: i64 =
-        sqlx::query_scalar("SELECT COUNT(DISTINCT catalog_revision) FROM capability_records WHERE server_id = ?")
-            .bind(target_id)
-            .fetch_one(&restarted_database.pool)
-            .await
-            .expect("load recovered record revision count");
+    let current_ref_revisions: Vec<(String, i64)> = sqlx::query_as(
+        r#"
+            SELECT r.kind, c.catalog_revision
+            FROM capability_ref_current c
+            JOIN capability_refs r ON r.ref_id = c.ref_id
+            WHERE r.server_id = ? AND r.state = 'active'
+            ORDER BY r.kind
+            "#,
+    )
+    .bind(target_id)
+    .fetch_all(&restarted_database.pool)
+    .await
+    .expect("load recovered current ref revisions");
     assert_eq!(recovered_revision, recovered_snapshot.revision);
     assert_eq!(distinct_kind_revisions, 1);
-    assert_eq!(distinct_record_revisions, 1);
+    assert_eq!(
+        current_ref_revisions,
+        vec![
+            ("prompts".to_string(), recovered_snapshot.revision),
+            ("resource_templates".to_string(), recovered_snapshot.revision),
+            ("resources".to_string(), recovered_snapshot.revision),
+            ("tools".to_string(), recovered_snapshot.revision),
+        ]
+    );
     let mut recovered_shadow_counts = Vec::new();
     for table in [
         "server_tools",
@@ -2041,9 +2604,8 @@ async fn isolated_restart_reset_parity_preserves_catalog_and_target_only_recover
             .unwrap_or_else(|error| panic!("load recovered {table} index: {error}"));
         recovered_shadow_counts.push((table, count));
     }
-    // Retained history keeps the prompt/resource/template shadow rows in place even though
-    // only Tools was rediscovered this round; they are not resurrected as Ready inventory
-    // (see the `Unknown` assertion above), but their index rows must survive the reconcile.
+    // Full management warm rediscovers every kind in one observation, so all shadow rows
+    // remain present and move to the recovered catalog revision together.
     assert_eq!(
         recovered_shadow_counts,
         vec![

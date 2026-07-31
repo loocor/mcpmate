@@ -125,6 +125,7 @@ pub(crate) fn mcp_method_name(action: AuditAction) -> &'static str {
         | AuditAction::ProfileServerEnable
         | AuditAction::ProfileServerDisable
         | AuditAction::ProfileServerRemove
+        | AuditAction::ProfileServerReplace
         | AuditAction::ServerInstanceDisconnect
         | AuditAction::ServerInstanceForceDisconnect
         | AuditAction::ServerInstanceReconnect
@@ -158,6 +159,10 @@ pub(crate) fn mcp_method_name(action: AuditAction) -> &'static str {
         | AuditAction::RuntimeCacheReset
         | AuditAction::CapabilityGrant
         | AuditAction::CapabilityRevoke
+        | AuditAction::SurfaceReviewResolve
+        | AuditAction::SurfacePublish
+        | AuditAction::SurfaceRollback
+        | AuditAction::SurfaceReconciliation
         | AuditAction::AuditPolicyUpdate
         | AuditAction::InspectorTimeoutUpdate => "",
     }

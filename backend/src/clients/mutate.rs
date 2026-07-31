@@ -487,9 +487,7 @@ mod tests {
             { "type": "stdio", "command": "tool-a" },
             { "type": "stdio", "command": "tool-b" }
         ]);
-        let patch = vec![
-            json!({ "type": "stdio", "command": "tool-c" }),
-        ];
+        let patch = vec![json!({ "type": "stdio", "command": "tool-c" })];
 
         let result = merge_array_by_name(existing, patch);
         let arr = result.as_array().expect("array");

@@ -169,6 +169,8 @@ pub struct UpstreamConnection {
     pub id: String,
     /// Name of the server
     pub server_name: String,
+    /// Canonical configuration fingerprint bound to the config that opened this connection.
+    pub config_fingerprint: Option<String>,
     /// Active service connection (using Arc for cheap cloning)
     pub service: Option<Arc<crate::core::transport::ClientService>>,
     /// Server capabilities (resources, tools, etc.)
@@ -204,6 +206,7 @@ impl Clone for UpstreamConnection {
         Self {
             id: self.id.clone(),
             server_name: self.server_name.clone(),
+            config_fingerprint: self.config_fingerprint.clone(),
             service: self.service.clone(), // Arc clone is cheap and preserves service
             capabilities: self.capabilities.clone(),
             tools: self.tools.clone(),
@@ -228,6 +231,7 @@ impl UpstreamConnection {
         Self {
             id: generate_id!("upsv"),
             server_name,
+            config_fingerprint: None,
             service: None,
             capabilities: None,
             tools: Vec::new(),

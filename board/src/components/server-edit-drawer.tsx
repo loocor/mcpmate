@@ -22,6 +22,7 @@ interface ServerEditDrawerProps {
 	onClose: () => void;
 	onSubmit: (config: Partial<MCPServerConfig>) => Promise<void> | void;
 	onUpdated?: () => void;
+	onOAuthConnected?: (serverId: string) => void;
 }
 
 type UpdateConfig = Partial<MCPServerConfig> & {
@@ -290,6 +291,7 @@ export function ServerEditDrawer({
 	onClose,
 	onSubmit,
 	onUpdated,
+	onOAuthConnected,
 }: ServerEditDrawerProps) {
 	const { t } = useTranslation("servers");
 	const formRef = useRef<ServerInstallManualFormHandle>(null);
@@ -484,6 +486,7 @@ export function ServerEditDrawer({
 			serverId={server?.id}
 			namespaceRemediationAllowed={namespaceRemediationAllowed}
 			onInitiateOAuth={handleInitiateOAuth}
+			onOAuthConnected={onOAuthConnected}
 			allowJsonEditing={false}
 			namespaceIssue={server?.namespace_issue}
 			namespaceIssueFeedback={namespaceRemediationFeedback}

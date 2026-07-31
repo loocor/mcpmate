@@ -1,7 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import {
 	Activity,
+	AlertTriangle,
 	AppWindow,
+	ClipboardCheck,
+	ChevronRight,
 	Play,
 	RefreshCw,
 	Server,
@@ -29,9 +32,11 @@ import {
 	clientsApi,
 	configSuitsApi,
 	serversApi,
+	surfaceReviewsApi,
 	systemApi,
 } from "../../lib/api";
 import type { ClientCheckData } from "../../lib/types";
+import { getSurfaceReviewDestination } from "../../lib/surface-reviews";
 import { cn, formatUptime } from "../../lib/utils";
 
 export function DashboardPage() {
@@ -76,6 +81,27 @@ export function DashboardPage() {
 		queryFn: configSuitsApi.getAll,
 		refetchInterval: 30000,
 		retry: false,
+		refetchOnWindowFocus: false,
+	});
+	const {
+		data: pendingReviewItems = [],
+		isLoading: isLoadingReviews,
+		error: reviewItemsError,
+	} = useQuery({
+		queryKey: ["surfaceReviews", "pending"],
+		queryFn: () => surfaceReviewsApi.list({ state: "pending" }),
+		refetchInterval: 30_000,
+		retry: 1,
+		refetchOnWindowFocus: false,
+	});
+	const {
+		data: reviewSummary,
+		error: reviewSummaryError,
+	} = useQuery({
+		queryKey: ["surfaceReviews", "summary"],
+		queryFn: surfaceReviewsApi.summary,
+		refetchInterval: 30_000,
+		retry: 1,
 		refetchOnWindowFocus: false,
 	});
 
@@ -140,9 +166,9 @@ export function DashboardPage() {
 	const statsGridBleedClass = showLocalCoreBanner ? "-mt-1 pt-1" : "pt-1";
 
 	return (
-		<div className="space-y-4">
+		<div className="flex min-h-full flex-col gap-4">
 			{showLocalCoreBanner ? (
-				<div className="flex w-full items-center justify-between gap-4 px-1 py-2">
+				<div className="flex w-full shrink-0 items-center justify-between gap-4 px-1 py-2">
 					<div className="min-w-0 space-y-1">
 						<div className="flex items-center gap-2">
 							<span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
@@ -201,7 +227,7 @@ export function DashboardPage() {
 					</div>
 				</div>
 			) : null}
-			<div className={cn("px-0.5", statsGridBleedClass)}>
+			<div className={cn("shrink-0 px-0.5", statsGridBleedClass)}>
 				<div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
 					<Link to="/runtime" className="block h-full">
 						<Card className="h-full min-h-[160px] cursor-pointer transition-all duration-200 hover:-translate-y-1 hover:border-primary/40 hover:shadow-xl">
@@ -393,7 +419,7 @@ export function DashboardPage() {
 				</div>
 			</div>
 
-			<div className="grid items-stretch gap-4 md:grid-cols-2">
+			<div className="grid shrink-0 items-stretch gap-4 md:grid-cols-2">
 				<div className="h-full">
 					<Card className="h-full">
 						<CardHeader>
@@ -418,6 +444,108 @@ export function DashboardPage() {
 
 				<TokenSavingsTrendCard className="h-full" />
 			</div>
+
+			<Card className="flex flex-1 flex-col">
+				<CardHeader className="pb-3">
+					<div className="flex items-start justify-between gap-3">
+						<div>
+							<div className="flex items-center gap-2">
+								<ClipboardCheck className="h-5 w-5 text-amber-600" />
+								<CardTitle className="text-base">
+									{t("surfaceReview:dashboard.title", {
+										defaultValue: "Review todos",
+									})}
+								</CardTitle>
+							</div>
+							<CardDescription className="mt-1 text-xs">
+								{t("surfaceReview:dashboard.description", {
+									defaultValue:
+										"Capability changes that need confirmation at their configuration source.",
+								})}
+							</CardDescription>
+						</div>
+						<span className="rounded-full border border-amber-300 bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
+							{t("surfaceReview:dashboard.pending", {
+								count: pendingReviewItems.length,
+								defaultValue: "{{count}} pending",
+							})}
+						</span>
+					</div>
+				</CardHeader>
+				<CardContent>
+					{reviewSummaryError ? (
+						<div className="mb-3 flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+							<AlertTriangle className="h-4 w-4" />
+							{t("surfaceReview:errors.summary", {
+								defaultValue: "Unable to load Surface reconciliation status.",
+							})}
+						</div>
+					) : reviewSummary &&
+						reviewSummary.failed_reconciliation_count > 0 ? (
+						<div className="mb-3 flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+							<AlertTriangle className="h-4 w-4" />
+							{t("surfaceReview:dashboard.failedReconciliation", {
+								count: reviewSummary.failed_reconciliation_count,
+								defaultValue:
+									"{{count}} Surface reconciliation jobs failed. Review the audit log before relying on the affected clients.",
+							})}
+						</div>
+					) : null}
+					{isLoadingReviews ? (
+						<div className="space-y-2">
+							{Array.from({ length: 2 }, (_, index) => (
+								<div
+									key={`review-todo-skeleton-${index}`}
+									className="h-11 animate-pulse rounded bg-muted"
+								/>
+							))}
+						</div>
+					) : reviewItemsError ? (
+						<div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+							<AlertTriangle className="h-4 w-4" />
+							{t("surfaceReview:errors.load", {
+								defaultValue: "Unable to load pending capability reviews.",
+							})}
+						</div>
+					) : pendingReviewItems.length === 0 ? (
+						<p className="text-sm text-muted-foreground">
+							{t("surfaceReview:dashboard.empty", {
+								defaultValue: "No capability reviews are pending.",
+							})}
+						</p>
+					) : (
+						<div className="divide-y rounded-md border">
+							{pendingReviewItems.slice(0, 6).map((item) => {
+								const owner = item.owners[0];
+								const destination = owner
+									? getSurfaceReviewDestination(
+											item,
+											owner,
+											clientsData?.client ?? [],
+										)
+									: `/clients?filter=needs_review`;
+								return (
+									<Link
+										key={item.review_item_id}
+										to={destination}
+										className="flex items-center justify-between gap-3 px-3 py-2.5 transition-colors hover:bg-muted/60"
+									>
+										<div className="min-w-0">
+											<div className="truncate text-sm font-medium">
+												{owner?.owner_id ?? item.consumer_id}
+											</div>
+											<div className="truncate font-mono text-xs text-muted-foreground">
+												{item.change_class} · {item.ref_id}
+											</div>
+										</div>
+										<ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+									</Link>
+								);
+							})}
+						</div>
+					)}
+				</CardContent>
+			</Card>
 		</div>
 	);
 }

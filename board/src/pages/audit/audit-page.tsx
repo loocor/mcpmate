@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { RefreshCw, Search, AlertCircle, Inbox, ChevronRight, ChevronDown, X } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useSearchParams } from "react-router-dom";
 import { Badge } from "../../components/ui/badge";
 import { Pagination } from "../../components/pagination";
 import { Button } from "../../components/ui/button";
@@ -32,6 +33,7 @@ const CATEGORY_OPTIONS: AuditCategory[] = [
 	"mcp_request",
 	"server_config",
 	"profile_config",
+	"capability_control",
 	"client_config",
 	"runtime_control",
 	"management",
@@ -164,7 +166,9 @@ function EmptyState({ hasFilters }: { hasFilters: boolean }) {
 export function AuditPage() {
 	usePageTranslations("audit");
 	const { t, i18n } = useTranslation("audit");
-	const [search, setSearch] = useState("");
+	const [searchParams] = useSearchParams();
+	const [search, setSearch] = useState(() => searchParams.get("search") ?? "");
+	const serverId = searchParams.get("server_id")?.trim() || undefined;
 	const [category, setCategory] = useState<string>(ALL_CATEGORIES);
 	const [status, setStatus] = useState<string>(ALL_STATUSES);
 	const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
@@ -181,13 +185,14 @@ export function AuditPage() {
 
 	/** REST loads one cursor page per request (refresh included); smaller page sizes reduce SQLite work. */
 	const query = useQuery({
-		queryKey: ["audit", "events", currentCursor, category, status, pageSize],
+		queryKey: ["audit", "events", currentCursor, category, status, pageSize, serverId],
 		queryFn: async () =>
 			auditApi.list({
 				limit: pageSize,
 				cursor: currentCursor,
 				category: category !== ALL_CATEGORIES ? category : undefined,
 				status: status !== ALL_STATUSES ? status : undefined,
+				server_id: serverId,
 			}),
 		refetchOnWindowFocus: false,
 		retry: false,
@@ -202,13 +207,18 @@ export function AuditPage() {
 		}
 	}, [query.isError, query.error, t]);
 
-	const hasActiveFilters = search.trim() !== "" || category !== ALL_CATEGORIES || status !== ALL_STATUSES;
+	const hasActiveFilters =
+		search.trim() !== "" ||
+		category !== ALL_CATEGORIES ||
+		status !== ALL_STATUSES ||
+		serverId !== undefined;
 
 	useEffect(() => {
 		setPageCursors([]);
 		setCurrentPageIndex(0);
+		setLiveEvents([]);
 		setExpandedRowKey(null);
-	}, [category, status, pageSize]);
+	}, [category, status, pageSize, serverId]);
 
 	/** WS sends one JSON event per message (incremental), not a full list. */
 	useEffect(() => {
@@ -219,6 +229,9 @@ export function AuditPage() {
 		socket.onmessage = (event) => {
 			try {
 				const parsed = JSON.parse(event.data) as AuditEventRecord;
+				if (serverId && parsed.server_id !== serverId) {
+					return;
+				}
 				setLiveEvents((current) => [parsed, ...current].slice(0, pageSize));
 			} catch {
 				setConnectionState("disconnected");
@@ -226,7 +239,7 @@ export function AuditPage() {
 		};
 
 		return () => socket.close();
-	}, [pageSize]);
+	}, [pageSize, serverId]);
 
 	const currentLoadedEvents = query.data?.events ?? [];
 	const displayEvents = useMemo<AuditEventRecord[]>(() => {
@@ -251,15 +264,11 @@ export function AuditPage() {
 		}
 
 		return displayEvents.filter((event) => {
-			const categoryKey =
-				event.category === ("capability_control" as AuditCategory)
-					? "profile_config"
-					: event.category;
 			const actionLabel = t(`audit:actionValues.${event.action}`, {
 				defaultValue: event.action,
 			}).toLowerCase();
-			const categoryLabel = t(`audit:categoryValues.${categoryKey}`, {
-				defaultValue: categoryKey,
+			const categoryLabel = t(`audit:categoryValues.${event.category}`, {
+				defaultValue: event.category,
 			}).toLowerCase();
 
 			const haystacks = [
@@ -347,6 +356,7 @@ export function AuditPage() {
 					cursor: nextCursor,
 					category: category !== ALL_CATEGORIES ? category : undefined,
 					status: status !== ALL_STATUSES ? status : undefined,
+					server_id: serverId,
 				});
 				nextCursor = page.next_cursor ?? undefined;
 			}
@@ -357,7 +367,7 @@ export function AuditPage() {
 		} finally {
 			setIsPaginationActionLoading(false);
 		}
-	}, [category, currentPageIndex, pageCursors, pageSize, query.data?.next_cursor, status]);
+	}, [category, currentPageIndex, pageCursors, pageSize, query.data?.next_cursor, serverId, status]);
 
 	const auditTotalPages = useMemo(() => {
 		if (query.data?.next_cursor) {
@@ -407,6 +417,7 @@ export function AuditPage() {
 						cursor: nextCursor,
 						category: category !== ALL_CATEGORIES ? category : undefined,
 						status: status !== ALL_STATUSES ? status : undefined,
+						server_id: serverId,
 					});
 					nextCursor = page.next_cursor ?? undefined;
 				}
@@ -428,6 +439,7 @@ export function AuditPage() {
 			pageCursors,
 			pageSize,
 			query.data?.next_cursor,
+			serverId,
 			status,
 		],
 	);
@@ -456,12 +468,8 @@ export function AuditPage() {
 
 	const renderCategoryCell = useCallback(
 		(event: AuditEventRecord) => {
-			const categoryKey =
-				event.category === ("capability_control" as AuditCategory)
-					? "profile_config"
-					: event.category;
-			const primary = t(`audit:categoryValues.${categoryKey}`, {
-				defaultValue: categoryKey,
+			const primary = t(`audit:categoryValues.${event.category}`, {
+				defaultValue: event.category,
 			});
 			return <span className="block min-w-0 truncate whitespace-nowrap">{primary}</span>;
 		},

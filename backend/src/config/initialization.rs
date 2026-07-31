@@ -27,13 +27,13 @@ pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
     tracing::debug!("Initializing system settings table");
     initialize_system_settings(pool).await?;
 
-    // Initialize profile-related tables
-    tracing::debug!("Initializing profile-related tables");
-    initialize_profile_tables(pool).await?;
-
-    // Initialize the durable capability catalog after its referenced identity tables.
+    // Initialize the durable capability catalog before authoring tables reference capability refs.
     tracing::debug!("Initializing capability catalog tables");
     initialize_capability_catalog(pool).await?;
+
+    // Initialize profile-related authoring tables.
+    tracing::debug!("Initializing profile-related tables");
+    initialize_profile_tables(pool).await?;
 
     // Initialize LLM provider tables
     tracing::debug!("Initializing LLM provider tables");

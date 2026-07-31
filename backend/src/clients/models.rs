@@ -1141,15 +1141,15 @@ impl UnifyRouteMode {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-pub struct UnifyDirectCapabilityIds {
+pub struct UnifyDirectCapabilityRefs {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tool_ids: Vec<String>,
+    pub tool_refs: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub prompt_ids: Vec<String>,
+    pub prompt_refs: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub resource_ids: Vec<String>,
+    pub resource_refs: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub template_ids: Vec<String>,
+    pub template_refs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -1158,26 +1158,16 @@ pub struct UnifyDirectExposureIntent {
     pub route_mode: UnifyRouteMode,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub server_ids: Vec<String>,
-    #[serde(default, skip_serializing_if = "UnifyDirectCapabilityIds::is_empty")]
-    pub capability_ids: UnifyDirectCapabilityIds,
+    #[serde(default, skip_serializing_if = "UnifyDirectCapabilityRefs::is_empty")]
+    pub capability_refs: UnifyDirectCapabilityRefs,
 }
 
-impl UnifyDirectCapabilityIds {
+impl UnifyDirectCapabilityRefs {
     pub fn is_empty(&self) -> bool {
-        self.tool_ids.is_empty()
-            && self.prompt_ids.is_empty()
-            && self.resource_ids.is_empty()
-            && self.template_ids.is_empty()
-    }
-}
-
-impl UnifyDirectExposureIntent {
-    pub fn from_parts(intent_json: Option<&str>) -> Result<Self, String> {
-        match intent_json.filter(|raw| !raw.trim().is_empty()) {
-            Some(raw) => serde_json::from_str::<Self>(raw)
-                .map_err(|err| format!("invalid unify_direct_exposure_intent payload '{}': {}", raw, err)),
-            None => Ok(Self::default()),
-        }
+        self.tool_refs.is_empty()
+            && self.prompt_refs.is_empty()
+            && self.resource_refs.is_empty()
+            && self.template_refs.is_empty()
     }
 }
 
@@ -1255,7 +1245,7 @@ pub struct UnifyDirectExposureDiagnostics {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub invalid_template_surfaces: Vec<UnifyDirectTemplateSurfaceDiagnostic>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub invalid_capability_ids: Vec<String>,
+    pub invalid_capability_refs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema)]

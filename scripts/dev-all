@@ -58,7 +58,7 @@ trap cleanup EXIT INT TERM
 report_port_conflict 5173 board "$(project_dir board)"
 
 print_section "backend"
-(cd "$(project_dir backend)" && cargo run --) &
+run_cargo_in "$(project_dir backend)" run -- &
 
 sleep 2
 

@@ -26,12 +26,13 @@ fn observation(
     let records = (0..capabilities_per_server)
         .map(|capability_index| {
             let upstream_key = format!("tool-{capability_index:03}");
-            CatalogRecord::new(
-                format!("{server_id}:tool:{capability_index:03}"),
+            CatalogRecord::materialize(
+                &server_id,
                 upstream_key.clone(),
                 format!("{server_id}__{upstream_key}"),
                 CapabilityPayload::Tool(Tool::new(upstream_key, "Scale evidence tool", serde_json::Map::new())),
             )
+            .expect("materialize scale record")
         })
         .collect();
     CapabilityObservation::new(

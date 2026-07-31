@@ -6,6 +6,7 @@
 mod broker;
 mod client;
 mod helpers;
+pub mod metadata;
 pub mod names;
 mod profile;
 mod registry;

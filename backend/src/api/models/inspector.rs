@@ -253,6 +253,17 @@ api_resp!(
 );
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct InspectorSessionRefreshReq {
+    pub session_id: String,
+}
+
+api_resp!(
+    InspectorSessionRefreshResp,
+    InspectorSessionOpenData,
+    "Inspector session refresh response"
+);
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct InspectorSessionCloseReq {
     pub session_id: String,
 }

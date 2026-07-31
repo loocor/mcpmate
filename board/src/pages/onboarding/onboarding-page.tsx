@@ -23,6 +23,7 @@ import { Segment, type SegmentOption } from "../../components/ui/segment";
 import { TooltipProvider } from "../../components/ui/tooltip";
 import {
   clientsApi,
+  assertCompleteServerImport,
   extractImportStats,
   runtimeApi,
   serversApi,
@@ -571,13 +572,7 @@ export function OnboardingPage() {
             throw new Error(err ? stringifyError(err) : "Server import failed");
           }
           const stats = extractImportStats(response);
-          if (stats.failedCount > 0) {
-            throw new Error(
-              stats.errorDetails
-                ? JSON.stringify(stats.errorDetails)
-                : "Server import failed",
-            );
-          }
+          assertCompleteServerImport(stats);
         }
 
         for (const [clientIdentifier, selectedServerNames] of selectedServerNamesByClient) {
@@ -598,13 +593,7 @@ export function OnboardingPage() {
             throw new Error(err ? stringifyError(err) : "Server import failed");
           }
           const stats = extractImportStats(response);
-          if (stats.failedCount > 0) {
-            throw new Error(
-              stats.errorDetails
-                ? JSON.stringify(stats.errorDetails)
-                : "Server import failed",
-            );
-          }
+          assertCompleteServerImport(stats);
         }
         await qc.invalidateQueries({ queryKey: ["servers"] });
         if (targetProfileId) {

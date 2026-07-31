@@ -1,6 +1,8 @@
 use super::ClientConfigService;
 use crate::clients::analyzer::{ConfigInspectionReport, inspect_config_content, inspect_config_value};
-use crate::clients::document::{read_config_file, ClientConfigDocument, infer_format_from_path, parse_config_autodetect};
+use crate::clients::document::{
+    ClientConfigDocument, infer_format_from_path, parse_config_autodetect, read_config_file,
+};
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{ClientConfigFileParse, ContainerType, TemplateFormat};
 use crate::clients::service::core::ClientStateRow;

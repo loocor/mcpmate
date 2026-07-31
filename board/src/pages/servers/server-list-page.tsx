@@ -277,10 +277,18 @@ export function ServerListPage() {
 		async (serverId: string, enable: boolean, sync?: boolean) => {
 			setPending((p) => ({ ...p, [serverId]: true }));
 			try {
+				const sourceRevisionSet = serverData?.servers.find(
+					(server) => server.id === serverId,
+				)?.source_revision_set;
+				if (!sourceRevisionSet) {
+					throw new Error(
+						"Capability catalog revisions are not loaded. Refresh servers and retry.",
+					);
+				}
 				if (enable) {
-					await serversApi.enableServer(serverId, sync);
+					await serversApi.enableServer(serverId, sourceRevisionSet, sync);
 				} else {
-					await serversApi.disableServer(serverId, sync);
+					await serversApi.disableServer(serverId, sourceRevisionSet, sync);
 				}
 				const successTitle = enable
 					? t("notifications.toggle.enabledTitle", {
@@ -321,7 +329,7 @@ export function ServerListPage() {
 				setPending((p) => ({ ...p, [serverId]: false }));
 			}
 		},
-		[i18n.language, queryClient, t],
+		[i18n.language, queryClient, serverData?.servers, t],
 	);
 
 	// Note: Reconnect functionality is moved to instance-level pages
@@ -335,7 +343,31 @@ export function ServerListPage() {
 			serverId: string;
 			config: Partial<MCPServerConfig>;
 		}) => {
-			return await serversApi.updateServer(serverId, config);
+			const {
+				unify_direct_exposure_eligible: requestedEligibility,
+				...crudConfig
+			} = config;
+			const result = await serversApi.updateServer(serverId, crudConfig);
+			const currentServer = serverData?.servers.find(
+				(server) => server.id === serverId,
+			);
+			if (
+				requestedEligibility !== undefined &&
+				requestedEligibility !==
+					currentServer?.unify_direct_exposure_eligible
+			) {
+				if (!currentServer?.source_revision_set) {
+					throw new Error(
+						"Capability catalog revisions are not loaded. Refresh servers and retry.",
+					);
+				}
+				await serversApi.setDirectExposureEligibility(
+					serverId,
+					requestedEligibility,
+					currentServer.source_revision_set,
+				);
+			}
+			return result;
 		},
 		onSuccess: (_, variables) => {
 			notifySuccess(
@@ -422,8 +454,20 @@ export function ServerListPage() {
 		async (serverId: string, enabled: boolean) => {
 			setIsTogglePending(true);
 			try {
+				const sourceRevisionSet = serverData?.servers.find(
+					(server) => server.id === serverId,
+				)?.source_revision_set;
+				if (!sourceRevisionSet) {
+					throw new Error(
+						"Capability catalog revisions are not loaded. Refresh servers and retry.",
+					);
+				}
 				if (enabled) {
-					await serversApi.enableServer(serverId, syncServerStateToClients);
+					await serversApi.enableServer(
+						serverId,
+						sourceRevisionSet,
+						syncServerStateToClients,
+					);
 					notifySuccess(
 						t("notifications.toggle.enabledTitle", {
 							defaultValue: "Server enabled",
@@ -434,7 +478,11 @@ export function ServerListPage() {
 						}),
 					);
 				} else {
-					await serversApi.disableServer(serverId, syncServerStateToClients);
+					await serversApi.disableServer(
+						serverId,
+						sourceRevisionSet,
+						syncServerStateToClients,
+					);
 					notifySuccess(
 						t("notifications.toggle.disabledTitle", {
 							defaultValue: "Server disabled",
@@ -461,7 +509,13 @@ export function ServerListPage() {
 				setIsTogglePending(false);
 			}
 		},
-		[i18n.language, queryClient, syncServerStateToClients, t],
+		[
+			i18n.language,
+			queryClient,
+			serverData?.servers,
+			syncServerStateToClients,
+			t,
+		],
 	);
 
 	const catalogStatsLabels = useMemo(

@@ -17,7 +17,8 @@ use tokio::time::Duration;
 use crate::api::handlers::ApiError;
 use crate::api::models::inspector::{
     InspectorListQuery, InspectorMode, InspectorPromptGetReq, InspectorResourceReadQuery, InspectorSessionCloseReq,
-    InspectorSessionOpenData, InspectorSessionOpenReq, InspectorTemplateReadReq, InspectorToolCallReq,
+    InspectorSessionOpenData, InspectorSessionOpenReq, InspectorSessionRefreshReq, InspectorTemplateReadReq,
+    InspectorToolCallReq,
 };
 use crate::api::routes::AppState;
 use crate::core::capability;
@@ -86,7 +87,7 @@ impl CapabilityKind {
         }
     }
 
-    fn extractor(self) -> fn(capability::runtime::ListResult) -> Vec<Value> {
+    fn extractor(self) -> fn(capability::runtime::ListResult) -> Result<Vec<Value>, ApiError> {
         match self {
             CapabilityKind::Tools => extract_tools,
             CapabilityKind::Prompts => extract_prompts,
@@ -173,9 +174,9 @@ pub async fn prompt_get(
             let upstream_name = route.upstream_value;
             let server_filter = HashSet::from([server_id.clone()]);
 
-            ensure_proxy_connection(state, &server_id, timeout).await?;
+            ensure_proxy_connection(state, &server_id).await?;
 
-            let mut res = run_inspector_operation(timeout, "prompts/get", async {
+            let operation_result = run_inspector_operation(timeout, "prompts/get", async {
                 let mapping =
                     capability::facade::build_prompt_mapping_filtered(&state.connection_pool, Some(&server_filter))
                         .await
@@ -191,7 +192,8 @@ pub async fn prompt_get(
                 .await
                 .map_err(map_anyhow)
             })
-            .await?;
+            .await;
+            let mut res = operation_result?;
             let database = state
                 .database
                 .as_ref()
@@ -216,8 +218,7 @@ pub async fn prompt_get(
         InspectorMode::Native => {
             ensure_native_allowed()?;
             let server_id = resolve_server(&req.server_id, &req.server_name).await?;
-            let (session_id, cleanup) =
-                native_validation_scope(state, &server_id, req.session_id.as_deref(), timeout).await?;
+            let (session_id, cleanup) = native_validation_scope(state, &server_id, req.session_id.as_deref()).await?;
             let res = run_inspector_operation(timeout, "prompts/get", async {
                 let conn = clone_native_validation_connection(state, &server_id, &session_id).await?;
                 crate::core::capability::prompts::get_upstream_prompt_direct(&conn, &req.name, req.arguments.clone())
@@ -257,44 +258,29 @@ pub async fn resource_read(
                 .map_err(map_anyhow)?;
             let server_id = route.server_id.clone();
             let upstream_uri = route.upstream_uri.clone();
-            let server_filter = Some(server_id);
 
-            ensure_proxy_connection(
-                state,
-                server_filter
-                    .as_deref()
-                    .expect("resolved resource route has a server id"),
-                timeout,
-            )
-            .await?;
+            ensure_proxy_connection(state, &server_id).await?;
 
-            let mut res = run_inspector_operation(timeout, "resources/read", async {
-                capability::facade::read_routed_resource(
-                    &state.connection_pool,
-                    server_filter
-                        .as_deref()
-                        .expect("resolved resource route has a server id"),
-                    &upstream_uri,
-                    None,
-                )
-                .await
-                .map_err(map_anyhow)
+            let operation_result = run_inspector_operation(timeout, "resources/read", async {
+                capability::facade::read_routed_resource(&state.connection_pool, &server_id, &upstream_uri, None)
+                    .await
+                    .map_err(map_anyhow)
             })
-            .await?;
+            .await;
+            let mut res = operation_result?;
             capability::resource_registry::rewrite_read_resource_result(&database.pool, &route, &mut res)
                 .await
                 .map_err(map_anyhow)?;
             Ok(json!({
                 "result": res,
-                "server_id": server_filter,
+                "server_id": server_id,
                 "elapsed_ms": start.elapsed().as_millis() as u64,
             }))
         }
         InspectorMode::Native => {
             ensure_native_allowed()?;
             let server_id = resolve_server(&req.server_id, &req.server_name).await?;
-            let (session_id, cleanup) =
-                native_validation_scope(state, &server_id, req.session_id.as_deref(), timeout).await?;
+            let (session_id, cleanup) = native_validation_scope(state, &server_id, req.session_id.as_deref()).await?;
             let res = run_inspector_operation(timeout, "resources/read", async {
                 let conn = clone_native_validation_connection(state, &server_id, &session_id).await?;
                 crate::core::capability::resources::read_upstream_resource_direct(&conn, &req.uri)
@@ -436,7 +422,6 @@ pub async fn open_session(
     state: &Arc<AppState>,
     req: &InspectorSessionOpenReq,
 ) -> Result<InspectorSessionOpenData, ApiError> {
-    let timeout = inspector_timeout(state, req.timeout_ms).await;
     if matches!(req.mode, InspectorMode::Native) {
         ensure_native_allowed()?;
     }
@@ -445,13 +430,13 @@ pub async fn open_session(
     let session_id = crate::generate_id!("inspses");
     let (peer, validation_reservation) = if matches!(req.mode, InspectorMode::Native) {
         let validation_session = native_session_id_for_inspector_session(&session_id);
-        let lease = ensure_native_session_with_timeout(state, &server_id, &validation_session, timeout).await?;
+        let lease = ensure_native_session(state, &server_id, &validation_session).await?;
         acquire_validation_peer(state, &server_id, lease.token())
             .await
             .map_err(|e| ApiError::InternalError(e.to_string()))?;
         (None, Some(lease))
     } else {
-        ensure_proxy_connection(state, &server_id, timeout).await?;
+        ensure_proxy_connection(state, &server_id).await?;
         let peer = acquire_peer_for_call(state, &server_id, None)
             .await
             .map_err(|e| ApiError::InternalError(e.to_string()))?;
@@ -486,6 +471,45 @@ pub async fn close_session(
     };
     release_inspector_session(state, closing).await?;
     Ok(true)
+}
+
+pub async fn refresh_session(
+    state: &Arc<AppState>,
+    req: &InspectorSessionRefreshReq,
+) -> Result<InspectorSessionOpenData, ApiError> {
+    let session = get_active_session(state, &req.session_id).await?;
+
+    if matches!(session.mode, InspectorMode::Native) {
+        let reservation = session.validation_reservation.as_ref().ok_or_else(|| {
+            ApiError::InternalError("Native Inspector session is missing validation ownership".into())
+        })?;
+        let mut pool = state.connection_pool.lock().await;
+        let connected = pool
+            .validation_sessions
+            .get(reservation.session_id())
+            .and_then(|servers| servers.get(&session.server_id))
+            .and_then(|connection| connection.service.as_ref())
+            .is_some();
+        if !connected {
+            return Err(ApiError::NotFound(format!(
+                "Native Inspector session '{}' is no longer connected for server '{}'",
+                req.session_id, session.server_id
+            )));
+        }
+        if !pool.refresh_validation_reservation(reservation, NATIVE_VALIDATION_SESSION_TTL) {
+            return Err(ApiError::NotFound(format!(
+                "Native Inspector validation session '{}' not found or expired",
+                req.session_id
+            )));
+        }
+    }
+
+    Ok(InspectorSessionOpenData {
+        session_id: req.session_id.clone(),
+        server_id: session.server_id,
+        mode: session.mode,
+        expires_at_epoch_ms: session.expires_at_epoch_ms,
+    })
 }
 
 async fn release_inspector_session(
@@ -555,29 +579,13 @@ where
         .map_err(|_| ApiError::Timeout(format!("Inspector {operation} exceeded {} ms", timeout.as_millis())))?
 }
 
-async fn run_native_preflight<T, F>(
-    timeout: Duration,
-    future: F,
-) -> Result<T, ApiError>
-where
-    F: Future<Output = Result<T, ApiError>>,
-{
-    tokio::time::timeout(timeout, future).await.map_err(|_| {
-        ApiError::GatewayTimeout(format!("Inspector server connect exceeded {} ms", timeout.as_millis()))
-    })?
-}
-
 async fn ensure_proxy_connection(
     state: &AppState,
     server_id: &str,
-    timeout: Duration,
 ) -> Result<(), ApiError> {
-    run_inspector_operation(timeout, "server connect", async {
-        let mut pool = state.connection_pool.lock().await;
-        pool.ensure_connected(server_id).await.map_err(map_anyhow)?;
-        Ok(())
-    })
-    .await
+    let mut pool = state.connection_pool.lock().await;
+    pool.ensure_connected(server_id).await.map_err(map_anyhow)?;
+    Ok(())
 }
 
 async fn start_tool_call_internal(
@@ -657,7 +665,7 @@ async fn start_tool_call_internal_with_timeout(
         }
         (InspectorMode::Native, None) => {
             let validation_session = native_temporary_session_id();
-            let lease = ensure_native_session_with_timeout(state, &server_id, &validation_session, timeout).await?;
+            let lease = ensure_native_session(state, &server_id, &validation_session).await?;
             let cleanup = NativeValidationSessionGuard::from_lease(state, lease);
             let peer = acquire_validation_peer(state, &server_id, cleanup.reservation())
                 .await
@@ -671,7 +679,7 @@ async fn start_tool_call_internal_with_timeout(
             (peer, None)
         }
         _ => {
-            ensure_proxy_connection(state, &server_id, timeout).await?;
+            ensure_proxy_connection(state, &server_id).await?;
             let peer = acquire_peer_for_call(state, &server_id, None)
                 .await
                 .map_err(|e| ApiError::InternalError(e.to_string()))?;
@@ -718,43 +726,57 @@ async fn start_tool_call_internal_with_timeout(
     })
 }
 
-fn extract_tools(result: capability::runtime::ListResult) -> Vec<Value> {
+fn extract_tools(result: capability::runtime::ListResult) -> Result<Vec<Value>, ApiError> {
     result
         .items
         .into_tools()
         .unwrap_or_default()
         .into_iter()
-        .map(|tool| serde_json::to_value(tool).unwrap_or_else(|_| json!({})))
+        .map(|tool| {
+            serde_json::to_value(tool)
+                .map_err(|error| ApiError::InternalError(format!("Failed to serialize inspector tool item: {error}")))
+        })
         .collect()
 }
 
-fn extract_prompts(result: capability::runtime::ListResult) -> Vec<Value> {
+fn extract_prompts(result: capability::runtime::ListResult) -> Result<Vec<Value>, ApiError> {
     result
         .items
         .into_prompts()
         .unwrap_or_default()
         .into_iter()
-        .map(|prompt| serde_json::to_value(prompt).unwrap_or_else(|_| json!({})))
+        .map(|prompt| {
+            serde_json::to_value(prompt)
+                .map_err(|error| ApiError::InternalError(format!("Failed to serialize inspector prompt item: {error}")))
+        })
         .collect()
 }
 
-fn extract_resources(result: capability::runtime::ListResult) -> Vec<Value> {
+fn extract_resources(result: capability::runtime::ListResult) -> Result<Vec<Value>, ApiError> {
     result
         .items
         .into_resources()
         .unwrap_or_default()
         .into_iter()
-        .map(|resource| serde_json::to_value(resource).unwrap_or_else(|_| json!({})))
+        .map(|resource| {
+            serde_json::to_value(resource).map_err(|error| {
+                ApiError::InternalError(format!("Failed to serialize inspector resource item: {error}"))
+            })
+        })
         .collect()
 }
 
-fn extract_resource_templates(result: capability::runtime::ListResult) -> Vec<Value> {
+fn extract_resource_templates(result: capability::runtime::ListResult) -> Result<Vec<Value>, ApiError> {
     result
         .items
         .into_resource_templates()
         .unwrap_or_default()
         .into_iter()
-        .map(|template| serde_json::to_value(template).unwrap_or_else(|_| json!({})))
+        .map(|template| {
+            serde_json::to_value(template).map_err(|error| {
+                ApiError::InternalError(format!("Failed to serialize inspector resource template item: {error}"))
+            })
+        })
         .collect()
 }
 
@@ -823,9 +845,33 @@ async fn list_capability_payload(
                     .ok_or(ApiError::InternalError("Database not available".into()))?;
                 let enabled_servers: Vec<(String, String)> = sqlx::query_as(
                     r#"SELECT sc.id, sc.name FROM server_config sc
-                       JOIN profile_server ps ON ps.server_id = sc.id AND ps.enabled = 1
-                       JOIN profile p ON p.id = ps.profile_id AND p.is_active = 1
                        WHERE sc.enabled = 1
+                         AND (
+                           EXISTS (
+                             SELECT 1
+                             FROM profile_server_relationships psr
+                             JOIN profile p ON p.id = psr.profile_id
+                             WHERE psr.server_id = sc.id
+                               AND psr.enabled = 1
+                               AND p.is_active = 1
+                           )
+                           OR EXISTS (
+                             SELECT 1
+                             FROM profile_capability_refs pcr
+                             JOIN profile p ON p.id = pcr.profile_id
+                             JOIN capability_refs cr ON cr.ref_id = pcr.ref_id
+                             WHERE cr.server_id = sc.id
+                               AND pcr.enabled = 1
+                               AND p.is_active = 1
+                               AND NOT EXISTS (
+                                 SELECT 1
+                                 FROM profile_server_relationships gate
+                                 WHERE gate.profile_id = pcr.profile_id
+                                   AND gate.server_id = cr.server_id
+                                   AND gate.enabled = 0
+                               )
+                           )
+                         )
                        GROUP BY sc.id, sc.name"#,
                 )
                 .fetch_all(&db.pool)
@@ -887,8 +933,7 @@ async fn list_capability_payload(
         InspectorMode::Native => {
             ensure_native_allowed()?;
             let server_id = resolve_server(&query.server_id, &query.server_name).await?;
-            let (session_id, cleanup) =
-                native_validation_scope(state, &server_id, query.session_id.as_deref(), timeout).await?;
+            let (session_id, cleanup) = native_validation_scope(state, &server_id, query.session_id.as_deref()).await?;
             let pool = state.connection_pool.clone();
             let database = match state.database.as_ref() {
                 Some(database) => database.clone(),
@@ -936,15 +981,15 @@ async fn list_capability_via_components(
     timeout: Duration,
     session_id: Option<String>,
     name_domain: capability::runtime::NameDomain,
-    extractor: fn(capability::runtime::ListResult) -> Vec<Value>,
+    extractor: fn(capability::runtime::ListResult) -> Result<Vec<Value>, ApiError>,
 ) -> Result<(Vec<Value>, Value), ApiError> {
-    let service = capability::CapabilityService::new(pool, database);
+    let service = capability::read_service::CapabilityReadService::from_runtime(database, pool);
 
     let ctx = capability::runtime::ListCtx {
         capability: capability_type,
         server_id: server_id.to_string(),
         refresh,
-        timeout: Some(timeout),
+        operation_timeout: timeout,
         validation_session: session_id,
         runtime_identity: None,
         connection_selection: None,
@@ -952,9 +997,9 @@ async fn list_capability_via_components(
         name_domain,
     };
 
-    let result = service.list(&ctx).await.map_err(map_capability_list_error)?;
+    let result = service.list(&ctx).await.map_err(map_capability_read_error)?;
     let meta = meta_success(server_id, &result.meta);
-    let items = extractor(result);
+    let items = extractor(result)?;
     Ok((items, meta))
 }
 
@@ -977,14 +1022,30 @@ fn map_anyhow(e: anyhow::Error) -> ApiError {
     ApiError::InternalError(message)
 }
 
-fn map_capability_list_error(error: anyhow::Error) -> ApiError {
-    if let Some(timeout_ms) = capability::service::connection_timeout_ms(&error) {
+fn map_capability_read_error(error: capability::read_service::CapabilityReadError) -> ApiError {
+    if let Some(timeout_ms) = error.connection_timeout_ms() {
         return ApiError::GatewayTimeout(format!("Inspector server connect exceeded {timeout_ms} ms"));
     }
-    if let Some(timeout_ms) = capability::service::operation_timeout_ms(&error) {
+    if let Some(timeout_ms) = error.operation_timeout_ms() {
         return ApiError::Timeout(format!("Inspector capability operation exceeded {timeout_ms} ms"));
     }
-    map_anyhow(error)
+    capability::service::map_capability_read_error(&error)
+}
+
+/// Mirrors `core::capability::service::map_capability_read_error`, which every other read
+/// surface (tools/prompts/resources/templates/detail) already uses so a typed
+/// `CapabilityReadError` reports a consistent status code and reason instead of collapsing to
+/// a bare `InternalError`. The Inspector previously only recognized timeouts here and fell
+/// back to a generic 500 for everything else, silently losing e.g. upstream authentication
+/// failures (`Unauthorized`) and discovery failures (`BadGateway`) (Codex review follow-up,
+/// PR #160).
+/// Inspector tests still exercise the legacy anyhow error mapping path.
+#[cfg(test)]
+fn map_capability_list_error(error: anyhow::Error) -> ApiError {
+    match error.downcast::<capability::read_service::CapabilityReadError>() {
+        Ok(read_error) => map_capability_read_error(read_error),
+        Err(error) => map_anyhow(error),
+    }
 }
 
 fn meta_success(
@@ -1044,26 +1105,9 @@ async fn ensure_native_session(
         NATIVE_VALIDATION_SESSION_TTL,
     )
     .await
-    .map_err(|err| {
-        if let Some(timeout) = err.downcast_ref::<crate::core::pool::ValidationConnectTimeout>() {
-            return ApiError::GatewayTimeout(format!("Inspector server connect exceeded {} ms", timeout.timeout_ms));
-        }
-        map_anyhow(err)
-    })?;
+    .map_err(map_anyhow)?;
 
     Ok(lease)
-}
-
-async fn ensure_native_session_with_timeout(
-    state: &AppState,
-    server_id: &str,
-    session_id: &str,
-    timeout: Duration,
-) -> Result<crate::core::pool::ValidationReservationLease, ApiError> {
-    run_native_preflight(timeout, async {
-        ensure_native_session(state, server_id, session_id).await
-    })
-    .await
 }
 
 fn native_session_id_for_inspector_session(session_id: &str) -> String {
@@ -1116,7 +1160,6 @@ async fn native_validation_scope(
     state: &AppState,
     server_id: &str,
     inspector_session_id: Option<&str>,
-    timeout: Duration,
 ) -> Result<
     (
         crate::core::pool::ValidationReservationToken,
@@ -1130,7 +1173,7 @@ async fn native_validation_scope(
     }
 
     let validation_session = native_temporary_session_id();
-    let lease = ensure_native_session_with_timeout(state, server_id, &validation_session, timeout).await?;
+    let lease = ensure_native_session(state, server_id, &validation_session).await?;
     let cleanup = NativeValidationSessionGuard::from_lease(state, lease);
     Ok((cleanup.reservation().clone(), Some(cleanup)))
 }
@@ -1418,6 +1461,54 @@ mod tests {
         let response = map_capability_list_error(error.into()).into_response();
 
         assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+    }
+
+    #[test]
+    fn upstream_authentication_failure_returns_unauthorized_instead_of_generic_500() {
+        // Before this fix, `map_capability_list_error` only recognized timeouts and fell back
+        // to a bare `InternalError` (500) for every other typed `CapabilityReadError`, silently
+        // losing the more specific status the main proxy read paths already report via
+        // `map_capability_read_error` (Codex review follow-up, PR #160).
+        let error = CapabilityReadError::CleanupFailed {
+            server_id: "server-a".to_string(),
+            server_name: "docs".to_string(),
+            operation: "tools/list",
+            instance_id: "instance-a".to_string(),
+            connection_generation: None,
+            owner_source: OwnerSource::Existing,
+            error: CapabilityOwnerError::Authentication {
+                code: crate::core::capability::connection_provider::CapabilityAuthenticationFailureCode::AuthRequired,
+                reason: "token expired".to_string(),
+            },
+        };
+
+        let response = map_capability_list_error(error.into()).into_response();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn discovery_failure_without_a_timeout_returns_bad_gateway_not_internal_error() {
+        let error = CapabilityReadError::DiscoveryFailed {
+            server_id: "server-a".to_string(),
+            server_name: "docs".to_string(),
+            operation: "tools/list",
+            kind: CapabilityType::Tools,
+            catalog_error: None,
+            existing: Some(DiscoveryAttemptFailure {
+                instance_id: None,
+                connection_generation: None,
+                source: OwnerSource::Existing,
+                error: CapabilityAttemptError::Owner(CapabilityOwnerError::Missing {
+                    reason: "no connection".to_string(),
+                }),
+            }),
+            fresh: None,
+        };
+
+        let response = map_capability_list_error(error.into()).into_response();
+
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
     }
 
     #[test]

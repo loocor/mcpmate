@@ -33,13 +33,14 @@ use super::types::{self, FailureKind};
 type InstanceSnapshot = (String, ConnectionStatus, bool, bool, Option<Peer<RoleClient>>);
 type SnapshotMap = HashMap<String, Vec<InstanceSnapshot>>;
 
-#[derive(Debug, thiserror::Error)]
-#[error("validation owner initialization timed out after {timeout_ms} ms")]
-pub(crate) struct ValidationConnectTimeout {
-    pub timeout_ms: u128,
-}
-
 const VALIDATION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
+
+#[derive(Debug, thiserror::Error)]
+#[error("Server '{server_name}' is backing off for {remaining_ms} ms")]
+pub(crate) struct ValidationConnectionBackoff {
+    pub server_name: String,
+    pub remaining_ms: u128,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ValidationReservationToken {
@@ -304,6 +305,8 @@ pub struct UpstreamConnectionPool {
     next_validation_reservation: Arc<AtomicU64>,
     next_validation_attempt: Arc<AtomicU64>,
     next_validation_owner_epoch: Arc<AtomicU64>,
+    health_reconnect_epochs: HashMap<(String, String), u64>,
+    next_health_reconnect_epoch: Arc<AtomicU64>,
     /// Server configuration
     pub config: Arc<Config>,
     /// Map of server ID to map of instance ID to cancellation token
@@ -337,6 +340,8 @@ impl UpstreamConnectionPool {
             next_validation_reservation: self.next_validation_reservation.clone(),
             next_validation_attempt: self.next_validation_attempt.clone(),
             next_validation_owner_epoch: self.next_validation_owner_epoch.clone(),
+            health_reconnect_epochs: HashMap::new(),
+            next_health_reconnect_epoch: self.next_health_reconnect_epoch.clone(),
             config: self.config.clone(),
             cancellation_tokens: HashMap::new(),
             process_monitor: None,
@@ -376,6 +381,8 @@ impl UpstreamConnectionPool {
             next_validation_reservation: Arc::new(AtomicU64::new(1)),
             next_validation_attempt: Arc::new(AtomicU64::new(1)),
             next_validation_owner_epoch: Arc::new(AtomicU64::new(1)),
+            health_reconnect_epochs: HashMap::new(),
+            next_health_reconnect_epoch: Arc::new(AtomicU64::new(1)),
             config,
             cancellation_tokens: HashMap::new(),
             process_monitor: Some(process_monitor),
@@ -548,6 +555,36 @@ impl UpstreamConnectionPool {
             }
             state.record_success();
         }
+    }
+
+    pub(crate) fn begin_health_reconnect(
+        &mut self,
+        server_id: &str,
+        instance_id: &str,
+    ) -> u64 {
+        let epoch = self.next_health_reconnect_epoch.fetch_add(1, Ordering::Relaxed);
+        self.health_reconnect_epochs
+            .insert((server_id.to_string(), instance_id.to_string()), epoch);
+        epoch
+    }
+
+    pub(crate) fn health_reconnect_epoch(
+        &self,
+        server_id: &str,
+        instance_id: &str,
+    ) -> Option<u64> {
+        self.health_reconnect_epochs
+            .get(&(server_id.to_string(), instance_id.to_string()))
+            .copied()
+    }
+
+    pub(crate) fn invalidate_health_reconnect(
+        &mut self,
+        server_id: &str,
+        instance_id: &str,
+    ) {
+        self.health_reconnect_epochs
+            .remove(&(server_id.to_string(), instance_id.to_string()));
     }
 
     pub fn remaining_backoff(
@@ -882,6 +919,8 @@ impl UpstreamConnectionPool {
         // Get server configuration from database
         crate::config::server::namespace_repair::ensure_canonical_namespace_before_exposure(&db.pool, server_id)
             .await?;
+        let initial_fingerprint =
+            crate::config::server::capabilities::current_config_fingerprint(&db.pool, server_id).await?;
         let server = crate::config::server::get_server_by_id(&db.pool, server_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Server '{}' disappeared after namespace repair", server_id))?;
@@ -899,15 +938,24 @@ impl UpstreamConnectionPool {
                 backoff_secs = remaining.as_secs_f32(),
                 "Skipping validation instance creation due to active backoff"
             );
-            return Err(anyhow::anyhow!(
-                "Server '{}' is backing off for {:.1}s",
-                server_name,
-                remaining.as_secs_f32()
-            ));
+            return Err(ValidationConnectionBackoff {
+                server_name: server_name.to_string(),
+                remaining_ms: remaining.as_millis(),
+            }
+            .into());
         }
 
         // Convert database Server to MCPServerConfig (reusing existing conversion logic)
-        let server_config = self.convert_server_to_config(&server, &db.pool).await?;
+        let mut server_config = self.convert_server_to_config(&server, &db.pool).await?;
+        let final_fingerprint =
+            crate::config::server::capabilities::current_config_fingerprint(&db.pool, server_id).await?;
+        if initial_fingerprint != final_fingerprint {
+            return Err(anyhow::anyhow!(
+                "Server '{}' changed while creating its validation connection",
+                server_id
+            ));
+        }
+        server_config.source_fingerprint = Some(final_fingerprint);
 
         // Resolve secret placeholders before connecting.
         let server_config = crate::core::secrets::resolve_runtime_server_config_with_optional_resolver(
@@ -915,6 +963,7 @@ impl UpstreamConnectionPool {
             self.secret_resolver.as_deref(),
         )
         .map_err(|err| anyhow::anyhow!("Failed to resolve secrets for validation of '{}': {}", server_name, err))?;
+        let config_fingerprint = server_config.source_fingerprint.clone();
 
         // Create temporary connection instance with validation prefix (unified helper)
         let instance_id = crate::core::pool::helpers::format_validation_instance_id(server_name, session_id);
@@ -927,36 +976,29 @@ impl UpstreamConnectionPool {
         // Connect to server using unified transport interface with a short timeout to avoid startup stalls
         // Determine transport type strictly from server_type (DB no longer stores transport_type)
         let effective_transport = server.server_type.wire_transport();
+        let timeout_policy = crate::core::transport::timeout_policy::McpTimeoutPolicy::for_server(
+            server.server_type,
+            server_config.command.as_deref(),
+            None,
+        );
 
-        let connect_fut = crate::core::transport::unified::connect_server_initialized_for_validation(
+        let service = match crate::core::transport::unified::connect_server_initialized_for_validation(
             server_name,
             &server_config,
             server.server_type,
             effective_transport,
             Some(cancellation),
             Some(&db.pool),
-        );
-
-        // Validation connect timeout: configurable via MCPMATE_VALIDATION_CONNECT_TIMEOUT_MS (default 60000ms)
-        let timeout_ms: u64 = std::env::var("MCPMATE_VALIDATION_CONNECT_TIMEOUT_MS")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(60_000); // Increased from 10s to 60s for consistency
-        let service = match tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), connect_fut).await {
-            Ok(Ok(service)) => service,
-            Ok(Err(e)) => {
+            timeout_policy.startup,
+        )
+        .await
+        {
+            Ok(service) => service,
+            Err(e) => {
                 // Register failure and enter backoff to protect startup/import flows
                 let reason = format!("{}", e);
                 let _ = self.register_failure(&failure_key, FailureKind::Connect, Some(reason));
                 return Err(e);
-            }
-            Err(_elapsed) => {
-                let reason = format!("validation connect timeout ({}ms)", timeout_ms);
-                let _ = self.register_failure(&failure_key, FailureKind::Connect, Some(reason));
-                return Err(ValidationConnectTimeout {
-                    timeout_ms: u128::from(timeout_ms),
-                }
-                .into());
             }
         };
 
@@ -964,6 +1006,7 @@ impl UpstreamConnectionPool {
 
         let capabilities = service.peer_info().map(|info| info.capabilities.clone());
         connection.update_connected(service, Vec::new(), capabilities);
+        connection.config_fingerprint = config_fingerprint;
 
         tracing::info!("Created temporary validation instance for server '{}'", server_name);
         Ok(connection)
@@ -1219,6 +1262,29 @@ impl UpstreamConnectionPool {
             pool: Arc::downgrade(shared),
             armed: true,
         })
+    }
+
+    pub(crate) fn invalidate_validation_attempts_for_server(
+        &mut self,
+        server_id: &str,
+    ) -> usize {
+        let mut invalidated = 0;
+        for state in self.validation_reservations.values_mut() {
+            let attempt_ids = state
+                .in_flight
+                .iter()
+                .filter_map(|(attempt_id, (attempt_server_id, _))| {
+                    (attempt_server_id == server_id).then_some(*attempt_id)
+                })
+                .collect::<Vec<_>>();
+            for attempt_id in attempt_ids {
+                if let Some((_, cancellation)) = state.in_flight.remove(&attempt_id) {
+                    cancellation.cancel();
+                    invalidated += 1;
+                }
+            }
+        }
+        invalidated
     }
 
     fn remove_validation_attempt(
@@ -1551,6 +1617,7 @@ impl UpstreamConnectionPool {
 
         // Create MCPServerConfig (reusing existing structure)
         Ok(crate::core::models::MCPServerConfig {
+            source_fingerprint: None,
             kind: server.server_type,
             command: server.command.clone(),
             args,
@@ -2371,6 +2438,55 @@ mod tests {
             .await
         );
         assert!(!pool.lock().await.failure_states.contains_key("late-worker"));
+
+        UpstreamConnectionPool::release_validation_reservation(&pool, &token)
+            .await
+            .expect("release reservation");
+        drop(lease);
+    }
+
+    #[tokio::test]
+    async fn invalidated_server_attempt_cannot_restore_backoff_after_oauth_completion() {
+        let pool = Arc::new(tokio::sync::Mutex::new(empty_pool()));
+        let lease =
+            UpstreamConnectionPool::reserve_validation_session(&pool, "oauth-complete", Duration::from_secs(60))
+                .await;
+        let token = lease.token().clone();
+        let cancellation = CancellationToken::new();
+        let attempt = pool
+            .lock()
+            .await
+            .begin_validation_attempt(&token, "server-1", cancellation.clone(), &pool)
+            .expect("register pre-OAuth validation attempt");
+
+        assert_eq!(
+            pool.lock()
+                .await
+                .invalidate_validation_attempts_for_server("server-1"),
+            1
+        );
+        assert!(cancellation.is_cancelled());
+        let mut late_failure = FailureState::new();
+        late_failure.register_failure(
+            Instant::now(),
+            FailureKind::Connect,
+            Some("old credential failure".to_string()),
+        );
+
+        assert!(
+            !UpstreamConnectionPool::finalize_validation_failure(
+                &pool,
+                attempt,
+                vec![("validation:server-1".to_string(), late_failure)],
+            )
+            .await
+        );
+        assert!(
+            pool.lock()
+                .await
+                .remaining_backoff("validation:server-1")
+                .is_none()
+        );
 
         UpstreamConnectionPool::release_validation_reservation(&pool, &token)
             .await

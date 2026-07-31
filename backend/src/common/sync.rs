@@ -152,8 +152,6 @@ impl SyncHelper {
         pool: &sqlx::Pool<sqlx::Sqlite>,
         server_id: &str,
     ) -> Result<Vec<crate::config::models::Profile>> {
-        use crate::common::database::fetch_where;
-
         tracing::debug!("Getting profile that include server '{}'", server_id);
 
         // Get all profile
@@ -166,13 +164,37 @@ impl SyncHelper {
 
         for profile in all_profile {
             if let Some(profile_id) = &profile.id {
-                // Check if this profile has the server enabled
-                let server_enabled: Vec<crate::config::models::ProfileServer> =
-                    fetch_where(pool, "profile_server", "profile_id", profile_id, None)
-                        .await
-                        .context("Failed to check profile server associations")?;
-
-                if server_enabled.iter().any(|s| s.server_id == server_id && s.enabled) {
+                let includes_server: bool = sqlx::query_scalar(
+                    r#"
+                    SELECT EXISTS (
+                      SELECT 1
+                      FROM profile_server_relationships
+                      WHERE profile_id = ? AND server_id = ? AND enabled = 1
+                      UNION ALL
+                      SELECT 1
+                      FROM profile_capability_refs pcr
+                      JOIN capability_refs cr ON cr.ref_id = pcr.ref_id
+                      WHERE pcr.profile_id = ?
+                        AND cr.server_id = ?
+                        AND pcr.enabled = 1
+                        AND NOT EXISTS (
+                          SELECT 1
+                          FROM profile_server_relationships gate
+                          WHERE gate.profile_id = pcr.profile_id
+                            AND gate.server_id = cr.server_id
+                            AND gate.enabled = 0
+                        )
+                    )
+                    "#,
+                )
+                .bind(profile_id)
+                .bind(server_id)
+                .bind(profile_id)
+                .bind(server_id)
+                .fetch_one(pool)
+                .await
+                .context("Failed to check Profile authoring relationships")?;
+                if includes_server {
                     profile_with_server.push(profile);
                 }
             }

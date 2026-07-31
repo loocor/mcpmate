@@ -19,10 +19,11 @@ use crate::api::models::inspector::{
     InspectorPromptGetResp, InspectorPromptsListData, InspectorPromptsListResp, InspectorResourceReadData,
     InspectorResourceReadQuery, InspectorResourceReadResp, InspectorResourcesListData, InspectorResourcesListResp,
     InspectorSessionCloseData, InspectorSessionCloseReq, InspectorSessionCloseResp, InspectorSessionOpenReq,
-    InspectorSessionOpenResp, InspectorTemplateReadData, InspectorTemplateReadReq, InspectorTemplateReadResp,
-    InspectorTemplatesListData, InspectorTemplatesListResp, InspectorToolCallCancelData, InspectorToolCallCancelReq,
-    InspectorToolCallCancelResp, InspectorToolCallData, InspectorToolCallReq, InspectorToolCallResp,
-    InspectorToolCallStartData, InspectorToolCallStartResp, InspectorToolsListData, InspectorToolsListResp,
+    InspectorSessionOpenResp, InspectorSessionRefreshReq, InspectorSessionRefreshResp, InspectorTemplateReadData,
+    InspectorTemplateReadReq, InspectorTemplateReadResp, InspectorTemplatesListData, InspectorTemplatesListResp,
+    InspectorToolCallCancelData, InspectorToolCallCancelReq, InspectorToolCallCancelResp, InspectorToolCallData,
+    InspectorToolCallReq, InspectorToolCallResp, InspectorToolCallStartData, InspectorToolCallStartResp,
+    InspectorToolsListData, InspectorToolsListResp,
 };
 use crate::api::routes::AppState;
 use crate::inspector::{calls::CallSubscription, service};
@@ -243,6 +244,14 @@ pub async fn session_open(
     Ok(Json(InspectorSessionOpenResp::success(data)))
 }
 
+pub async fn session_refresh(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<InspectorSessionRefreshReq>,
+) -> Result<Json<InspectorSessionRefreshResp>, ApiError> {
+    let data = service::refresh_session(&state, &req).await?;
+    Ok(Json(InspectorSessionRefreshResp::success(data)))
+}
+
 pub async fn session_close(
     State(state): State<Arc<AppState>>,
     Json(req): Json<InspectorSessionCloseReq>,
@@ -332,9 +341,33 @@ pub async fn prompts_list(
             r#"
             SELECT sc.id, sc.name
             FROM server_config sc
-            JOIN profile_server ps ON ps.server_id = sc.id AND ps.enabled = 1
-            JOIN profile p ON p.id = ps.profile_id AND p.is_active = 1
             WHERE sc.enabled = 1
+              AND (
+                EXISTS (
+                  SELECT 1
+                  FROM profile_server_relationships psr
+                  JOIN profile p ON p.id = psr.profile_id
+                  WHERE psr.server_id = sc.id
+                    AND psr.enabled = 1
+                    AND p.is_active = 1
+                )
+                OR EXISTS (
+                  SELECT 1
+                  FROM profile_capability_refs pcr
+                  JOIN profile p ON p.id = pcr.profile_id
+                  JOIN capability_refs cr ON cr.ref_id = pcr.ref_id
+                  WHERE cr.server_id = sc.id
+                    AND pcr.enabled = 1
+                    AND p.is_active = 1
+                    AND NOT EXISTS (
+                      SELECT 1
+                      FROM profile_server_relationships gate
+                      WHERE gate.profile_id = pcr.profile_id
+                        AND gate.server_id = cr.server_id
+                        AND gate.enabled = 0
+                    )
+                )
+              )
             GROUP BY sc.id, sc.name
             "#,
         )

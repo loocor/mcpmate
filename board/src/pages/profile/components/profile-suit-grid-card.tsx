@@ -19,6 +19,7 @@ export interface ProfileSuitGridCardProps {
 	enabledByComponentId: Map<string, boolean>;
 	/** When loaded and zero, chart shows gray ring with "-" (omit while stats loading). */
 	profileServerCount?: number;
+	reviewCount?: number;
 }
 
 export function ProfileSuitGridCard({
@@ -32,6 +33,7 @@ export function ProfileSuitGridCard({
 	onToggle,
 	enabledByComponentId,
 	profileServerCount,
+	reviewCount = 0,
 }: ProfileSuitGridCardProps) {
 	const { t } = useTranslation();
 	const profileTokenEstimateMethod = useAppStore(
@@ -48,17 +50,32 @@ export function ProfileSuitGridCard({
 				fallback: avatarInitial,
 			}}
 			topRightBadge={
-				<ProfileTokenUsageChart
-					layout="chartOnly"
-					ledgerItems={tokenSource.ledgerItems}
-					fallbackEstimate={tokenSource.fallbackEstimate}
-					isLoading={tokenSource.isLoading}
-					isError={tokenSource.isError}
-					enabledByComponentId={enabledByComponentId}
-					estimateMethod={profileTokenEstimateMethod}
-					profileServerCount={profileServerCount}
-					className="-mr-1"
-				/>
+				<>
+					<ProfileTokenUsageChart
+						layout="chartOnly"
+						ledgerItems={tokenSource.ledgerItems}
+						fallbackEstimate={tokenSource.fallbackEstimate}
+						isLoading={tokenSource.isLoading}
+						isError={tokenSource.isError}
+						enabledByComponentId={enabledByComponentId}
+						estimateMethod={profileTokenEstimateMethod}
+						profileServerCount={profileServerCount}
+						className="-mr-1"
+					/>
+					{reviewCount > 0 ? (
+						<Badge className="border-amber-300 bg-amber-100 text-amber-900 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
+							{t("surfaceReview:badge", {
+								count: reviewCount,
+								defaultValue: "{{count}} to review",
+							})}
+						</Badge>
+					) : null}
+				</>
+			}
+			className={
+				reviewCount > 0
+					? "border-amber-400 bg-amber-50/50 dark:border-amber-700 dark:bg-amber-950/20"
+					: undefined
 			}
 			stats={statItems}
 			bottomLeft={

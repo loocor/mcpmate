@@ -289,7 +289,6 @@ export function MarketDetailPage() {
 
 	const installPipeline = useServerInstallPipeline({
 		onImported: () => {
-			setDrawerOpen(false);
 			void installedServersQuery.refetch();
 		},
 	});

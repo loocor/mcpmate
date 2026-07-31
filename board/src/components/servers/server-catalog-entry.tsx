@@ -5,9 +5,13 @@ import { useTranslation } from "react-i18next";
 import { resolveServerOAuthReadiness } from "../../lib/oauth-readiness";
 import {
 	formatCapabilityLifecycle,
+	hasCapabilityAuthenticationFailure,
 	type CapabilityLifecycleLabels,
 } from "../../lib/capability-lifecycle";
-import { getServerDisplayName } from "../../lib/server-display";
+import {
+	formatServerEndpoint,
+	getServerDisplayName,
+} from "../../lib/server-display";
 import type { ServerSummary } from "../../lib/types";
 import { EntityCard } from "../entity-card";
 import { EntityListItem } from "../entity-list-item";
@@ -66,9 +70,20 @@ function buildCapabilityStats(
 		},
 		{
 			label: statsLabels.templates,
-			value: formatCapabilityLifecycle(server.capability, "resourceTemplates", lifecycleLabels),
+			value: formatCapabilityLifecycle(
+				server.capability,
+				"resourceTemplates",
+				lifecycleLabels,
+			),
 		},
-	];
+	].filter(
+		(
+			item,
+		): item is {
+			label: string;
+			value: string;
+		} => item.value != null,
+	);
 }
 
 function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
@@ -97,9 +112,9 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 	const iconSrc = server.icons?.[0]?.src;
 	const iconAlt = displayName
 		? t("entity.iconAlt.named", {
-				name: displayName,
-				defaultValue: "{{name}} icon",
-			})
+			name: displayName,
+			defaultValue: "{{name}} icon",
+		})
 		: t("entity.iconAlt.fallback", { defaultValue: "Server icon" });
 
 	const handleOpen = useCallback(() => {
@@ -215,11 +230,11 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 		const namespaceIssue = server.namespace_issue;
 		const namespaceIssueLabel = namespaceIssue
 			? t(
-					namespaceIssue.code === "capability_collision" ||
-						namespaceIssue.conflicts?.length
-						? "detail.namespaceIssue.statusConflict"
-						: "detail.namespaceIssue.statusInvalid",
-				)
+				namespaceIssue.code === "capability_collision" ||
+					namespaceIssue.conflicts?.length
+					? "detail.namespaceIssue.statusConflict"
+					: "detail.namespaceIssue.statusInvalid",
+			)
 			: undefined;
 
 		return (
@@ -244,7 +259,9 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 		t,
 	]);
 
-	const stats = buildCapabilityStats(server, statsLabels, lifecycleLabels);
+	const stats = hasCapabilityAuthenticationFailure(server.capability)
+		? []
+		: buildCapabilityStats(server, statsLabels, lifecycleLabels);
 
 	const gridDescription = useMemo(() => {
 		const serverTypeRaw = server.server_type || "";
@@ -254,7 +271,12 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 		if (serverType.includes("stdio") || serverType.includes("process")) {
 			technicalLine = `stdio://${server.name || server.id}`;
 		} else if (serverType.includes("http") || serverType.includes("sse")) {
-			technicalLine = `http://localhost:3000/${server.id}`;
+			technicalLine =
+				formatServerEndpoint(server.url) ??
+				t("entity.description.serverLabel", {
+					name: server.name || server.id,
+					defaultValue: "Server: {{name}}",
+				});
 		} else {
 			technicalLine = t("entity.description.serverLabel", {
 				name: server.name || server.id,
@@ -280,6 +302,7 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 		server.meta?.description,
 		server.name,
 		server.server_type,
+		server.url,
 		t,
 	]);
 
@@ -323,19 +346,19 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 				actionButtons={
 					enableServerDebug && onOpenDebug
 						? [
-								<Button
-									key="debug"
-									size="sm"
-									variant="outline"
-									className="p-2"
-									onClick={handleOpenDebug}
-									title={t("actions.debug.open", {
-										defaultValue: "Open inspect view",
-									})}
-								>
-									<Bug className="h-4 w-4" />
-								</Button>,
-							]
+							<Button
+								key="debug"
+								size="sm"
+								variant="outline"
+								className="p-2"
+								onClick={handleOpenDebug}
+								title={t("actions.debug.open", {
+									defaultValue: "Open inspect view",
+								})}
+							>
+								<Bug className="h-4 w-4" />
+							</Button>,
+						]
 						: []
 				}
 				onClick={handleOpen}

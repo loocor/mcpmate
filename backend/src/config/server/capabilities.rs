@@ -6,9 +6,8 @@ use mcpmate_capability_store::CapabilityCatalog;
 use mcpmate_capability_store::{
     CapabilityFailureObservation, CapabilityKind as CatalogKind, CapabilityObservation, CapabilityPayload,
     CatalogCommit, CatalogRecord, CatalogSnapshot, DeclarationState, DerivedCapabilityCache, InventoryState,
-    KindObservation, SnapshotState, SqliteCapabilityCatalog,
+    KindFailureKind, KindObservation, SnapshotState, SqliteCapabilityCatalog,
 };
-use once_cell::sync::OnceCell;
 use sha2::{Digest, Sha256};
 use sqlx::{Pool, Sqlite, Transaction};
 
@@ -17,53 +16,13 @@ use crate::core::capability::naming::reconcile_external_identifier_additions;
 use crate::core::capability::naming::{NamingKind, begin_naming_transaction, reconcile_external_identifiers};
 use std::collections::{BTreeSet, HashMap};
 
-use crate::core::{
-    capability::index::{CachedPromptInfo, CachedResourceInfo, CachedResourceTemplateInfo, CachedToolInfo},
-    pool::UpstreamConnectionPool,
+use crate::core::capability::index::{
+    CachedPromptInfo, CachedResourceInfo, CachedResourceTemplateInfo, CachedToolInfo,
 };
 use tokio::time::{Duration, timeout};
 
-const PACKAGE_RUNNER_PREVIEW_STARTUP_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct PreviewStdioTimeouts {
-    startup: Duration,
-    tools: Duration,
-    package_runner: bool,
-}
-
 fn is_preview_package_runner(command: &str) -> bool {
-    let executable = command
-        .trim()
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let executable = executable
-        .strip_suffix(".exe")
-        .or_else(|| executable.strip_suffix(".cmd"))
-        .or_else(|| executable.strip_suffix(".bat"))
-        .unwrap_or(&executable);
-
-    matches!(executable, "bunx" | "npx" | "uvx")
-}
-
-fn preview_stdio_timeouts(
-    command: &str,
-    operation_timeout: Option<Duration>,
-) -> PreviewStdioTimeouts {
-    let package_runner = is_preview_package_runner(command);
-    let startup = if package_runner {
-        PACKAGE_RUNNER_PREVIEW_STARTUP_TIMEOUT
-    } else {
-        operation_timeout.unwrap_or_else(|| crate::core::foundation::utils::get_connection_timeout(command))
-    };
-
-    PreviewStdioTimeouts {
-        startup,
-        tools: operation_timeout.unwrap_or_else(|| crate::core::foundation::utils::get_tools_timeout(command)),
-        package_runner,
-    }
+    crate::core::transport::timeout_policy::is_package_runner(command)
 }
 
 async fn run_preview_operation<T, F>(
@@ -197,7 +156,7 @@ mod discovery_helpers {
         server_name: &str,
         snapshot: &super::CapabilitySnapshot,
         _seed_profiles: bool,
-    ) -> Result<()> {
+    ) -> Result<CatalogCommit> {
         super::commit_capability_observation(
             db_pool,
             capability_cache,
@@ -206,8 +165,7 @@ mod discovery_helpers {
             snapshot.clone(),
             crate::core::pool::CapSyncFlags::ALL,
         )
-        .await?;
-        Ok(())
+        .await
     }
 }
 
@@ -252,7 +210,7 @@ pub(crate) async fn apply_discovered_snapshot(
     server_name: &str,
     snapshot: &CapabilitySnapshot,
     seed_profiles: bool,
-) -> Result<()> {
+) -> Result<CatalogCommit> {
     discovery_helpers::apply_snapshot(
         db_pool,
         capability_cache,
@@ -597,30 +555,33 @@ pub async fn discover_from_config_preview(
     operation_timeout: Option<std::time::Duration>,
 ) -> Result<CapabilitySnapshot> {
     use crate::core::transport::{
-        TransportType, connect_http_server, connect_http_server_with_client, connect_http_server_with_client_timeouts,
-        stdio::connect_stdio_server_with_timeouts,
+        TransportType, connect_http_server_with_client_timeouts, stdio::connect_stdio_server_with_timeouts,
     };
     use tokio_util::sync::CancellationToken;
 
+    let timeout_policy = crate::core::transport::timeout_policy::McpTimeoutPolicy::for_server(
+        server_type,
+        server_config.command.as_deref(),
+        operation_timeout,
+    );
     let (service, tools, capabilities, _pid) = match server_type {
         crate::common::server::ServerType::Stdio => {
             let command = server_config.command.as_deref().unwrap_or_default();
-            let timeouts = preview_stdio_timeouts(command, operation_timeout);
             let result = connect_stdio_server_with_timeouts(
                 server_name,
                 server_config,
                 CancellationToken::new(),
                 None,
-                timeouts.startup,
-                timeouts.tools,
+                timeout_policy.startup,
+                timeout_policy.capability_operation,
             )
             .await;
 
-            if timeouts.package_runner {
+            if is_preview_package_runner(command) {
                 result.with_context(|| {
                     format!(
                         "Package runner preview startup failed for '{server_name}' after allowing up to {}s",
-                        timeouts.startup.as_secs()
+                        timeout_policy.startup.as_secs()
                     )
                 })?
             } else {
@@ -628,27 +589,17 @@ pub async fn discover_from_config_preview(
             }
         }
         crate::common::server::ServerType::Sse | crate::common::server::ServerType::StreamableHttp => {
-            if let Some(timeout) = operation_timeout {
-                let client = http_client.unwrap_or_default();
-                let (service, tools, capabilities) = connect_http_server_with_client_timeouts(
-                    server_name,
-                    server_config,
-                    client,
-                    TransportType::StreamableHttp,
-                    timeout,
-                    timeout,
-                )
-                .await?;
-                (service, tools, capabilities, None)
-            } else if let Some(client) = http_client {
-                let (service, tools, capabilities) =
-                    connect_http_server_with_client(server_name, server_config, client, TransportType::StreamableHttp)
-                        .await?;
-                (service, tools, capabilities, None)
-            } else {
-                let (s, t, c) = connect_http_server(server_name, server_config, TransportType::StreamableHttp).await?;
-                (s, t, c, None)
-            }
+            let client = http_client.unwrap_or_default();
+            let (service, tools, capabilities) = connect_http_server_with_client_timeouts(
+                server_name,
+                server_config,
+                client,
+                TransportType::StreamableHttp,
+                timeout_policy.startup,
+                timeout_policy.capability_operation,
+            )
+            .await?;
+            (service, tools, capabilities, None)
         }
     };
 
@@ -1135,7 +1086,7 @@ fn snapshot_from_catalog(snapshot: CatalogSnapshot) -> Result<CapabilitySnapshot
         result.initialize = Some(initialize);
     }
     for record in snapshot.records {
-        match record.payload {
+        match record.source_payload {
             CapabilityPayload::Tool(tool) => {
                 let mut cached = cached_tool_from_protocol(&tool);
                 cached.unique_name = Some(record.external_key);
@@ -1174,6 +1125,12 @@ fn shadow_table_and_column(kind: CatalogKind) -> (&'static str, &'static str) {
     }
 }
 
+/// External-key prefix `catalog_records_in_transaction` assigns to a Resource Template that
+/// cannot enter the canonical shadow-index address space (see
+/// `resource_template_is_projectable`). These records are intentionally never written to
+/// `server_resource_templates`, so the shadow-index integrity check must not expect them there.
+const UNPROJECTABLE_TEMPLATE_EXTERNAL_PREFIX: &str = "internal://capability/";
+
 /// Compares one kind's catalog records against its shadow index table by upstream key. The
 /// shadow index is derived data committed atomically with the catalog snapshot; if the two
 /// disagree (e.g. a prior bug wrote one without the other), the persisted snapshot can no
@@ -1187,7 +1144,9 @@ pub(crate) async fn shadow_index_matches_catalog_kind(
 ) -> Result<bool> {
     let catalog_keys: BTreeSet<&str> = records
         .iter()
-        .filter(|record| record.kind() == kind)
+        .filter(|record| {
+            record.kind() == kind && !record.external_key.starts_with(UNPROJECTABLE_TEMPLATE_EXTERNAL_PREFIX)
+        })
         .map(|record| record.upstream_key.as_str())
         .collect();
     let (table, column) = shadow_table_and_column(kind);
@@ -1376,74 +1335,6 @@ async fn persist_server_info_in_transaction(
     Ok(())
 }
 
-async fn seed_profiles_in_transaction(
-    tx: &mut Transaction<'_, Sqlite>,
-    server_id: &str,
-    server_name: &str,
-) -> Result<()> {
-    fn generated_profile_capability_id(prefix: &str) -> String {
-        let alphabet = crate::macros::id::create_safe_alphabet();
-        format!("{}{}", prefix.to_uppercase(), nanoid::nanoid!(12, &alphabet))
-    }
-    let profile_ids = sqlx::query_scalar::<_, String>("SELECT id FROM profile WHERE is_active = 1 ORDER BY id")
-        .fetch_all(&mut **tx)
-        .await?;
-    let tool_ids = sqlx::query_scalar::<_, String>("SELECT id FROM server_tools WHERE server_id = ? ORDER BY id")
-        .bind(server_id)
-        .fetch_all(&mut **tx)
-        .await?;
-    let prompts = sqlx::query_scalar::<_, String>(
-        "SELECT prompt_name FROM server_prompts WHERE server_id = ? ORDER BY prompt_name",
-    )
-    .bind(server_id)
-    .fetch_all(&mut **tx)
-    .await?;
-    let resources = sqlx::query_scalar::<_, String>(
-        "SELECT resource_uri FROM server_resources WHERE server_id = ? ORDER BY resource_uri",
-    )
-    .bind(server_id)
-    .fetch_all(&mut **tx)
-    .await?;
-    let templates = sqlx::query_scalar::<_, String>(
-        "SELECT uri_template FROM server_resource_templates WHERE server_id = ? ORDER BY uri_template",
-    )
-    .bind(server_id)
-    .fetch_all(&mut **tx)
-    .await?;
-    for profile_id in profile_ids {
-        for tool_id in &tool_ids {
-            sqlx::query(
-                "INSERT INTO profile_tool (id, profile_id, server_tool_id, enabled) VALUES (?, ?, ?, 1) ON CONFLICT(profile_id, server_tool_id) DO NOTHING",
-            )
-            .bind(crate::generate_id!("cstool"))
-            .bind(&profile_id)
-            .bind(tool_id)
-            .execute(&mut **tx)
-            .await?;
-        }
-        for (table, column, prefix, values) in [
-            ("profile_prompt", "prompt_name", "csprompt", &prompts),
-            ("profile_resource", "resource_uri", "csres", &resources),
-            ("profile_resource_template", "uri_template", "csrt", &templates),
-        ] {
-            let query = format!(
-                "INSERT INTO {table} (id, profile_id, server_id, server_name, {column}, enabled) VALUES (?, ?, ?, ?, ?, 1) ON CONFLICT(profile_id, server_id, {column}) DO NOTHING"
-            );
-            for value in values {
-                sqlx::query(&query)
-                    .bind(generated_profile_capability_id(prefix))
-                    .bind(&profile_id)
-                    .bind(server_id)
-                    .bind(server_name)
-                    .bind(value)
-                    .execute(&mut **tx)
-                    .await?;
-            }
-        }
-    }
-    Ok(())
-}
-
 async fn catalog_records_in_transaction(
     tx: &mut Transaction<'_, Sqlite>,
     snapshot: &CapabilitySnapshot,
@@ -1487,65 +1378,66 @@ async fn catalog_records_in_transaction(
     .collect::<HashMap<_, _>>();
     let mut records = Vec::new();
     for tool in &snapshot.protocol_tools {
-        let (id, external) = tool_identity
+        let (_, external) = tool_identity
             .get(tool.name.as_ref())
             .with_context(|| format!("Missing Tool identity for '{}'", tool.name))?;
-        records.push(CatalogRecord::new(
-            id,
+        records.push(CatalogRecord::materialize(
+            server_id,
             tool.name.as_ref(),
             external,
             CapabilityPayload::Tool(tool.clone()),
-        ));
+        )?);
     }
     for prompt in &snapshot.protocol_prompts {
-        let (id, external) = prompt_identity
+        let (_, external) = prompt_identity
             .get(&prompt.name)
             .with_context(|| format!("Missing Prompt identity for '{}'", prompt.name))?;
-        records.push(CatalogRecord::new(
-            id,
+        records.push(CatalogRecord::materialize(
+            server_id,
             &prompt.name,
             external,
             CapabilityPayload::Prompt(prompt.clone()),
-        ));
+        )?);
     }
     for resource in &snapshot.protocol_resources {
-        let (id, external) = resource_identity
+        let (_, external) = resource_identity
             .get(&resource.uri)
             .with_context(|| format!("Missing Resource identity for '{}'", resource.uri))?;
-        records.push(CatalogRecord::new(
-            id,
+        records.push(CatalogRecord::materialize(
+            server_id,
             &resource.uri,
             external,
             CapabilityPayload::Resource(resource.clone()),
-        ));
+        )?);
     }
     for template in &snapshot.protocol_resource_templates {
-        if let Some((id, external)) = template_identity.get(&template.uri_template) {
-            records.push(CatalogRecord::new(
-                id,
+        if let Some((_, external)) = template_identity.get(&template.uri_template) {
+            records.push(CatalogRecord::materialize(
+                server_id,
                 &template.uri_template,
                 external,
                 CapabilityPayload::ResourceTemplate(template.clone()),
-            ));
+            )?);
         } else {
             let digest = format!("{:x}", Sha256::digest(format!("{server_id}:{}", template.uri_template)));
-            records.push(CatalogRecord::new(
-                format!("unprojectable-template-{}", &digest[..24]),
+            records.push(CatalogRecord::materialize(
+                server_id,
                 &template.uri_template,
                 format!("internal://capability/{server_id}/resource-template/{digest}"),
                 CapabilityPayload::ResourceTemplate(template.clone()),
-            ));
+            )?);
         }
     }
     Ok(records)
 }
 
-pub(crate) async fn commit_snapshot_for_kinds(
+async fn commit_snapshot_for_kinds_checked(
     pool: &Pool<Sqlite>,
     server_id: &str,
     server_name: &str,
     snapshot: CapabilitySnapshot,
     kinds: crate::core::pool::CapSyncFlags,
+    expected_config_fingerprint: Option<&str>,
 ) -> Result<CatalogCommit> {
     let catalog = SqliteCapabilityCatalog::new(pool.clone());
     #[cfg(test)]
@@ -1553,6 +1445,17 @@ pub(crate) async fn commit_snapshot_for_kinds(
     let mut tx = begin_naming_transaction(pool)
         .await
         .context("Failed to begin transactional capability catalog update")?;
+    let config_fingerprint = config_fingerprint_in_transaction(&mut tx, server_id).await?;
+    if let Some(expected) = expected_config_fingerprint
+        && config_fingerprint != expected
+    {
+        return Err(CapabilityConfigurationChanged {
+            server_id: server_id.to_string(),
+            expected: expected.to_string(),
+            actual: config_fingerprint,
+        }
+        .into());
+    }
     let (existing, rebuilding_untrusted_catalog, previous_revision) =
         match catalog.load_snapshot_in_transaction(&mut tx, server_id).await {
             Ok(existing) => (existing, false, None),
@@ -1574,28 +1477,53 @@ pub(crate) async fn commit_snapshot_for_kinds(
     let (mut merged, states) =
         merge_selected_kinds(existing, snapshot, kinds, server_name, rebuilding_untrusted_catalog)?;
     apply_snapshot_catalog_in_transaction(&mut tx, server_id, server_name, &mut merged).await?;
-    seed_profiles_in_transaction(&mut tx, server_id, server_name).await?;
     let initialize = merged
         .initialize
         .clone()
         .context("Capability discovery did not provide initialize data")?;
     persist_server_info_in_transaction(&mut tx, server_id, server_name, &initialize).await?;
     let records = catalog_records_in_transaction(&mut tx, &merged, server_id).await?;
-    let config_fingerprint = config_fingerprint_in_transaction(&mut tx, server_id).await?;
+    let observed_kinds = CatalogKind::ALL.into_iter().filter(|kind| match kind {
+        CatalogKind::Tools => kinds.contains(crate::core::pool::CapSyncFlags::TOOLS),
+        CatalogKind::Prompts => kinds.contains(crate::core::pool::CapSyncFlags::PROMPTS),
+        CatalogKind::Resources => kinds.contains(crate::core::pool::CapSyncFlags::RESOURCES),
+        CatalogKind::ResourceTemplates => kinds.contains(crate::core::pool::CapSyncFlags::RESOURCE_TEMPLATES),
+    });
     let observation =
-        CapabilityObservation::new(server_id, server_name, config_fingerprint, initialize, states, records);
-    let commit = match previous_revision {
-        Some(previous_revision) => {
-            catalog
-                .commit_observation_after_revision_in_transaction(&mut tx, observation, previous_revision)
-                .await?
-        }
-        None => catalog.commit_observation_in_transaction(&mut tx, observation).await?,
-    };
+        CapabilityObservation::new(server_id, server_name, config_fingerprint, initialize, states, records)
+            .with_observed_kinds(observed_kinds);
+    let reconciliation = crate::core::capability::reconciliation::CatalogSurfaceReconciler::new(pool.clone())
+        .reconcile_after_revision_in_transaction(
+            &mut tx,
+            observation,
+            previous_revision,
+            crate::core::capability::reconciliation::ReconciliationFault::None,
+        )
+        .await?;
     tx.commit()
         .await
         .context("Failed to commit capability catalog transaction")?;
-    Ok(commit)
+    Ok(reconciliation.commit)
+}
+
+pub(crate) async fn commit_snapshot_for_kinds(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+    server_name: &str,
+    snapshot: CapabilitySnapshot,
+    kinds: crate::core::pool::CapSyncFlags,
+) -> Result<CatalogCommit> {
+    commit_snapshot_for_kinds_checked(pool, server_id, server_name, snapshot, kinds, None).await
+}
+
+#[derive(Clone, Debug, thiserror::Error)]
+#[error(
+    "server configuration changed during capability discovery for '{server_id}': expected {expected}, found {actual}"
+)]
+pub(crate) struct CapabilityConfigurationChanged {
+    pub server_id: String,
+    pub expected: String,
+    pub actual: String,
 }
 
 #[derive(Clone, Debug)]
@@ -1604,39 +1532,9 @@ pub(crate) struct CapabilityFailureEvidence {
     pub kind: CatalogKind,
     pub instance_id: Option<String>,
     pub connection_generation: Option<u64>,
+    pub failure_kind: Option<KindFailureKind>,
+    pub timeout_ms: Option<u64>,
     pub reason: String,
-}
-
-#[derive(Debug, thiserror::Error)]
-#[error("{source}")]
-pub(crate) struct CapabilitySyncFailure {
-    #[source]
-    source: anyhow::Error,
-    evidence: Option<CapabilityFailureEvidence>,
-}
-
-impl CapabilitySyncFailure {
-    fn operation(source: anyhow::Error) -> Self {
-        Self { source, evidence: None }
-    }
-
-    fn inventory(
-        source: anyhow::Error,
-        evidence: CapabilityFailureEvidence,
-    ) -> Self {
-        Self {
-            source,
-            evidence: Some(evidence),
-        }
-    }
-
-    pub(crate) fn evidence(&self) -> Option<&CapabilityFailureEvidence> {
-        self.evidence.as_ref()
-    }
-
-    pub(crate) fn into_source(self) -> anyhow::Error {
-        self.source
-    }
 }
 
 pub(crate) struct CapabilityProtocolObservation {
@@ -1671,14 +1569,26 @@ pub(crate) async fn commit_capability_observation(
     kinds: crate::core::pool::CapSyncFlags,
 ) -> Result<CatalogCommit> {
     let commit = commit_snapshot_for_kinds(pool, server_id, server_name, snapshot, kinds).await?;
-    cache.invalidate_server(server_id).await;
-    publish_catalog_commit(server_id, server_name, commit.revision);
+    if commit.changed {
+        cache.invalidate_server(server_id).await;
+        publish_catalog_commit(server_id, server_name, commit.revision);
+    }
     Ok(commit)
 }
 
 pub(crate) async fn record_capability_failure(
     pool: &Pool<Sqlite>,
     cache: &DerivedCapabilityCache,
+    evidence: CapabilityFailureEvidence,
+) -> mcpmate_capability_store::Result<CatalogCommit> {
+    let kind = evidence.kind;
+    record_capability_failures(pool, cache, &[kind], evidence).await
+}
+
+pub(crate) async fn record_capability_failures(
+    pool: &Pool<Sqlite>,
+    cache: &DerivedCapabilityCache,
+    kinds: &[CatalogKind],
     evidence: CapabilityFailureEvidence,
 ) -> mcpmate_capability_store::Result<CatalogCommit> {
     let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -1690,30 +1600,38 @@ pub(crate) async fn record_capability_failure(
             server_id: evidence.server_id.clone(),
         })?;
     let config_fingerprint = config_fingerprint_in_transaction(&mut transaction, &evidence.server_id).await?;
+    let kind_names = kinds
+        .iter()
+        .map(|kind| catalog_kind_name(*kind))
+        .collect::<Vec<_>>()
+        .join(",");
     let reason = format!(
         "server_id={} server_name={} kinds=[{}] instance={:?} generation={:?} reason={}",
         evidence.server_id,
         server_name,
-        catalog_kind_name(evidence.kind),
+        kind_names,
         evidence.instance_id,
         evidence.connection_generation,
         evidence.reason
     );
+    let mut observation = CapabilityFailureObservation::for_kinds(
+        &evidence.server_id,
+        &server_name,
+        config_fingerprint,
+        kinds.iter().copied(),
+        reason,
+    );
+    if let Some(failure_kind) = evidence.failure_kind {
+        observation = observation.with_failure(failure_kind, evidence.timeout_ms);
+    }
     let commit = SqliteCapabilityCatalog::new(pool.clone())
-        .record_failure_in_transaction(
-            &mut transaction,
-            CapabilityFailureObservation::new(
-                &evidence.server_id,
-                &server_name,
-                config_fingerprint,
-                evidence.kind,
-                reason,
-            ),
-        )
+        .record_failure_in_transaction(&mut transaction, observation)
         .await?;
     transaction.commit().await?;
-    cache.invalidate_server(&evidence.server_id).await;
-    publish_catalog_commit(&evidence.server_id, &server_name, commit.revision);
+    if commit.changed {
+        cache.invalidate_server(&evidence.server_id).await;
+        publish_catalog_commit(&evidence.server_id, &server_name, commit.revision);
+    }
     Ok(commit)
 }
 
@@ -1792,6 +1710,7 @@ pub(crate) async fn commit_capability_protocol_observation(
     cache: &DerivedCapabilityCache,
     server_id: &str,
     server_name: &str,
+    expected_config_fingerprint: &str,
     observation: CapabilityProtocolObservation,
 ) -> Result<CatalogCommit> {
     let CapabilityProtocolObservation {
@@ -1816,7 +1735,20 @@ pub(crate) async fn commit_capability_protocol_observation(
     snapshot.set_resources(resources);
     snapshot.set_prompts(prompts);
     snapshot.set_resource_templates(templates);
-    commit_capability_observation(pool, cache, server_id, server_name, snapshot, kinds).await
+    let commit = commit_snapshot_for_kinds_checked(
+        pool,
+        server_id,
+        server_name,
+        snapshot,
+        kinds,
+        Some(expected_config_fingerprint),
+    )
+    .await?;
+    if commit.changed {
+        cache.invalidate_server(server_id).await;
+        publish_catalog_commit(server_id, server_name, commit.revision);
+    }
+    Ok(commit)
 }
 
 /// Test adapter for partial SQLite catalog commits.
@@ -1844,258 +1776,6 @@ pub async fn store_dual_write_for_kinds(
     commit_snapshot_for_kinds(pool, server_id, server_name, snapshot, kinds)
         .await
         .map(|_| ())
-}
-
-#[cfg(test)]
-async fn profile_has_seed_tool(
-    pool: &Pool<Sqlite>,
-    profile_id: &str,
-    server_id: &str,
-    upstream_tool_name: &str,
-) -> bool {
-    sqlx::query_scalar::<_, bool>(
-        r#"
-        SELECT EXISTS(
-            SELECT 1
-            FROM profile_tool pt
-            JOIN server_tools st ON st.id = pt.server_tool_id
-			WHERE pt.profile_id = ?
-			  AND st.server_id = ?
-			  AND st.tool_name = ?
-        )
-        "#,
-    )
-    .bind(profile_id)
-    .bind(server_id)
-    .bind(upstream_tool_name)
-    .fetch_one(pool)
-    .await
-    .unwrap_or(false)
-}
-
-#[cfg(test)]
-async fn profile_has_seed_capability(
-    pool: &Pool<Sqlite>,
-    profile_id: &str,
-    server_id: &str,
-    table: &str,
-    value_column: &str,
-    value: &str,
-) -> bool {
-    let query =
-        format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE profile_id = ? AND server_id = ? AND {value_column} = ?)");
-    sqlx::query_scalar::<_, bool>(&query)
-        .bind(profile_id)
-        .bind(server_id)
-        .bind(value)
-        .fetch_one(pool)
-        .await
-        .unwrap_or(false)
-}
-
-/// Legacy non-transactional profile seeding retained only for characterization tests.
-#[cfg(test)]
-pub async fn seed_profiles_with_snapshot(
-    pool: &Pool<Sqlite>,
-    server_id: &str,
-    snapshot: &CapabilitySnapshot,
-) -> Result<()> {
-    // Get active profiles
-    let profiles = crate::config::profile::get_active_profile(pool).await?;
-    if profiles.is_empty() {
-        return Ok(());
-    }
-
-    for profile in profiles {
-        let Some(profile_id) = profile.id.as_deref() else {
-            continue;
-        };
-
-        // Tools: only seed missing rows; never override existing user toggles.
-        for t in &snapshot.tools {
-            if !profile_has_seed_tool(pool, profile_id, server_id, &t.name).await {
-                let _ = crate::config::profile::add_tool_to_profile(pool, profile_id, server_id, &t.name, true).await;
-            }
-        }
-        // Resources: only seed missing rows; never override existing user toggles.
-        for r in &snapshot.resources {
-            if !profile_has_seed_capability(pool, profile_id, server_id, "profile_resource", "resource_uri", &r.uri)
-                .await
-            {
-                let _ =
-                    crate::config::profile::add_resource_to_profile(pool, profile_id, server_id, &r.uri, true).await;
-            }
-        }
-        // Prompts: only seed missing rows; never override existing user toggles.
-        for p in &snapshot.prompts {
-            if !profile_has_seed_capability(pool, profile_id, server_id, "profile_prompt", "prompt_name", &p.name).await
-            {
-                let _ = crate::config::profile::add_prompt_to_profile(pool, profile_id, server_id, &p.name, true).await;
-            }
-        }
-
-        // Resource templates: only seed missing rows; never override existing user toggles.
-        for t in &snapshot.resource_templates {
-            if !profile_has_seed_capability(
-                pool,
-                profile_id,
-                server_id,
-                "profile_resource_template",
-                "uri_template",
-                &t.uri_template,
-            )
-            .await
-            {
-                let _ = crate::config::profile::add_resource_template_to_profile(
-                    pool,
-                    profile_id,
-                    server_id,
-                    &t.uri_template,
-                    true,
-                )
-                .await;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Sync capabilities using an upstream connection pool (API path helper)
-pub async fn sync_via_connection_pool(
-    connection_pool: &tokio::sync::Mutex<UpstreamConnectionPool>,
-    db_pool: &Pool<Sqlite>,
-    capability_cache: &DerivedCapabilityCache,
-    server_id: &str,
-    server_name: &str,
-    lock_timeout_secs: u64,
-) -> Result<()> {
-    match sync_via_connection_pool_deferred(
-        connection_pool,
-        db_pool,
-        capability_cache,
-        server_id,
-        server_name,
-        lock_timeout_secs,
-    )
-    .await
-    {
-        Ok(()) => Ok(()),
-        Err(failure) => {
-            if let Some(evidence) = failure.evidence().cloned() {
-                record_capability_failure(db_pool, capability_cache, evidence)
-                    .await
-                    .context("Failed to persist terminal validation capability evidence")?;
-            }
-            Err(failure.into_source())
-        }
-    }
-}
-
-pub(crate) async fn sync_via_connection_pool_deferred(
-    connection_pool: &tokio::sync::Mutex<UpstreamConnectionPool>,
-    db_pool: &Pool<Sqlite>,
-    capability_cache: &DerivedCapabilityCache,
-    server_id: &str,
-    server_name: &str,
-    lock_timeout_secs: u64,
-) -> std::result::Result<(), CapabilitySyncFailure> {
-    tracing::info!(
-        target: "mcpmate::config::server::capabilities",
-        server_id = %server_id,
-        server_name = %server_name,
-        lock_timeout_secs = lock_timeout_secs,
-        "Starting capability sync via connection pool"
-    );
-    // Acquire pool
-    let pool_guard = timeout(Duration::from_secs(lock_timeout_secs), connection_pool.lock())
-        .await
-        .map_err(|_| CapabilitySyncFailure::operation(anyhow::anyhow!("Timeout acquiring connection pool lock")))?;
-    let mut pool = pool_guard;
-
-    // Create temporary validation instance
-    let conn = match pool
-        .get_or_create_validation_instance(server_id, "api", Duration::from_secs(5 * 60))
-        .await
-    {
-        Ok(Some(c)) => c,
-        Ok(None) => {
-            return Err(CapabilitySyncFailure::operation(anyhow::anyhow!(
-                "No validation instance is available for capability sync of server '{}'",
-                server_name
-            )));
-        }
-        Err(error) => {
-            return Err(CapabilitySyncFailure::operation(error.context(format!(
-                "Failed to create a validation instance for capability sync of server '{server_name}'"
-            ))));
-        }
-    };
-    let instance_id = conn.id.clone();
-
-    // Discover and apply (now fully paginated)
-    let sync_result = match discover_from_connection(conn).await {
-        Ok(snapshot) => {
-            discovery_helpers::apply_snapshot(db_pool, capability_cache, server_id, server_name, &snapshot, true)
-                .await
-                .map_err(CapabilitySyncFailure::operation)
-        }
-        Err(error) => {
-            let evidence = error
-                .downcast_ref::<CapabilityInventoryDiscoveryError>()
-                .map(|failure| CapabilityFailureEvidence {
-                    server_id: server_id.to_string(),
-                    kind: failure.kind,
-                    instance_id: Some(instance_id),
-                    connection_generation: None,
-                    reason: format!("{error:#}"),
-                });
-            Err(match evidence {
-                Some(evidence) => CapabilitySyncFailure::inventory(error, evidence),
-                None => CapabilitySyncFailure::operation(error),
-            })
-        }
-    };
-
-    // Cleanup
-    if let Err(e) = pool.destroy_validation_instance(server_id, "api").await {
-        tracing::trace!(server_name = %server_name, error = %e, "Failed to destroy validation instance (api)");
-    }
-
-    if let Err(error) = sync_result {
-        if let Some(collision) =
-            crate::config::server::namespace_repair::record_capability_collision_from_error(db_pool, &error.source)
-                .await
-                .map_err(CapabilitySyncFailure::operation)?
-        {
-            pool.block_server_after_capability_collision(&collision.server_id).await;
-            pool.sync_servers_from_active_profile().await.map_err(|source| {
-                CapabilitySyncFailure::operation(source.context(format!(
-                    "Failed to block server '{}' after external capability collision",
-                    collision.server_id
-                )))
-            })?;
-            tracing::warn!(
-                server_id = %collision.server_id,
-                conflicting_server_id = %collision.conflicting_server_id,
-                external_identifier = %collision.external_identifier,
-                "Blocked server after external capability collision; namespace remediation is required"
-            );
-        }
-        return Err(error);
-    }
-
-    Ok(())
-}
-
-pub fn default_pool_lock_timeout_secs() -> u64 {
-    static TIMEOUT: OnceCell<u64> = OnceCell::new();
-    *TIMEOUT.get_or_init(|| {
-        std::env::var("MCPMATE_CAPABILITY_POOL_LOCK_TIMEOUT_SECS")
-            .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-            .filter(|value| *value > 0)
-            .unwrap_or(60)
-    })
 }
 
 #[cfg(test)]
@@ -2205,12 +1885,31 @@ mod tests {
     }
 
     async fn insert_active_profile(pool: &Pool<Sqlite>) {
+        insert_active_profile_attached_to(pool, "profile-a", "server-a").await;
+    }
+
+    /// Inserts an active profile attached to `server_id` through a server-level authoring relationship.
+    async fn insert_active_profile_attached_to(
+        pool: &Pool<Sqlite>,
+        profile_id: &str,
+        server_id: &str,
+    ) {
         sqlx::query(
-            "INSERT INTO profile (id, name, description, type, is_active, is_default, multi_select, priority) VALUES ('profile-a', 'Profile A', '', 'shared', 1, 1, 1, 0)",
+            "INSERT INTO profile (id, name, description, type, is_active, is_default, multi_select, priority) VALUES (?, ?, '', 'shared', 1, 1, 1, 0)",
         )
+        .bind(profile_id)
+        .bind(format!("Profile {profile_id}"))
         .execute(pool)
         .await
         .expect("insert active profile");
+        sqlx::query(
+            "INSERT INTO profile_server_relationships (profile_id, server_id, new_ref_policy) VALUES (?, ?, 'follow')",
+        )
+        .bind(profile_id)
+        .bind(server_id)
+        .execute(pool)
+        .await
+        .expect("attach server to active profile");
     }
 
     #[tokio::test]
@@ -2256,7 +1955,7 @@ mod tests {
         let payloads = snapshot
             .records
             .iter()
-            .map(|record| serde_json::to_value(&record.payload).expect("serialize payload"))
+            .map(|record| serde_json::to_value(&record.source_payload).expect("serialize payload"))
             .collect::<Vec<_>>();
         for expected in [
             CapabilityPayload::Tool(tool),
@@ -2272,10 +1971,6 @@ mod tests {
             "server_prompts",
             "server_resources",
             "server_resource_templates",
-            "profile_tool",
-            "profile_prompt",
-            "profile_resource",
-            "profile_resource_template",
         ] {
             let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
                 .fetch_one(&pool)
@@ -2283,6 +1978,15 @@ mod tests {
                 .unwrap_or_else(|error| panic!("count {table}: {error}"));
             assert_eq!(count, 1, "{table} must be committed with the snapshot");
         }
+        let profile_intent_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM profile_capability_refs WHERE profile_id = 'profile-a'")
+                .fetch_one(&pool)
+                .await
+                .expect("count profile capability intent");
+        assert_eq!(
+            profile_intent_count, 0,
+            "inventory observation must not write capability-level authoring intent"
+        );
         let server_meta: (String, String, String) = sqlx::query_as(
             "SELECT upstream_name, server_version, protocol_version FROM server_meta WHERE server_id = 'server-a'",
         )
@@ -2302,18 +2006,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn profile_seed_failure_rolls_back_catalog_indexes_associations_and_metadata() {
+    async fn protocol_observation_preserves_server_level_profile_intent_without_seeding_ref_rows() {
         let pool = capability_store_pool().await;
         insert_active_profile(&pool).await;
-        sqlx::query(
-            "CREATE TRIGGER fail_profile_prompt BEFORE INSERT ON profile_prompt BEGIN SELECT RAISE(ABORT, 'profile prompt fixture failure'); END",
-        )
-        .execute(&pool)
-        .await
-        .expect("install rollback trigger");
         let (initialize, tool, resource, prompt, template) = protocol_fixture();
 
-        let error = commit_protocol_items_for_kinds(
+        commit_protocol_items_for_kinds(
             &pool,
             "server-a",
             "docs",
@@ -2325,28 +2023,62 @@ mod tests {
             crate::core::pool::CapSyncFlags::ALL,
         )
         .await
-        .expect_err("profile seed failure must abort the entire observation");
-        assert!(error.to_string().contains("profile prompt fixture failure"));
+        .expect("commit protocol observation");
 
-        let catalog = SqliteCapabilityCatalog::new(pool.clone());
-        assert!(catalog.load_snapshot("server-a").await.expect("load catalog").is_none());
-        for table in [
-            "server_tools",
-            "server_prompts",
-            "server_resources",
-            "server_resource_templates",
-            "profile_tool",
-            "profile_prompt",
-            "profile_resource",
-            "profile_resource_template",
-            "server_meta",
-        ] {
-            let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+        let policy: String = sqlx::query_scalar(
+            "SELECT new_ref_policy FROM profile_server_relationships WHERE profile_id = 'profile-a' AND server_id = 'server-a'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("load profile server relationship");
+        assert_eq!(policy, "follow");
+        let capability_intent_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM profile_capability_refs WHERE profile_id = 'profile-a'")
                 .fetch_one(&pool)
                 .await
-                .unwrap_or_else(|query_error| panic!("count {table}: {query_error}"));
-            assert_eq!(count, 0, "{table} must roll back with the failed observation");
-        }
+                .expect("count profile capability intent");
+        assert_eq!(capability_intent_count, 0);
+    }
+
+    #[tokio::test]
+    async fn inventory_observation_does_not_create_authoring_intent_for_any_profile() {
+        let pool = capability_store_pool().await;
+        insert_active_profile_attached_to(&pool, "profile-attached", "server-a").await;
+        sqlx::query(
+            "INSERT INTO profile (id, name, description, type, is_active, is_default, multi_select, priority) VALUES ('profile-unrelated', 'Profile Unrelated', '', 'shared', 1, 0, 1, 1)",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert unrelated active profile");
+
+        let (initialize, tool, resource, prompt, template) = protocol_fixture();
+        commit_protocol_items_for_kinds(
+            &pool,
+            "server-a",
+            "docs",
+            Some(initialize),
+            vec![tool],
+            vec![resource],
+            vec![prompt],
+            vec![template],
+            crate::core::pool::CapSyncFlags::ALL,
+        )
+        .await
+        .expect("commit protocol observation");
+
+        let authored_profiles = sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT profile_id FROM profile_capability_refs ORDER BY profile_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("load authored profiles");
+        assert!(authored_profiles.is_empty());
+        let relationship_profiles =
+            sqlx::query_scalar::<_, String>("SELECT profile_id FROM profile_server_relationships ORDER BY profile_id")
+                .fetch_all(&pool)
+                .await
+                .expect("load server-level profile intent");
+        assert_eq!(relationship_profiles, vec!["profile-attached"]);
     }
 
     #[tokio::test]
@@ -2406,26 +2138,44 @@ mod tests {
         )
         .await
         .expect("live observation should replace the corrupt snapshot");
-        assert_eq!(replacement_commit.revision, 3);
+        assert_eq!(replacement_commit.revision, 4);
 
         let snapshot = SqliteCapabilityCatalog::new(pool.clone())
             .load_snapshot("server-a")
             .await
             .expect("replacement snapshot should decode")
             .expect("replacement snapshot should exist");
-        assert_eq!(snapshot.revision, 3);
+        assert_eq!(snapshot.revision, 4);
         assert!(snapshot.records.iter().any(
-            |record| matches!(&record.payload, CapabilityPayload::Tool(tool) if tool.name == replacement_tool.name)
+            |record| matches!(&record.source_payload, CapabilityPayload::Tool(tool) if tool.name == replacement_tool.name)
         ));
-        for table in ["capability_kind_states", "capability_records"] {
-            let revisions: Vec<i64> = sqlx::query_scalar(&format!(
-                "SELECT DISTINCT catalog_revision FROM {table} WHERE server_id = 'server-a'"
-            ))
-            .fetch_all(&pool)
-            .await
-            .unwrap_or_else(|error| panic!("load {table} revisions: {error}"));
-            assert_eq!(revisions, vec![3], "{table} must use the replacement revision");
-        }
+        let kind_revisions: Vec<i64> = sqlx::query_scalar(
+            "SELECT DISTINCT catalog_revision FROM capability_kind_states WHERE server_id = 'server-a'",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("load capability_kind_states revisions");
+        assert_eq!(
+            kind_revisions,
+            vec![4],
+            "capability_kind_states must use the replacement revision"
+        );
+        let current_revisions: Vec<i64> = sqlx::query_scalar(
+            r#"
+            SELECT DISTINCT c.catalog_revision
+            FROM capability_ref_current c
+            JOIN capability_refs r ON r.ref_id = c.ref_id
+            WHERE r.server_id = 'server-a'
+            "#,
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("load capability_ref_current revisions");
+        assert_eq!(
+            current_revisions,
+            vec![4],
+            "capability_ref_current must use the replacement revision"
+        );
     }
 
     #[tokio::test]
@@ -2543,7 +2293,7 @@ mod tests {
         let payloads = snapshot
             .records
             .into_iter()
-            .map(|record| record.payload)
+            .map(|record| record.source_payload)
             .collect::<Vec<_>>();
         assert!(payloads.contains(&CapabilityPayload::Tool(updated_tool)));
         assert!(payloads.contains(&CapabilityPayload::Resource(resource)));
@@ -2577,7 +2327,7 @@ mod tests {
             cached
                 .records
                 .iter()
-                .filter(|record| matches!(record.payload, CapabilityPayload::ResourceTemplate(_)))
+                .filter(|record| matches!(record.source_payload, CapabilityPayload::ResourceTemplate(_)))
                 .count(),
             2
         );
@@ -2590,6 +2340,67 @@ mod tests {
         .await
         .expect("load projected templates");
         assert_eq!(projected, vec!["file:///{path}".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn shadow_index_integrity_check_ignores_unprojectable_templates() {
+        // An unprojectable Resource Template (e.g. `file:///{+path}`) legitimately never gets a
+        // `server_resource_templates` shadow row, by design of
+        // `upsert_shadow_resource_templates_batch_in_transaction`. The integrity check must not
+        // treat that intentional gap as catalog/shadow-index divergence, or every cache-first
+        // read for a server with such a template would invalidate a perfectly valid snapshot
+        // and fall back to live discovery (Codex review, PR #160).
+        let pool = capability_store_pool().await;
+        let projectable: rmcp::model::ResourceTemplate = decode(json!({
+            "uriTemplate": "file:///{path}",
+            "name": "projectable-template"
+        }));
+        let unprojectable: rmcp::model::ResourceTemplate = decode(json!({
+            "uriTemplate": "file:///{+path}",
+            "name": "unprojectable-template"
+        }));
+
+        commit_protocol_items_for_kinds(
+            &pool,
+            "server-a",
+            "docs",
+            Some(decode(json!({
+                "protocolVersion": "2025-11-25",
+                "capabilities": {"resources": {"listChanged": true}},
+                "serverInfo": {"name": "docs", "version": "1.0.0"}
+            }))),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![projectable, unprojectable],
+            crate::core::pool::CapSyncFlags::ALL,
+        )
+        .await
+        .expect("commit a snapshot containing an unprojectable template");
+
+        let snapshot = SqliteCapabilityCatalog::new(pool.clone())
+            .load_snapshot("server-a")
+            .await
+            .expect("load catalog")
+            .expect("catalog snapshot exists");
+        assert_eq!(
+            snapshot
+                .records
+                .iter()
+                .filter(|record| record.kind() == CatalogKind::ResourceTemplates)
+                .count(),
+            2,
+            "the catalog must retain both templates even though only one is projectable"
+        );
+
+        let trustworthy =
+            shadow_index_matches_catalog_kind(&pool, "server-a", CatalogKind::ResourceTemplates, &snapshot.records)
+                .await
+                .expect("integrity check must run");
+        assert!(
+            trustworthy,
+            "an unprojectable template's intentional absence from the shadow index must not look like corruption"
+        );
     }
 
     fn cached_tool(name: &str) -> CachedToolInfo {
@@ -2783,6 +2594,8 @@ mod tests {
                 kind: CatalogKind::Resources,
                 instance_id: None,
                 connection_generation: None,
+                failure_kind: None,
+                timeout_ms: None,
                 reason: "initial resource discovery failed".to_string(),
             },
         )
@@ -2866,6 +2679,56 @@ mod tests {
             }
         }
         assert_eq!((committed, changed), (1, 1));
+
+        let invalidations_before_repeat = cache.metrics().await.invalidations;
+        let repeated = record_capability_failure(
+            &pool,
+            &cache,
+            CapabilityFailureEvidence {
+                server_id: server_id.to_string(),
+                kind: CatalogKind::Resources,
+                instance_id: Some("validation-2".to_string()),
+                connection_generation: Some(2),
+                failure_kind: None,
+                timeout_ms: None,
+                reason: "latest resource discovery evidence".to_string(),
+            },
+        )
+        .await
+        .expect("repeated failure must refresh diagnostics without a catalog transition");
+        assert_eq!(repeated.revision, commit.revision);
+        assert!(!repeated.changed);
+        assert_eq!(cache.metrics().await.invalidations, invalidations_before_repeat);
+        let repeated_snapshot = catalog
+            .load_snapshot(server_id)
+            .await
+            .expect("load repeated failure snapshot")
+            .expect("repeated failure snapshot exists");
+        assert!(
+            repeated_snapshot
+                .last_error
+                .as_deref()
+                .is_some_and(|reason| reason.contains("latest resource discovery evidence"))
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        let mut repeated_committed = 0;
+        let mut repeated_changed = 0;
+        while let Ok(event) = events.try_recv() {
+            match event {
+                crate::core::events::Event::CapabilityCatalogCommitted { server_id, .. }
+                    if server_id == "server-fresh-failure-event" =>
+                {
+                    repeated_committed += 1
+                }
+                crate::core::events::Event::CapabilityCatalogChanged { server_id, .. }
+                    if server_id == "server-fresh-failure-event" =>
+                {
+                    repeated_changed += 1
+                }
+                _ => {}
+            }
+        }
+        assert_eq!((repeated_committed, repeated_changed), (0, 0));
     }
 
     #[tokio::test]
@@ -2967,13 +2830,12 @@ mod tests {
         .expect("load prompt shadow index");
         assert_eq!(shadow_prompts, vec![initial_prompt.name.clone()]);
 
-        let profile_prompts = sqlx::query_scalar::<_, String>(
-            "SELECT prompt_name FROM profile_prompt WHERE server_id = 'server-a' ORDER BY prompt_name",
-        )
-        .fetch_all(&pool)
-        .await
-        .expect("load prompt profile associations");
-        assert_eq!(profile_prompts, vec![initial_prompt.name]);
+        let profile_ref_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM profile_capability_refs WHERE profile_id = 'profile-a'")
+                .fetch_one(&pool)
+                .await
+                .expect("count profile capability intent");
+        assert_eq!(profile_ref_count, 0);
     }
 
     #[tokio::test]
@@ -3067,6 +2929,169 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn identical_capability_observation_does_not_invalidate_or_emit_catalog_events() {
+        let pool = capability_store_pool().await;
+        let server_id = "server-identical-noop";
+        let server_name = "identical_noop_docs";
+        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES (?, ?, 'stdio')")
+            .bind(server_id)
+            .bind(server_name)
+            .execute(&pool)
+            .await
+            .expect("insert event-isolated server");
+        let cache = DerivedCapabilityCache::default();
+        let (initialize, tool, resource, prompt, template) = protocol_fixture();
+        let observation = CapabilityProtocolObservation {
+            initialize: Some(initialize),
+            tools: vec![tool],
+            resources: vec![resource],
+            prompts: vec![prompt],
+            templates: vec![template],
+            kinds: crate::core::pool::CapSyncFlags::ALL,
+            kind_states: Vec::new(),
+        };
+        let config_fingerprint = current_config_fingerprint(&pool, server_id)
+            .await
+            .expect("load config fingerprint");
+        let first = commit_capability_protocol_observation(
+            &pool,
+            &cache,
+            server_id,
+            server_name,
+            &config_fingerprint,
+            CapabilityProtocolObservation {
+                initialize: observation.initialize.clone(),
+                tools: observation.tools.clone(),
+                resources: observation.resources.clone(),
+                prompts: observation.prompts.clone(),
+                templates: observation.templates.clone(),
+                kinds: observation.kinds,
+                kind_states: observation.kind_states.clone(),
+            },
+        )
+        .await
+        .expect("commit initial observation");
+        assert!(first.changed);
+        let first_snapshot = SqliteCapabilityCatalog::new(pool.clone())
+            .load_snapshot(server_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let first_kind_states = first_snapshot.kind_states.clone();
+        let first_config_fingerprint = first_snapshot.config_fingerprint.clone();
+        let first_state = first_snapshot.state;
+        let first_ids = first_snapshot
+            .records
+            .into_iter()
+            .map(|record| (record.ref_id.to_string(), record.capability_id.to_string()))
+            .collect::<Vec<_>>();
+        let invalidations_after_first = cache.metrics().await.invalidations;
+        let mut events = crate::core::events::EventBus::global().subscribe_async();
+
+        let repeated = commit_capability_protocol_observation(
+            &pool,
+            &cache,
+            server_id,
+            server_name,
+            &config_fingerprint,
+            observation,
+        )
+        .await
+        .expect("commit identical observation");
+        let repeated_snapshot = SqliteCapabilityCatalog::new(pool.clone())
+            .load_snapshot(server_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(repeated_snapshot.kind_states, first_kind_states);
+        assert_eq!(repeated_snapshot.config_fingerprint, first_config_fingerprint);
+        assert_eq!(repeated_snapshot.state, first_state);
+        let repeated_ids = repeated_snapshot
+            .records
+            .into_iter()
+            .map(|record| (record.ref_id.to_string(), record.capability_id.to_string()))
+            .collect::<Vec<_>>();
+        assert_eq!(repeated_ids, first_ids);
+
+        assert_eq!(repeated.revision, first.revision);
+        assert!(!repeated.changed);
+        assert_eq!(cache.metrics().await.invalidations, invalidations_after_first);
+        let mut committed = 0;
+        let mut changed = 0;
+        while let Ok(event) = events.try_recv() {
+            match event {
+                crate::core::events::Event::CapabilityCatalogCommitted { server_id, .. }
+                    if server_id == "server-identical-noop" =>
+                {
+                    committed += 1
+                }
+                crate::core::events::Event::CapabilityCatalogChanged { server_id, .. }
+                    if server_id == "server-identical-noop" =>
+                {
+                    changed += 1
+                }
+                _ => {}
+            }
+        }
+        assert_eq!((committed, changed), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn discovery_commit_rejects_a_changed_server_configuration() {
+        let pool = capability_store_pool().await;
+        let server_id = "server-config-race";
+        let server_name = "config_race_docs";
+        sqlx::query("INSERT INTO server_config (id, name, server_type, command) VALUES (?, ?, 'stdio', 'old-command')")
+            .bind(server_id)
+            .bind(server_name)
+            .execute(&pool)
+            .await
+            .expect("insert server");
+        let expected_fingerprint = current_config_fingerprint(&pool, server_id)
+            .await
+            .expect("capture owner fingerprint");
+        sqlx::query("UPDATE server_config SET command = 'new-command' WHERE id = ?")
+            .bind(server_id)
+            .execute(&pool)
+            .await
+            .expect("update server configuration");
+
+        let cache = DerivedCapabilityCache::default();
+        let (initialize, tool, resource, prompt, template) = protocol_fixture();
+        let error = commit_capability_protocol_observation(
+            &pool,
+            &cache,
+            server_id,
+            server_name,
+            &expected_fingerprint,
+            CapabilityProtocolObservation {
+                initialize: Some(initialize),
+                tools: vec![tool],
+                resources: vec![resource],
+                prompts: vec![prompt],
+                templates: vec![template],
+                kinds: crate::core::pool::CapSyncFlags::ALL,
+                kind_states: Vec::new(),
+            },
+        )
+        .await
+        .expect_err("stale discovery must not commit under the new configuration");
+
+        assert!(
+            error
+                .to_string()
+                .contains("server configuration changed during capability discovery")
+        );
+        assert!(
+            SqliteCapabilityCatalog::new(pool)
+                .load_snapshot(server_id)
+                .await
+                .expect("load catalog")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
     async fn preview_timeout_is_applied_to_each_operation_independently() {
         let timeout = Duration::from_millis(40);
 
@@ -3097,29 +3122,6 @@ mod tests {
         .expect_err("slow operation must time out");
 
         assert!(error.to_string().contains("resources/templates/list"));
-    }
-
-    #[test]
-    fn package_runner_preview_uses_independent_startup_timeout() {
-        let operation_timeout = Duration::from_secs(17);
-
-        for command in ["uvx", "/managed/bin/bunx", r"C:\runtime\npx.exe"] {
-            let timeouts = preview_stdio_timeouts(command, Some(operation_timeout));
-
-            assert_eq!(timeouts.startup, Duration::from_secs(5 * 60));
-            assert_eq!(timeouts.tools, operation_timeout);
-            assert!(timeouts.package_runner);
-        }
-    }
-
-    #[test]
-    fn direct_binary_preview_keeps_operation_timeout_for_startup() {
-        let operation_timeout = Duration::from_secs(17);
-        let timeouts = preview_stdio_timeouts("paddleocr_mcp", Some(operation_timeout));
-
-        assert_eq!(timeouts.startup, operation_timeout);
-        assert_eq!(timeouts.tools, operation_timeout);
-        assert!(!timeouts.package_runner);
     }
 
     #[tokio::test]
@@ -3235,7 +3237,7 @@ mod tests {
         let payloads = cached
             .records
             .into_iter()
-            .map(|record| record.payload)
+            .map(|record| record.source_payload)
             .collect::<Vec<_>>();
         assert!(
             payloads
@@ -3632,7 +3634,7 @@ mod tests {
             cached
                 .records
                 .iter()
-                .filter(|record| matches!(record.payload, CapabilityPayload::Tool(_)))
+                .filter(|record| matches!(record.source_payload, CapabilityPayload::Tool(_)))
                 .count(),
             0
         );
@@ -3640,7 +3642,7 @@ mod tests {
             cached
                 .records
                 .iter()
-                .filter(|record| matches!(record.payload, CapabilityPayload::Prompt(_)))
+                .filter(|record| matches!(record.source_payload, CapabilityPayload::Prompt(_)))
                 .count(),
             1
         );
@@ -3648,7 +3650,7 @@ mod tests {
             cached
                 .records
                 .iter()
-                .filter(|record| matches!(record.payload, CapabilityPayload::Resource(_)))
+                .filter(|record| matches!(record.source_payload, CapabilityPayload::Resource(_)))
                 .count(),
             1
         );
@@ -3656,7 +3658,7 @@ mod tests {
             cached
                 .records
                 .iter()
-                .filter(|record| matches!(record.payload, CapabilityPayload::ResourceTemplate(_)))
+                .filter(|record| matches!(record.source_payload, CapabilityPayload::ResourceTemplate(_)))
                 .count(),
             1
         );

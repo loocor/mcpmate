@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 
 import {
 	formatCapabilityLifecycle,
+	hasCapabilityAuthenticationFailure,
 	resolveCapabilityLifecycle,
+	shouldDisplayCapabilityKind,
 } from "./capability-lifecycle";
 import type { CapabilityKindSummary, SnapshotState } from "./types";
 
@@ -36,18 +38,6 @@ describe("resolveCapabilityLifecycle", () => {
 		}
 	});
 
-	test("never treats a zero count as unsupported", () => {
-		expect(resolveCapabilityLifecycle("ready", kind({ currentCount: 0 }))).toBe(
-			"empty",
-		);
-		expect(
-			resolveCapabilityLifecycle(
-				"ready",
-				kind({ declaration: "unknown", currentCount: 0 }),
-			),
-		).toBe("unknown");
-	});
-
 	test("renders missing state as unknown without fabricating a zero count", () => {
 		expect(
 			formatCapabilityLifecycle(undefined, "tools", {
@@ -58,5 +48,76 @@ describe("resolveCapabilityLifecycle", () => {
 				ready: "Ready",
 			}),
 		).toBe("Unknown");
+	});
+
+	test("hides unsupported capability kinds from lifecycle summaries", () => {
+		expect(
+			shouldDisplayCapabilityKind(
+				{
+					snapshotState: "ready",
+					revision: 1,
+					observedAt: "2026-01-01T00:00:00Z",
+					tools: kind({ currentCount: 1 }),
+					prompts: kind({ declaration: "unsupported", currentCount: 0 }),
+					resources: kind({ declaration: "unsupported", currentCount: 0 }),
+					resourceTemplates: kind({
+						declaration: "unsupported",
+						currentCount: 0,
+					}),
+				},
+				"prompts",
+			),
+		).toBe(false);
+		expect(
+			formatCapabilityLifecycle(
+				{
+					snapshotState: "ready",
+					revision: 1,
+					observedAt: "2026-01-01T00:00:00Z",
+					tools: kind({ currentCount: 1 }),
+					prompts: kind({ declaration: "unsupported", currentCount: 0 }),
+					resources: kind({ declaration: "unsupported", currentCount: 0 }),
+					resourceTemplates: kind({
+						declaration: "unsupported",
+						currentCount: 0,
+					}),
+				},
+				"prompts",
+				{
+					unavailable: "Unavailable",
+					unsupported: "Unsupported",
+					unknown: "Unknown",
+					empty: "Empty",
+					ready: "Ready",
+				},
+			),
+		).toBeNull();
+	});
+
+	test("distinguishes authentication failures from transport failures", () => {
+		const summary = {
+			snapshotState: "unavailable" as const,
+			revision: 1,
+			observedAt: "2026-01-01T00:00:00Z",
+			tools: kind({
+				inventory: "failed",
+				currentAvailable: false,
+				failureKind: "auth_required",
+			}),
+			prompts: kind({ inventory: "failed", currentAvailable: false }),
+			resources: kind({ inventory: "failed", currentAvailable: false }),
+			resourceTemplates: kind({
+				inventory: "failed",
+				currentAvailable: false,
+			}),
+		};
+
+		expect(hasCapabilityAuthenticationFailure(summary)).toBe(true);
+		expect(
+			hasCapabilityAuthenticationFailure({
+				...summary,
+				tools: { ...summary.tools, failureKind: "timeout" },
+			}),
+		).toBe(false);
 	});
 });

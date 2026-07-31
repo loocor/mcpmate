@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use anyhow::{Context, Result, anyhow};
 use rmcp::model::{
@@ -61,6 +61,13 @@ impl ClientService {
         &self,
         context: &ClientBuiltinContext,
     ) -> Result<CallToolResult> {
+        let source_revision_set = self
+            .client_config_service
+            .catalog_revision_set()
+            .await
+            .map_err(|error| anyhow!(error.to_string()))?
+            .into_iter()
+            .collect();
         let result = ClientConfigurationResponse {
             client_id: context.client_id.clone(),
             config_mode: context.config_mode.clone().unwrap_or_else(|| "unify".to_string()),
@@ -75,6 +82,7 @@ impl ClientService {
             } else {
                 None
             },
+            source_revision_set,
         };
 
         Ok(CallToolResult::success(vec![rmcp::model::ContentBlock::text(
@@ -86,6 +94,7 @@ impl ClientService {
         &self,
         context: &ClientBuiltinContext,
         profile_ids: Vec<String>,
+        source_revision_set: BTreeMap<String, i64>,
     ) -> Result<CallToolResult> {
         if !matches!(context.capability_source, CapabilitySource::Profiles) {
             return Err(anyhow!(
@@ -96,7 +105,12 @@ impl ClientService {
 
         let selected_profile_ids = self
             .client_config_service
-            .update_capability_config_and_invalidate(&context.client_id, CapabilitySource::Profiles, profile_ids)
+            .update_capability_config_and_invalidate(
+                &context.client_id,
+                CapabilitySource::Profiles,
+                profile_ids,
+                source_revision_set.into_iter().collect(),
+            )
             .await
             .map_err(|error| anyhow!(error.to_string()))?
             .selected_profile_ids;
@@ -122,6 +136,7 @@ impl ClientService {
         &self,
         context: &ClientBuiltinContext,
         profile_ids: Vec<String>,
+        source_revision_set: BTreeMap<String, i64>,
     ) -> Result<CallToolResult> {
         if !matches!(context.capability_source, CapabilitySource::Profiles) {
             return Err(anyhow!(
@@ -137,7 +152,12 @@ impl ClientService {
 
         let selected_profile_ids = self
             .client_config_service
-            .update_capability_config_and_invalidate(&context.client_id, CapabilitySource::Profiles, merged)
+            .update_capability_config_and_invalidate(
+                &context.client_id,
+                CapabilitySource::Profiles,
+                merged,
+                source_revision_set.into_iter().collect(),
+            )
             .await
             .map_err(|error| anyhow!(error.to_string()))?
             .selected_profile_ids;
@@ -163,6 +183,7 @@ impl ClientService {
         &self,
         context: &ClientBuiltinContext,
         profile_ids: Vec<String>,
+        source_revision_set: BTreeMap<String, i64>,
     ) -> Result<CallToolResult> {
         if !matches!(context.capability_source, CapabilitySource::Profiles) {
             return Err(anyhow!(
@@ -180,7 +201,12 @@ impl ClientService {
 
         let selected_profile_ids = self
             .client_config_service
-            .update_capability_config_and_invalidate(&context.client_id, CapabilitySource::Profiles, remaining)
+            .update_capability_config_and_invalidate(
+                &context.client_id,
+                CapabilitySource::Profiles,
+                remaining,
+                source_revision_set.into_iter().collect(),
+            )
             .await
             .map_err(|error| anyhow!(error.to_string()))?
             .selected_profile_ids;
@@ -358,9 +384,14 @@ impl BuiltinService for ClientService {
                                 "minItems": 1,
                                 "uniqueItems": true,
                                 "description": "Shared profile IDs to keep as the active surface selection. Replaces the current selection entirely. Use mcpmate_ucan_catalog(kind_filter=[\"profile\"]) to discover available IDs."
+                            },
+                            "source_revision_set": {
+                                "type": "object",
+                                "additionalProperties": { "type": "integer" },
+                                "description": "Exact source_revision_set returned by the preceding mcpmate_profile_get call."
                             }
                         },
-                        "required": ["profile_ids"]
+                        "required": ["profile_ids", "source_revision_set"]
                     })
                     .as_object()
                     .unwrap()
@@ -380,9 +411,14 @@ impl BuiltinService for ClientService {
                                 "minItems": 1,
                                 "uniqueItems": true,
                                 "description": "Shared profile IDs to add to the active selection. Existing selection is preserved. Duplicate IDs are ignored."
+                            },
+                            "source_revision_set": {
+                                "type": "object",
+                                "additionalProperties": { "type": "integer" },
+                                "description": "Exact source_revision_set returned by the preceding mcpmate_profile_get call."
                             }
                         },
-                        "required": ["profile_ids"]
+                        "required": ["profile_ids", "source_revision_set"]
                     })
                     .as_object()
                     .unwrap()
@@ -402,9 +438,14 @@ impl BuiltinService for ClientService {
                                 "minItems": 1,
                                 "uniqueItems": true,
                                 "description": "Shared profile IDs to remove from the active selection. IDs not in the current selection are silently skipped. Profile definitions are never deleted."
+                            },
+                            "source_revision_set": {
+                                "type": "object",
+                                "additionalProperties": { "type": "integer" },
+                                "description": "Exact source_revision_set returned by the preceding mcpmate_profile_get call."
                             }
                         },
-                        "required": ["profile_ids"]
+                        "required": ["profile_ids", "source_revision_set"]
                     })
                     .as_object()
                     .unwrap()
@@ -462,17 +503,20 @@ impl BuiltinService for ClientService {
             MCPMATE_PROFILE_SET_TOOL => {
                 let ctx = require_client_context(context, MCPMATE_PROFILE_SET_TOOL)?;
                 let params = parse_profiles_select_params(request, "Invalid parameters for profile_set")?;
-                self.profile_set(ctx, params.profile_ids).await
+                self.profile_set(ctx, params.profile_ids, params.source_revision_set)
+                    .await
             }
             MCPMATE_PROFILE_ADD_TOOL => {
                 let ctx = require_client_context(context, MCPMATE_PROFILE_ADD_TOOL)?;
                 let params = parse_profiles_select_params(request, "Invalid parameters for profile_add")?;
-                self.profile_add(ctx, params.profile_ids).await
+                self.profile_add(ctx, params.profile_ids, params.source_revision_set)
+                    .await
             }
             MCPMATE_PROFILE_REMOVE_TOOL => {
                 let ctx = require_client_context(context, MCPMATE_PROFILE_REMOVE_TOOL)?;
                 let params = parse_profiles_select_params(request, "Invalid parameters for profile_remove")?;
-                self.profile_remove(ctx, params.profile_ids).await
+                self.profile_remove(ctx, params.profile_ids, params.source_revision_set)
+                    .await
             }
             MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL => {
                 let ctx = require_client_context(context, MCPMATE_CLIENT_CUSTOM_PROFILE_DETAILS_TOOL)?;
@@ -500,6 +544,7 @@ impl BuiltinService for ClientService {
 #[derive(Debug, Deserialize)]
 struct ProfilesSelectParams {
     profile_ids: Vec<String>,
+    source_revision_set: BTreeMap<String, i64>,
 }
 
 fn require_client_context<'a>(
@@ -524,6 +569,7 @@ struct ClientConfigurationResponse {
     capability_source: String,
     selected_profile_ids: Option<Vec<String>>,
     custom_profile_id: Option<String>,
+    source_revision_set: BTreeMap<String, i64>,
 }
 
 #[derive(Debug, Serialize)]

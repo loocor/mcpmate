@@ -46,6 +46,9 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
             capability_source TEXT NOT NULL DEFAULT '{default_capability_source}' CHECK (
                 capability_source IN ('activated', 'profiles', 'custom')
             ),
+            unify_route_mode TEXT NOT NULL DEFAULT 'broker_only' CHECK (
+                unify_route_mode IN ('broker_only', 'server_level', 'capability_level')
+            ),
             governance_kind TEXT NOT NULL DEFAULT '{default_governance_kind}' CHECK (
                 governance_kind IN ('passive', 'active')
             ),
@@ -59,7 +62,6 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
             template_identifier TEXT,
             selected_profile_ids TEXT,
             custom_profile_id TEXT,
-            unify_direct_exposure_intent TEXT,
             approval_status TEXT NOT NULL DEFAULT 'approved' CHECK (
                 approval_status IN ('pending', 'approved', 'suspended')
             ),
@@ -92,9 +94,15 @@ pub async fn initialize_client_table(pool: &Pool<Sqlite>) -> Result<()> {
         "TEXT NOT NULL DEFAULT 'activated' CHECK (capability_source IN ('activated', 'profiles', 'custom'))",
     )
     .await?;
+    ensure_column(
+        pool,
+        tables::CLIENT,
+        "unify_route_mode",
+        "TEXT NOT NULL DEFAULT 'broker_only' CHECK (unify_route_mode IN ('broker_only', 'server_level', 'capability_level'))",
+    )
+    .await?;
     ensure_column(pool, tables::CLIENT, "selected_profile_ids", "TEXT").await?;
     ensure_column(pool, tables::CLIENT, "custom_profile_id", "TEXT").await?;
-    ensure_column(pool, tables::CLIENT, "unify_direct_exposure_intent", "TEXT").await?;
     ensure_column(pool, tables::CLIENT, "display_name", "TEXT").await?;
     ensure_column(pool, tables::CLIENT, "config_path", "TEXT").await?;
     ensure_column(
@@ -330,6 +338,21 @@ pub async fn resolve_default_client_config_mode(pool: &Pool<Sqlite>) -> Result<S
         .map_err(|err| anyhow::anyhow!(err.to_string()))
 }
 
+pub fn effective_client_config_mode<'a>(
+    explicit_mode: Option<&'a str>,
+    default_mode: &'a str,
+) -> &'a str {
+    explicit_mode
+        .map(str::trim)
+        .filter(|mode| !mode.is_empty())
+        .unwrap_or(default_mode)
+}
+
+pub fn is_managed_client_config_mode(mode: &str) -> bool {
+    matches!(mode, "unify" | "hosted")
+}
+
+#[cfg(test)]
 pub async fn set_default_client_config_mode(
     pool: &Pool<Sqlite>,
     mode: &str,
@@ -504,6 +527,9 @@ async fn migrate_client_table_constraints(pool: &Pool<Sqlite>) -> Result<()> {
                 capability_source TEXT NOT NULL DEFAULT '{default_capability_source}' CHECK (
                     capability_source IN ('activated', 'profiles', 'custom')
                 ),
+                unify_route_mode TEXT NOT NULL DEFAULT 'broker_only' CHECK (
+                    unify_route_mode IN ('broker_only', 'server_level', 'capability_level')
+                ),
                 governance_kind TEXT NOT NULL DEFAULT '{default_governance_kind}' CHECK (
                     governance_kind IN ('passive', 'active')
                 ),
@@ -517,7 +543,6 @@ async fn migrate_client_table_constraints(pool: &Pool<Sqlite>) -> Result<()> {
                 template_identifier TEXT,
                 selected_profile_ids TEXT,
                 custom_profile_id TEXT,
-                unify_direct_exposure_intent TEXT,
                 approval_status TEXT NOT NULL DEFAULT 'approved' CHECK (
                     approval_status IN ('pending', 'approved', 'suspended')
                 ),
@@ -558,10 +583,9 @@ async fn migrate_client_table_constraints(pool: &Pool<Sqlite>) -> Result<()> {
             r#"
             INSERT INTO {temp_table} (
                 id, name, display_name, identifier, config_path, config_mode, transport,
-                client_version, backup_policy, backup_limit, capability_source, governance_kind,
+                client_version, backup_policy, backup_limit, capability_source, unify_route_mode, governance_kind,
                 connection_mode, registration_origin, runtime_observed,
                 template_identifier, selected_profile_ids, custom_profile_id,
-                unify_direct_exposure_intent,
                 approval_status, template_id, template_version, approval_metadata, config_format, protocol_revision,
                 container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy,
                 merge_strategy, keep_original_config, managed_source, transports, config_file_parse,
@@ -570,7 +594,7 @@ async fn migrate_client_table_constraints(pool: &Pool<Sqlite>) -> Result<()> {
             )
             SELECT
                 id, name, display_name, identifier, config_path, config_mode, transport,
-                client_version, backup_policy, backup_limit, capability_source, governance_kind,
+                client_version, backup_policy, backup_limit, capability_source, unify_route_mode, governance_kind,
                 CASE
                     WHEN config_path IS NOT NULL AND TRIM(config_path) <> ''
                     THEN 'local_config_detected'
@@ -585,7 +609,6 @@ async fn migrate_client_table_constraints(pool: &Pool<Sqlite>) -> Result<()> {
                     ELSE runtime_observed
                 END,
                 template_identifier, selected_profile_ids, custom_profile_id,
-                unify_direct_exposure_intent,
                 approval_status, template_id, template_version, approval_metadata, config_format, protocol_revision,
                 container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy,
                 merge_strategy, keep_original_config, managed_source, {transports_source_expression}, config_file_parse,
@@ -810,18 +833,20 @@ mod tests {
 
         initialize_client_table(&pool).await.expect("initialize client table");
 
-        let (connection_mode, registration_origin, runtime_observed): (String, String, i64) = sqlx::query_as(&format!(
-            "SELECT connection_mode, registration_origin, runtime_observed FROM {table} WHERE identifier = ?",
-            table = tables::CLIENT,
-        ))
-        .bind("legacy.runtime")
-        .fetch_one(&pool)
-        .await
-        .expect("fetch normalized row");
+        let (connection_mode, registration_origin, runtime_observed, unify_route_mode): (String, String, i64, String) =
+            sqlx::query_as(&format!(
+                "SELECT connection_mode, registration_origin, runtime_observed, unify_route_mode FROM {table} WHERE identifier = ?",
+                table = tables::CLIENT,
+            ))
+            .bind("legacy.runtime")
+            .fetch_one(&pool)
+            .await
+            .expect("fetch normalized row");
 
         assert_eq!(connection_mode, "manual");
         assert_eq!(registration_origin, "runtime_initialize");
         assert_eq!(runtime_observed, 1);
+        assert_eq!(unify_route_mode, "broker_only");
 
         let create_sql: String = sqlx::query_scalar(&format!(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='{}'",

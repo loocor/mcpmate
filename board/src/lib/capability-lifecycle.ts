@@ -19,6 +19,33 @@ export type CapabilitySummaryKind =
 
 export type CapabilityLifecycleLabels = Record<CapabilityLifecycleState, string>;
 
+const AUTHENTICATION_FAILURE_KINDS = new Set([
+	"authentication",
+	"auth_required",
+	"unauthorized",
+	"forbidden",
+	"insufficient_scope",
+]);
+
+export function hasCapabilityAuthenticationFailure(
+	summary: ServerCapabilitySummary | undefined,
+): boolean {
+	if (!summary) {
+		return false;
+	}
+
+	return [
+		summary.tools,
+		summary.prompts,
+		summary.resources,
+		summary.resourceTemplates,
+	].some((kind) =>
+		kind.failureKind
+			? AUTHENTICATION_FAILURE_KINDS.has(kind.failureKind)
+			: false,
+	);
+}
+
 export function resolveCapabilityLifecycle(
 	snapshotState: SnapshotState,
 	kind: CapabilityKindSummary,
@@ -64,12 +91,42 @@ export function getCapabilityLifecycle(
 	};
 }
 
+export function shouldDisplayCapabilityKind(
+	summary: ServerCapabilitySummary | undefined,
+	kind: CapabilitySummaryKind,
+): boolean {
+	if (!summary) {
+		return true;
+	}
+
+	return summary[kind].declaration !== "unsupported";
+}
+
 export function formatCapabilityLifecycle(
 	summary: ServerCapabilitySummary | undefined,
 	kind: CapabilitySummaryKind,
 	labels: CapabilityLifecycleLabels,
-): string {
+): string | null {
+	if (!shouldDisplayCapabilityKind(summary, kind)) {
+		return null;
+	}
+
 	const lifecycle = getCapabilityLifecycle(summary, kind);
 	const label = labels[lifecycle.state];
 	return lifecycle.count === null ? label : `${lifecycle.count} · ${label}`;
+}
+
+export function totalCapabilityCount(
+	summary: ServerCapabilitySummary | undefined,
+): number {
+	if (!summary) {
+		return 0;
+	}
+
+	return (
+		summary.tools.currentCount +
+		summary.prompts.currentCount +
+		summary.resources.currentCount +
+		summary.resourceTemplates.currentCount
+	);
 }

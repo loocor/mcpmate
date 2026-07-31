@@ -3,6 +3,7 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 // Import the unified response macro
 use crate::macros::resp::api_resp;
@@ -35,7 +36,7 @@ pub enum ProfileAction {
     Deactivate,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 #[schemars(description = "Available component management actions")]
 pub enum ProfileComponentAction {
@@ -45,6 +46,8 @@ pub enum ProfileComponentAction {
     Disable,
     #[schemars(description = "Remove the component")]
     Remove,
+    #[schemars(description = "Replace the complete component selection")]
+    Replace,
 }
 
 // Query Request Models
@@ -92,6 +95,9 @@ pub struct ProfileManageReq {
     #[schemars(description = "Management action to perform")]
     pub action: ProfileAction,
 
+    #[schemars(description = "Exact capability catalog revision set displayed to the administrator")]
+    pub source_revision_set: BTreeMap<String, i64>,
+
     #[schemars(description = "Whether to trigger client configuration synchronization")]
     #[serde(default)]
     pub sync: Option<bool>,
@@ -108,10 +114,21 @@ pub struct ProfileComponentManageReq {
 
     #[schemars(description = "Management action to perform on component(s)")]
     pub action: ProfileComponentAction,
+
+    #[schemars(description = "Exact catalog revision set displayed before this management save")]
+    pub source_revision_set: super::CatalogRevisionSet,
 }
 
 /// Request for profile deletion
-pub type ProfileDeleteReq = ProfileIdReq;
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(description = "Request for deleting a profile and republishing affected consumers")]
+pub struct ProfileDeleteReq {
+    #[schemars(description = "Profile ID")]
+    pub id: String,
+
+    #[schemars(description = "Exact capability catalog revision set displayed before deletion")]
+    pub source_revision_set: super::CatalogRevisionSet,
+}
 
 // Response Models (with Resp suffix)
 #[derive(Debug, Serialize, JsonSchema)]
@@ -125,6 +142,9 @@ pub struct ProfileListData {
 
     #[schemars(description = "ISO 8601 timestamp of response")]
     pub timestamp: String,
+
+    #[schemars(description = "Exact capability catalog revision set represented by this profile list")]
+    pub source_revision_set: BTreeMap<String, i64>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -144,6 +164,9 @@ pub struct ProfileDetailsData {
 
     #[schemars(description = "Number of enabled prompts in profile")]
     pub prompts_count: usize,
+
+    #[schemars(description = "Exact capability catalog revision set represented by these details")]
+    pub source_revision_set: BTreeMap<String, i64>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -195,6 +218,9 @@ pub struct ProfileServersListData {
 
     #[schemars(description = "Total number of servers in profile")]
     pub total: usize,
+
+    #[schemars(description = "Catalog revision set represented by this management payload")]
+    pub source_revision_set: super::CatalogRevisionSet,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -211,6 +237,9 @@ pub struct ProfileToolsListData {
 
     #[schemars(description = "Total number of tools in profile")]
     pub total: usize,
+
+    #[schemars(description = "Catalog revision set represented by this management payload")]
+    pub source_revision_set: super::CatalogRevisionSet,
 }
 
 api_resp!(
@@ -233,6 +262,9 @@ pub struct ProfileResourcesListData {
 
     #[schemars(description = "Total number of resources in profile")]
     pub total: usize,
+
+    #[schemars(description = "Catalog revision set represented by this management payload")]
+    pub source_revision_set: super::CatalogRevisionSet,
 }
 
 api_resp!(
@@ -255,6 +287,9 @@ pub struct ProfileResourceTemplatesListData {
 
     #[schemars(description = "Total number of templates in profile")]
     pub total: usize,
+
+    #[schemars(description = "Catalog revision set represented by this management payload")]
+    pub source_revision_set: super::CatalogRevisionSet,
 }
 
 api_resp!(
@@ -277,6 +312,9 @@ pub struct ProfilePromptsListData {
 
     #[schemars(description = "Total number of prompts in profile")]
     pub total: usize,
+
+    #[schemars(description = "Catalog revision set represented by this management payload")]
+    pub source_revision_set: super::CatalogRevisionSet,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -426,8 +464,8 @@ pub struct ProfileServerResp {
 /// Profile tool response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ProfileToolData {
-    /// Tool ID
-    pub id: String,
+    /// Stable CapabilityRef identity.
+    pub ref_id: String,
     /// Server ID
     pub server_id: String,
     /// Server name
@@ -440,6 +478,8 @@ pub struct ProfileToolData {
     pub description: Option<String>,
     /// Whether the tool is enabled in this profile
     pub enabled: bool,
+    pub state: String,
+    pub state_generation: i64,
     /// Allowed operations on this tool
     pub allowed_operations: Vec<String>,
 }
@@ -447,8 +487,8 @@ pub struct ProfileToolData {
 /// Profile resource response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ProfileResourceData {
-    /// Resource ID
-    pub id: String,
+    /// Stable CapabilityRef identity.
+    pub ref_id: String,
     /// Server ID
     pub server_id: String,
     /// Server name
@@ -461,6 +501,8 @@ pub struct ProfileResourceData {
     pub description: Option<String>,
     /// Whether the resource is enabled in this profile
     pub enabled: bool,
+    pub state: String,
+    pub state_generation: i64,
     /// Allowed operations on this resource
     pub allowed_operations: Vec<String>,
 }
@@ -468,8 +510,8 @@ pub struct ProfileResourceData {
 /// Profile resource template response (reuse shape as ProfileResourceData but with uri_template)
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ProfileResourceTemplateData {
-    /// Template ID
-    pub id: String,
+    /// Stable CapabilityRef identity.
+    pub ref_id: String,
     /// Server ID
     pub server_id: String,
     /// Server name
@@ -482,6 +524,8 @@ pub struct ProfileResourceTemplateData {
     pub description: Option<String>,
     /// Whether the template is enabled in this profile
     pub enabled: bool,
+    pub state: String,
+    pub state_generation: i64,
     /// Allowed operations on this template
     pub allowed_operations: Vec<String>,
 }
@@ -489,8 +533,8 @@ pub struct ProfileResourceTemplateData {
 /// Profile prompt response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ProfilePromptData {
-    /// Prompt ID
-    pub id: String,
+    /// Stable CapabilityRef identity.
+    pub ref_id: String,
     /// Server ID
     pub server_id: String,
     /// Server name
@@ -503,6 +547,8 @@ pub struct ProfilePromptData {
     pub description: Option<String>,
     /// Whether the prompt is enabled in this profile
     pub enabled: bool,
+    pub state: String,
+    pub state_generation: i64,
     /// Allowed operations on this prompt
     pub allowed_operations: Vec<String>,
 }

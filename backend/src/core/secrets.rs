@@ -14,6 +14,7 @@ pub fn resolve_runtime_server_config(
     resolver: &(impl SecretResolver + ?Sized),
 ) -> Result<MCPServerConfig, SecretError> {
     Ok(MCPServerConfig {
+        source_fingerprint: config.source_fingerprint.clone(),
         kind: config.kind,
         command: resolve_optional_string(config.command.as_ref(), resolver)?,
         args: resolve_optional_vec(config.args.as_ref(), resolver)?,
@@ -210,6 +211,7 @@ pub async fn mcp_config_from_server(
     let headers = get_server_headers(pool, server_id).await?;
 
     Ok(MCPServerConfig {
+        source_fingerprint: None,
         kind: server.server_type,
         command: server.command.clone(),
         args: if args.is_empty() { None } else { Some(args) },
@@ -325,6 +327,7 @@ pub async fn preload_mcp_server_configs(
             let env = env_by_server.remove(&id).filter(|env| !env.is_empty());
             let headers = headers_by_server.remove(&id).filter(|headers| !headers.is_empty());
             MCPServerConfig {
+                source_fingerprint: None,
                 kind: server.server_type,
                 command: server.command,
                 args,
@@ -564,6 +567,7 @@ mod tests {
     fn discover_collects_stdio_argument_and_http_header_for_same_alias() {
         let server_id = "serv-context7";
         let config = MCPServerConfig {
+            source_fingerprint: None,
             kind: ServerType::StreamableHttp,
             command: None,
             args: None,
@@ -579,6 +583,7 @@ mod tests {
         assert_eq!(http_usages[0].alias, "server-context7-token");
 
         let stdio_config = MCPServerConfig {
+            source_fingerprint: None,
             kind: ServerType::Stdio,
             command: Some("npx".to_string()),
             args: Some(vec![
@@ -603,6 +608,7 @@ mod tests {
     #[test]
     fn collect_deduplicates_same_alias_in_same_location() {
         let config = MCPServerConfig {
+            source_fingerprint: None,
             kind: ServerType::StreamableHttp,
             command: None,
             args: None,

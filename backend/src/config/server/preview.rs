@@ -26,6 +26,7 @@ pub async fn preview_capabilities(
     );
     // Build a minimal MCPServerConfig; include args/env from request for accurate preview
     let cfg = MCPServerConfig {
+        source_fingerprint: None,
         kind,
         command,
         url,

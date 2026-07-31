@@ -216,6 +216,7 @@ mod tests {
             mcp_servers.insert(
                 name.to_string(),
                 crate::core::models::MCPServerConfig {
+                    source_fingerprint: None,
                     kind: crate::common::server::ServerType::Stdio,
                     command: Some("test-command".to_string()),
                     args: Some(vec!["arg1".to_string()]),

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  formatServerEndpoint,
   formatServerNamespaceTitle,
   getServerDisplayName,
 } from "./server-display";
@@ -47,5 +48,20 @@ describe("formatServerNamespaceTitle", () => {
     expect(formatServerNamespaceTitle("legacy-server name")).toBe(
       "Legacy Server Name",
     );
-	});
+  });
+});
+
+describe("formatServerEndpoint", () => {
+  test("shows the upstream endpoint without credentials or URL metadata", () => {
+    expect(
+      formatServerEndpoint(
+        "https://user:secret@mcp.example.com/mcp?token=secret#session",
+      ),
+    ).toBe("https://mcp.example.com/mcp");
+  });
+
+  test("returns null when the upstream endpoint is absent or invalid", () => {
+    expect(formatServerEndpoint(null)).toBeNull();
+    expect(formatServerEndpoint("not a URL")).toBeNull();
+  });
 });

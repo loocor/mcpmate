@@ -8,8 +8,6 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::RwLock;
 use tracing;
 
-use crate::clients::models::UnifyDirectExposureIntent;
-
 static NAMING_POOL: Lazy<RwLock<Option<Pool<Sqlite>>>> = Lazy::new(|| RwLock::new(None));
 
 /// Begin a naming transaction with the SQLite write lock acquired up front.
@@ -696,46 +694,12 @@ async fn reconcile_external_identifiers_internal(
         });
     }
 
-    rewrite_client_direct_exposure_intents(tx, &changes, &removals).await?;
-    remove_profile_references_for_deleted_capabilities(tx, &removals).await?;
     Ok(ExternalIdentifierReconciliation {
         identifiers,
         additions,
         changes,
         removals,
     })
-}
-
-async fn remove_profile_references_for_deleted_capabilities(
-    tx: &mut Transaction<'_, Sqlite>,
-    removals: &[ExternalIdentifierRemoval],
-) -> Result<()> {
-    for removal in removals {
-        let profile_reference = match removal.kind {
-            NamingKind::Tool => None,
-            NamingKind::Prompt => Some(("profile_prompt", "prompt_name")),
-            NamingKind::Resource => Some(("profile_resource", "resource_uri")),
-            NamingKind::ResourceTemplate => Some(("profile_resource_template", "uri_template")),
-        };
-        let Some((table, value_column)) = profile_reference else {
-            continue;
-        };
-
-        let delete = format!("DELETE FROM {table} WHERE server_id = ? AND {value_column} = ?");
-        sqlx::query(&delete)
-            .bind(&removal.server_id)
-            .bind(&removal.upstream_value)
-            .execute(&mut **tx)
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to remove stale profile reference for {:?} '{}' from server '{}'",
-                    removal.kind, removal.upstream_value, removal.server_id
-                )
-            })?;
-    }
-
-    Ok(())
 }
 
 /// Rebuild one server through the naming pipeline without touching other
@@ -760,99 +724,6 @@ pub(crate) async fn rebuild_server_external_identifiers(
         );
     }
     Ok(changes)
-}
-
-async fn rewrite_client_direct_exposure_intents(
-    tx: &mut Transaction<'_, Sqlite>,
-    changes: &[ExternalIdentifierChange],
-    removals: &[ExternalIdentifierRemoval],
-) -> Result<()> {
-    if changes.is_empty() && removals.is_empty() {
-        return Ok(());
-    }
-
-    let mut tool_ids = HashMap::new();
-    let mut prompt_ids = HashMap::new();
-    let mut resource_ids = HashMap::new();
-    let mut template_ids = HashMap::new();
-    for change in changes {
-        let mapping = match change.kind {
-            NamingKind::Tool => &mut tool_ids,
-            NamingKind::Prompt => &mut prompt_ids,
-            NamingKind::Resource => &mut resource_ids,
-            NamingKind::ResourceTemplate => &mut template_ids,
-        };
-        mapping.insert(change.old_external.clone(), change.new_external.clone());
-    }
-    let mut removed_tool_ids = HashSet::new();
-    let mut removed_prompt_ids = HashSet::new();
-    let mut removed_resource_ids = HashSet::new();
-    let mut removed_template_ids = HashSet::new();
-    for removal in removals {
-        let removed = match removal.kind {
-            NamingKind::Tool => &mut removed_tool_ids,
-            NamingKind::Prompt => &mut removed_prompt_ids,
-            NamingKind::Resource => &mut removed_resource_ids,
-            NamingKind::ResourceTemplate => &mut removed_template_ids,
-        };
-        removed.insert(removal.old_external.clone());
-    }
-
-    let rows = sqlx::query_as::<_, (String, String)>(
-        "SELECT id, unify_direct_exposure_intent FROM client WHERE unify_direct_exposure_intent IS NOT NULL",
-    )
-    .fetch_all(&mut **tx)
-    .await
-    .context("Failed to load Client Direct Exposure intents for capability reconciliation")?;
-
-    for (client_id, raw_intent) in rows {
-        let mut intent: UnifyDirectExposureIntent = serde_json::from_str(&raw_intent)
-            .with_context(|| format!("Invalid Client Direct Exposure intent for client '{client_id}'"))?;
-        let mut changed = remove_ids(&mut intent.capability_ids.tool_ids, &removed_tool_ids)
-            | remove_ids(&mut intent.capability_ids.prompt_ids, &removed_prompt_ids)
-            | remove_ids(&mut intent.capability_ids.resource_ids, &removed_resource_ids)
-            | remove_ids(&mut intent.capability_ids.template_ids, &removed_template_ids);
-        changed |= rewrite_ids(&mut intent.capability_ids.tool_ids, &tool_ids)
-            | rewrite_ids(&mut intent.capability_ids.prompt_ids, &prompt_ids)
-            | rewrite_ids(&mut intent.capability_ids.resource_ids, &resource_ids)
-            | rewrite_ids(&mut intent.capability_ids.template_ids, &template_ids);
-        if !changed {
-            continue;
-        }
-        let serialized = serde_json::to_string(&intent)
-            .with_context(|| format!("Failed to serialize Client Direct Exposure intent for client '{client_id}'"))?;
-        sqlx::query("UPDATE client SET unify_direct_exposure_intent = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-            .bind(serialized)
-            .bind(&client_id)
-            .execute(&mut **tx)
-            .await
-            .with_context(|| format!("Failed to rewrite Client Direct Exposure intent for client '{client_id}'"))?;
-    }
-
-    Ok(())
-}
-
-fn remove_ids(
-    values: &mut Vec<String>,
-    removed: &HashSet<String>,
-) -> bool {
-    let previous_len = values.len();
-    values.retain(|value| !removed.contains(value));
-    values.len() != previous_len
-}
-
-fn rewrite_ids(
-    values: &mut [String],
-    mapping: &HashMap<String, String>,
-) -> bool {
-    let mut changed = false;
-    for value in values {
-        if let Some(replacement) = mapping.get(value) {
-            value.clone_from(replacement);
-            changed = true;
-        }
-    }
-    changed
 }
 
 #[cfg(test)]
@@ -1175,7 +1046,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reconciliation_updates_target_collision_group_and_client_intent() {
+    async fn reconciliation_updates_projection_without_rewriting_client_intent() {
         let pool = test_pool().await;
         insert_tool(&pool, "tool-1", "server-a", "searxng", "get_searxng_status").await;
         insert_tool(&pool, "tool-b", "server-b", "other", "status").await;
@@ -1213,12 +1084,12 @@ mod tests {
         let intent: serde_json::Value = serde_json::from_str(&raw).expect("parse client intent");
         assert_eq!(
             intent["capability_ids"]["tool_ids"],
-            serde_json::json!(["searxng_get_searxng_status", "other_status"])
+            serde_json::json!(["searxng_get_status", "other_status"])
         );
     }
 
     #[tokio::test]
-    async fn reconciliation_rolls_back_identifier_and_client_rewrites() {
+    async fn reconciliation_rollback_preserves_projection_and_client_intent() {
         let pool = test_pool().await;
         insert_tool(&pool, "tool-1", "server-a", "searxng", "get_searxng_status").await;
         sqlx::query(
@@ -1304,7 +1175,7 @@ mod tests {
         let intent: serde_json::Value = serde_json::from_str(&raw).expect("parse client intent");
         assert_eq!(
             intent["capability_ids"]["tool_ids"],
-            serde_json::json!(["searxng_get_status"])
+            serde_json::json!(["searxng_get_searxng_status", "searxng_get_status"])
         );
     }
 
@@ -1323,7 +1194,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn authoritative_removal_cleans_non_tool_profile_references() {
+    async fn authoritative_removal_does_not_rewrite_authoring_relationships() {
         let pool = test_pool().await;
         for statement in [
             "INSERT INTO server_prompts (id, server_id, server_name, prompt_name, unique_name) VALUES ('prompt-1', 'server-a', 'docs', 'help', 'docs_help')",
@@ -1357,19 +1228,26 @@ mod tests {
         }
         tx.commit().await.expect("commit authoritative removal");
 
-        for (table, value_column, retained) in [
-            ("profile_prompt", "prompt_name", "summary"),
-            ("profile_resource", "resource_uri", "file:///readme.md"),
-            ("profile_resource_template", "uri_template", "files://resource/{path}"),
+        for (table, value_column, expected) in [
+            ("profile_prompt", "prompt_name", vec!["help", "summary"]),
+            (
+                "profile_resource",
+                "resource_uri",
+                vec!["file:///guide.md", "file:///readme.md"],
+            ),
+            (
+                "profile_resource_template",
+                "uri_template",
+                vec!["docs://resource/{id}", "files://resource/{path}"],
+            ),
         ] {
-            let values: Vec<String> = sqlx::query_scalar(&format!("SELECT {value_column} FROM {table}"))
+            let values: Vec<String> = sqlx::query_scalar(&format!("SELECT {value_column} FROM {table} ORDER BY id"))
                 .fetch_all(&pool)
                 .await
                 .expect("load remaining profile references");
             assert_eq!(
-                values,
-                [retained],
-                "{table} must retain only the authoritative capability"
+                values, expected,
+                "{table} must remain outside naming projection reconciliation"
             );
         }
     }

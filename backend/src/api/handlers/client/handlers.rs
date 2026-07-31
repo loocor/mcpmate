@@ -7,7 +7,6 @@ use super::inspection::{
     evaluate_client_attach_file_guard, evaluate_client_detach_file_guard, inspect_client_config_lenient,
     mark_configured_server_managed_status, parse_api_transports, parse_rule_from_api_data, transports_data_from_state,
 };
-use super::runtime::sync_bound_client_runtime_state;
 use crate::api::models::client::{
     ClientAttachData, ClientAttachReq, ClientAttachResp, ClientBackupActionData, ClientBackupActionResp,
     ClientCapabilityConfigData, ClientCapabilityConfigReq, ClientCapabilityConfigResp, ClientCheckData, ClientCheckReq,
@@ -54,6 +53,7 @@ fn client_settings_error(
 fn build_client_capability_config_data(
     identifier: String,
     state: ClientCapabilityConfigState,
+    source_revision_set: crate::api::models::CatalogRevisionSet,
 ) -> ClientCapabilityConfigData {
     ClientCapabilityConfigData {
         identifier,
@@ -66,6 +66,7 @@ fn build_client_capability_config_data(
             diagnostics: state.unify_direct_exposure_diagnostics,
             resolved_capabilities: state.unify_direct_exposure,
         },
+        source_revision_set,
     }
 }
 
@@ -621,6 +622,18 @@ async fn apply_client_config_request(
             tracing::error!(client = %request.identifier, operation, error = %err, "Failed to persist attached state after config apply");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
+        service
+            .ensure_initial_managed_surface(&request.identifier)
+            .await
+            .map_err(|err| {
+                tracing::error!(
+                    client = %request.identifier,
+                    operation,
+                    error = %err,
+                    "Failed to publish the initial managed Consumer Surface after config apply"
+                );
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
     }
 
     Ok(AppliedClientConfig {
@@ -643,6 +656,7 @@ fn map_config_error_status(err: &ConfigError) -> StatusCode {
     match err {
         ConfigError::ClientDisabled { .. } => StatusCode::FORBIDDEN,
         ConfigError::ClientNotFound { .. } => StatusCode::NOT_FOUND,
+        ConfigError::ConcurrencyConflict { .. } => StatusCode::CONFLICT,
         ConfigError::DataAccessError(_)
         | ConfigError::PathResolutionError(_)
         | ConfigError::PathNotWritable { .. }
@@ -809,7 +823,6 @@ pub async fn update_settings(
 
     tracing::info!(
         client = %request.identifier,
-        config_mode = ?request.config_mode,
         transport = ?request.transport,
         client_version = ?request.client_version,
         display_name = ?request.display_name,
@@ -831,7 +844,6 @@ pub async fn update_settings(
             &request.identifier,
             ActiveClientSettingsUpdate {
                 display_name: request.display_name.clone(),
-                config_mode: request.config_mode.clone(),
                 transport: request.transport.clone(),
                 client_version: request.client_version.clone(),
                 config_file_state: request.config_file_state,
@@ -859,7 +871,7 @@ pub async fn update_settings(
             client_settings_error(status, err.to_string())
         })?;
 
-    let (mode, transport, version) = service
+    let (_, transport, version) = service
         .get_client_settings(&request.identifier)
         .await
         .map_err(|err| {
@@ -900,7 +912,6 @@ pub async fn update_settings(
     let data = crate::api::models::client::ClientSettingsUpdateData {
         identifier: request.identifier,
         display_name: state.display_name().to_string(),
-        config_mode: mode,
         transport,
         client_version: version,
         config_file_state: state.config_file_state(),
@@ -931,7 +942,6 @@ pub async fn update_settings(
         &data.identifier,
         Some(data.identifier.clone()),
         Some(json!({
-            "config_mode": data.config_mode,
             "transport": data.transport,
             "client_version": data.client_version,
             "display_name": data.display_name,
@@ -945,9 +955,6 @@ pub async fn update_settings(
     )
     .await;
 
-    let visible_mode_changed = settings_result.effective_mode_changed();
-    sync_bound_client_runtime_state(&service, &data.identifier, visible_mode_changed).await;
-
     Ok(Json(crate::api::models::client::ClientSettingsUpdateResp::success(
         data,
     )))
@@ -959,12 +966,14 @@ pub async fn update_capability_config(
 ) -> Result<Json<ClientCapabilityConfigResp>, StatusCode> {
     let service = get_client_service(&app_state)?;
 
-    let (state, visible_surface_changed) = service
+    let (state, _visible_surface_changed, materialization) = service
         .update_capability_config_state_and_invalidate(
             &request.identifier,
+            request.config_mode,
             request.capability_source,
             request.selected_profile_ids,
             request.unify_direct_exposure.map(Into::into),
+            request.source_revision_set.clone().into_iter().collect(),
         )
         .await
         .map_err(|err| {
@@ -973,13 +982,13 @@ pub async fn update_capability_config(
                 error = %err,
                 "Failed to update capability config"
             );
-            StatusCode::INTERNAL_SERVER_ERROR
+            map_config_error_status(&err)
         })?;
 
-    let data = build_client_capability_config_data(request.identifier, state);
+    let data = build_client_capability_config_data(request.identifier, state, request.source_revision_set);
 
-    sync_bound_client_runtime_state(&service, &data.identifier, visible_surface_changed).await;
-
+    // Managed capability changes and revocations are notified through the
+    // transactional Surface outbox after runtime identity synchronization.
     emit_client_audit_event(
         &app_state,
         AuditAction::ClientCapabilityUpdate,
@@ -996,6 +1005,26 @@ pub async fn update_capability_config(
         None,
     )
     .await;
+    if let Some(commit) = materialization
+        && commit.effective_surface_changed
+        && let Some(binding) = commit.binding
+    {
+        crate::audit::interceptor::emit_event(
+            app_state.audit_service.as_ref(),
+            AuditEvent::new(AuditAction::SurfacePublish, AuditStatus::Success)
+                .with_http_route("POST", "/api/client/capability-config")
+                .with_actor("client_management")
+                .with_client_id(binding.consumer_id.clone())
+                .with_target(binding.active_publication_id)
+                .with_data(json!({
+                    "binding_generation": binding.generation,
+                    "proposal_id": commit.proposal_id,
+                    "trigger": "management_save",
+                }))
+                .build(),
+        )
+        .await;
+    }
 
     Ok(Json(ClientCapabilityConfigResp::success(data)))
 }
@@ -1018,9 +1047,22 @@ pub async fn get_capability_config(
             StatusCode::INTERNAL_SERVER_ERROR
         })?
         .ok_or(StatusCode::NOT_FOUND)?;
+    let source_revision_set = service
+        .catalog_revision_set()
+        .await
+        .map_err(|error| {
+            tracing::error!(
+                client = %request.identifier,
+                error = %error,
+                "Failed to load capability catalog revision set"
+            );
+            map_config_error_status(&error)
+        })?
+        .into_iter()
+        .collect();
 
     Ok(Json(ClientCapabilityConfigResp::success(
-        build_client_capability_config_data(request.identifier, config),
+        build_client_capability_config_data(request.identifier, config, source_revision_set),
     )))
 }
 
@@ -1464,16 +1506,15 @@ mod tests {
         profile::{self, init::initialize_profile_tables},
         server::init::initialize_server_tables,
     };
-    use crate::core::{
-        events::{Event, EventBus},
-        models::Config,
-        pool::UpstreamConnectionPool,
-        profile::ConfigApplicationStateManager,
-    };
+    use crate::core::{models::Config, pool::UpstreamConnectionPool, profile::ConfigApplicationStateManager};
     use crate::inspector::{calls::InspectorCallRegistry, sessions::InspectorSessionManager};
     use crate::system::metrics::MetricsCollector;
     use axum::Json;
-    use axum::extract::{Path, Query, State};
+    use axum::extract::{Query, State};
+    use mcpmate_capability_store::{
+        CapabilityCatalog, CapabilityKind as CatalogCapabilityKind, CapabilityObservation, CapabilityPayload,
+        CatalogRecord, DeclarationState, InventoryState, KindObservation, SqliteCapabilityCatalog,
+    };
     use sqlx::sqlite::SqlitePoolOptions;
     use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
     use tempfile::TempDir;
@@ -1484,50 +1525,6 @@ mod tests {
         app_state: Arc<AppState>,
         client_service: Arc<ClientConfigService>,
         db_pool: sqlx::SqlitePool,
-    }
-
-    async fn wait_for_client_visible_change_event(
-        rx: &mut tokio::sync::broadcast::Receiver<Event>,
-        client_id: &str,
-    ) {
-        let expected = client_id.to_string();
-        tokio::time::timeout(Duration::from_secs(2), async move {
-            loop {
-                match rx.recv().await {
-                    Ok(Event::ClientVisibleDirectSurfaceChanged { client_id }) if client_id == expected => {
-                        return;
-                    }
-                    Ok(_) => continue,
-                    Err(err) => panic!("event receiver failed: {err}"),
-                }
-            }
-        })
-        .await
-        .expect("expected client visible change event");
-    }
-
-    async fn assert_no_client_visible_change_event(
-        rx: &mut tokio::sync::broadcast::Receiver<Event>,
-        client_id: &str,
-    ) {
-        let expected = client_id.to_string();
-        let result = tokio::time::timeout(Duration::from_millis(200), async move {
-            loop {
-                match rx.recv().await {
-                    Ok(Event::ClientVisibleDirectSurfaceChanged { client_id }) if client_id == expected => {
-                        panic!("unexpected client visible change event")
-                    }
-                    Ok(_) => continue,
-                    Err(err) => panic!("event receiver failed: {err}"),
-                }
-            }
-        })
-        .await;
-
-        assert!(
-            result.is_err(),
-            "unexpected client visible change event arrived in timeout window"
-        );
     }
 
     async fn create_test_context() -> TestContext {
@@ -1554,8 +1551,11 @@ mod tests {
             .expect("enable foreign keys");
 
         initialize_server_tables(&db_pool).await.expect("init server tables");
-        initialize_profile_tables(&db_pool).await.expect("init profile tables");
         initialize_client_table(&db_pool).await.expect("init client table");
+        crate::config::database::initialize_capability_catalog(&db_pool)
+            .await
+            .expect("init capability catalog");
+        initialize_profile_tables(&db_pool).await.expect("init profile tables");
         initialize_system_settings(&db_pool)
             .await
             .expect("init system settings store");
@@ -1603,7 +1603,6 @@ mod tests {
             audit_database: None,
             audit_service: None,
             config_application_state: Arc::new(ConfigApplicationStateManager::new()),
-            unified_query: None,
             client_service: Some(client_service.clone()),
             inspector_calls: Arc::new(InspectorCallRegistry::new()),
             inspector_sessions: Arc::new(InspectorSessionManager::new()),
@@ -1625,7 +1624,6 @@ mod tests {
     fn settings_update_req(identifier: &str) -> ClientSettingsUpdateReq {
         ClientSettingsUpdateReq {
             identifier: identifier.to_string(),
-            config_mode: None,
             transport: None,
             client_version: None,
             display_name: None,
@@ -1641,6 +1639,16 @@ mod tests {
             transports: None,
             clear_transports: false,
         }
+    }
+
+    async fn displayed_catalog_revision_set(context: &TestContext) -> crate::api::models::CatalogRevisionSet {
+        context
+            .client_service
+            .catalog_revision_set()
+            .await
+            .expect("load displayed catalog revisions")
+            .into_iter()
+            .collect()
     }
 
     fn json_object_parse(container_key: &str) -> ClientConfigFileParseData {
@@ -1683,7 +1691,6 @@ mod tests {
         let Json(update_response) = update_settings(
             State(context.app_state.clone()),
             Json(ClientSettingsUpdateReq {
-                config_mode: Some("hosted".to_string()),
                 transport: Some("streamable_http".to_string()),
                 display_name: Some("Runtime Attach Client".to_string()),
                 config_file_state: Some(ClientConfigFileState::WithConfigFile),
@@ -1842,6 +1849,92 @@ mod tests {
                 .await
                 .expect("insert server tool");
         }
+        commit_tool_catalog(pool, id, name, tool_names).await;
+    }
+
+    async fn set_test_server_enabled(
+        pool: &sqlx::SqlitePool,
+        server_id: &str,
+        enabled: bool,
+    ) {
+        let revisions = crate::core::capability::materializer::SurfaceAuthoringLoader::load_catalog_revision_set(pool)
+            .await
+            .expect("load catalog revision set");
+        crate::core::capability::management::ServerSurfaceManagement::set_server_enabled(
+            pool, server_id, enabled, revisions, "test",
+        )
+        .await
+        .expect("set server global status");
+    }
+
+    async fn set_test_server_direct_exposure_eligible(
+        pool: &sqlx::SqlitePool,
+        server_id: &str,
+        eligible: bool,
+    ) {
+        let revisions = crate::core::capability::materializer::SurfaceAuthoringLoader::load_catalog_revision_set(pool)
+            .await
+            .expect("load catalog revision set");
+        crate::core::capability::management::ServerSurfaceManagement::set_direct_exposure_eligible(
+            pool, server_id, eligible, revisions, "test",
+        )
+        .await
+        .expect("set server direct exposure eligibility");
+    }
+
+    async fn commit_tool_catalog(
+        pool: &sqlx::SqlitePool,
+        server_id: &str,
+        server_name: &str,
+        tool_names: &[&str],
+    ) {
+        let records = tool_names
+            .iter()
+            .map(|tool_name| {
+                let tool: rmcp::model::Tool = serde_json::from_value(serde_json::json!({
+                    "name": tool_name,
+                    "description": "tool",
+                    "inputSchema": {"type": "object"}
+                }))
+                .expect("build Tool");
+                let external_name = format!("{}_{}", server_name, tool_name).replace('-', "_");
+                CatalogRecord::materialize(server_id, *tool_name, external_name, CapabilityPayload::Tool(tool))
+                    .expect("materialize Tool")
+            })
+            .collect();
+        let initialize_result: rmcp::model::InitializeResult = serde_json::from_value(serde_json::json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": server_name, "version": "1.0.0"}
+        }))
+        .expect("build InitializeResult");
+        SqliteCapabilityCatalog::new(pool.clone())
+            .commit_observation(CapabilityObservation::new(
+                server_id,
+                server_name,
+                "test-config",
+                initialize_result,
+                vec![KindObservation::new(
+                    CatalogCapabilityKind::Tools,
+                    DeclarationState::Supported,
+                    InventoryState::Complete,
+                )],
+                records,
+            ))
+            .await
+            .expect("commit Tool catalog observation");
+    }
+
+    fn capability_ref(
+        server_id: &str,
+        kind: CatalogCapabilityKind,
+        origin_key: &str,
+    ) -> String {
+        mcpmate_capability_store::CapabilityRefId::derive(&mcpmate_capability_store::CapabilitySourceIdentity::new(
+            server_id, kind, origin_key,
+        ))
+        .expect("derive CapabilityRef")
+        .to_string()
     }
 
     async fn insert_unify_non_tool_capabilities(
@@ -1885,6 +1978,92 @@ mod tests {
             .await
             .expect("insert server resource template");
         }
+        let mut records = Vec::new();
+        for prompt_name in prompt_names {
+            let prompt: rmcp::model::Prompt = serde_json::from_value(serde_json::json!({
+                "name": prompt_name,
+                "description": "prompt",
+                "arguments": []
+            }))
+            .expect("build Prompt");
+            records.push(
+                CatalogRecord::materialize(
+                    server_id,
+                    *prompt_name,
+                    format!("{server_name}_{prompt_name}"),
+                    CapabilityPayload::Prompt(prompt),
+                )
+                .expect("materialize Prompt"),
+            );
+        }
+        for resource_uri in resource_uris {
+            let resource: rmcp::model::Resource = serde_json::from_value(serde_json::json!({
+                "uri": resource_uri,
+                "name": resource_uri
+            }))
+            .expect("build Resource");
+            records.push(
+                CatalogRecord::materialize(
+                    server_id,
+                    *resource_uri,
+                    canonical_test_resource(server_name),
+                    CapabilityPayload::Resource(resource),
+                )
+                .expect("materialize Resource"),
+            );
+        }
+        for template_uri in template_uris {
+            let template: rmcp::model::ResourceTemplate = serde_json::from_value(serde_json::json!({
+                "uriTemplate": template_uri,
+                "name": template_uri
+            }))
+            .expect("build Resource Template");
+            records.push(
+                CatalogRecord::materialize(
+                    server_id,
+                    *template_uri,
+                    canonical_test_template(server_name),
+                    CapabilityPayload::ResourceTemplate(template),
+                )
+                .expect("materialize Resource Template"),
+            );
+        }
+        let initialize_result: rmcp::model::InitializeResult = serde_json::from_value(serde_json::json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": {
+                "prompts": {},
+                "resources": {}
+            },
+            "serverInfo": {"name": server_name, "version": "1.0.0"}
+        }))
+        .expect("build InitializeResult");
+        SqliteCapabilityCatalog::new(pool.clone())
+            .commit_observation(CapabilityObservation::new(
+                server_id,
+                server_name,
+                "test-config",
+                initialize_result,
+                vec![
+                    KindObservation::new(
+                        CatalogCapabilityKind::Prompts,
+                        DeclarationState::Supported,
+                        InventoryState::Complete,
+                    ),
+                    KindObservation::new(
+                        CatalogCapabilityKind::Resources,
+                        DeclarationState::Supported,
+                        InventoryState::Complete,
+                    ),
+                    KindObservation::new(
+                        CatalogCapabilityKind::ResourceTemplates,
+                        DeclarationState::Supported,
+                        InventoryState::Complete,
+                    ),
+                ],
+                records,
+            ))
+            .await
+            .expect("commit non-Tool catalog observation");
     }
 
     fn canonical_test_resource(namespace: &str) -> String {
@@ -1901,13 +2080,27 @@ mod tests {
     async fn update_capability_config_returns_updated_payload() {
         let context = create_test_context().await;
         let profile_id = insert_shared_profile(&context.db_pool, "profile-a").await;
+        crate::config::client::init::set_default_client_config_mode(&context.db_pool, "hosted")
+            .await
+            .expect("set inherited managed mode");
+        context
+            .client_service
+            .set_capability_config("client-a", CapabilitySource::Activated, Vec::new())
+            .await
+            .expect("create client capability state");
+        sqlx::query("UPDATE client SET config_mode = NULL, approval_status = 'approved' WHERE identifier = 'client-a'")
+            .execute(&context.db_pool)
+            .await
+            .expect("mark fixture as managed Consumer");
 
         let Json(response) = update_capability_config(
             State(context.app_state.clone()),
             Json(ClientCapabilityConfigReq {
                 identifier: "client-a".to_string(),
+                config_mode: None,
                 capability_source: CapabilitySource::Profiles,
                 selected_profile_ids: vec![profile_id.clone()],
+                source_revision_set: displayed_catalog_revision_set(&context).await,
                 unify_direct_exposure: None,
             }),
         )
@@ -1933,6 +2126,18 @@ mod tests {
             .expect("stored data");
         assert_eq!(stored.capability_source, CapabilitySource::Profiles);
         assert_eq!(stored.selected_profile_ids, vec![profile_id]);
+        let consumer_id: String = sqlx::query_scalar("SELECT identifier FROM client WHERE identifier = 'client-a'")
+            .fetch_one(&context.db_pool)
+            .await
+            .expect("load Consumer id");
+        assert!(
+            mcpmate_capability_store::SqliteSurfaceStore::new(context.db_pool.clone())
+                .load_binding(&consumer_id)
+                .await
+                .expect("load initial binding")
+                .is_some(),
+            "managed capability save must publish an initial Surface in the same operation"
+        );
     }
 
     #[tokio::test]
@@ -1973,12 +2178,14 @@ mod tests {
             State(context.app_state.clone()),
             Json(ClientCapabilityConfigReq {
                 identifier: "client-route-only".to_string(),
+                config_mode: None,
                 capability_source: CapabilitySource::Activated,
                 selected_profile_ids: Vec::new(),
+                source_revision_set: displayed_catalog_revision_set(&context).await,
                 unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
                     route_mode: crate::clients::models::UnifyRouteMode::BrokerOnly,
                     server_ids: Vec::new(),
-                    capability_ids: Default::default(),
+                    capability_refs: Default::default(),
                 }),
             }),
         )
@@ -2002,6 +2209,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn capability_config_roundtrips_empty_unify_direct_route_modes() {
+        let context = create_test_context().await;
+
+        for (identifier, route_mode) in [
+            (
+                "client-empty-server-level",
+                crate::clients::models::UnifyRouteMode::ServerLevel,
+            ),
+            (
+                "client-empty-capability-level",
+                crate::clients::models::UnifyRouteMode::CapabilityLevel,
+            ),
+        ] {
+            let _ = update_capability_config(
+                State(context.app_state.clone()),
+                Json(ClientCapabilityConfigReq {
+                    identifier: identifier.to_string(),
+                    config_mode: Some("unify".to_string()),
+                    capability_source: CapabilitySource::Activated,
+                    selected_profile_ids: Vec::new(),
+                    source_revision_set: displayed_catalog_revision_set(&context).await,
+                    unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
+                        route_mode,
+                        server_ids: Vec::new(),
+                        capability_refs: Default::default(),
+                    }),
+                }),
+            )
+            .await
+            .expect("update empty unify direct route mode");
+
+            let Json(response) = get_capability_config(
+                State(context.app_state.clone()),
+                Query(ClientConfigReq {
+                    identifier: identifier.to_string(),
+                }),
+            )
+            .await
+            .expect("reload empty unify direct route mode");
+
+            let data = response.data.expect("response data");
+            assert_eq!(data.unify_direct_exposure.intent.route_mode, route_mode);
+            assert!(data.unify_direct_exposure.intent.server_ids.is_empty());
+            assert!(data.unify_direct_exposure.intent.capability_refs.is_empty());
+        }
+    }
+
+    #[tokio::test]
     async fn capability_config_roundtrips_unify_server_level_selection() {
         let context = create_test_context().await;
         insert_unify_server(
@@ -2012,17 +2267,18 @@ mod tests {
             &["tool-a", "tool-b"],
         )
         .await;
-
         let Json(response) = update_capability_config(
             State(context.app_state.clone()),
             Json(ClientCapabilityConfigReq {
                 identifier: "client-server-level".to_string(),
+                config_mode: None,
                 capability_source: CapabilitySource::Activated,
                 selected_profile_ids: Vec::new(),
+                source_revision_set: displayed_catalog_revision_set(&context).await,
                 unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
                     route_mode: crate::clients::models::UnifyRouteMode::ServerLevel,
                     server_ids: vec!["server-eligible".to_string()],
-                    capability_ids: Default::default(),
+                    capability_refs: Default::default(),
                 }),
             }),
         )
@@ -2053,18 +2309,20 @@ mod tests {
         );
         assert!(data.unify_direct_exposure.diagnostics.invalid_server_ids.is_empty());
 
-        let stored_intent: Option<String> =
-            sqlx::query_scalar("SELECT unify_direct_exposure_intent FROM client WHERE identifier = ?")
-                .bind("client-server-level")
-                .fetch_one(&context.db_pool)
-                .await
-                .expect("load stored unify intent");
-        let stored_intent: serde_json::Value =
-            serde_json::from_str(stored_intent.as_deref().expect("stored intent payload"))
-                .expect("parse stored intent payload");
-        assert_eq!(stored_intent["route_mode"], "server_level");
-        assert_eq!(stored_intent["server_ids"], serde_json::json!(["server-eligible"]));
-        assert!(stored_intent.get("selected_tool_surfaces").is_none());
+        let stored_servers: Vec<String> = sqlx::query_scalar(
+            r#"
+            SELECT des.server_id
+            FROM direct_exposure_servers des
+            JOIN client c ON c.identifier = des.consumer_id
+            WHERE c.identifier = ?
+            ORDER BY des.server_id
+            "#,
+        )
+        .bind("client-server-level")
+        .fetch_all(&context.db_pool)
+        .await
+        .expect("load stored Direct Exposure servers");
+        assert_eq!(stored_servers, ["server-eligible"]);
 
         crate::config::server::tools::upsert_server_tool(
             &context.db_pool,
@@ -2075,6 +2333,13 @@ mod tests {
         )
         .await
         .expect("insert refreshed server tool");
+        commit_tool_catalog(
+            &context.db_pool,
+            "server-eligible",
+            "eligible_server",
+            &["tool-a", "tool-b", "tool-c"],
+        )
+        .await;
 
         let Json(response) = get_capability_config(
             State(context.app_state.clone()),
@@ -2116,28 +2381,55 @@ mod tests {
             .await
             .expect("disable server before initial selection");
 
-        context
-            .client_service
-            .set_active_client_settings(
-                "client-late-server-level",
-                ActiveClientSettingsUpdate {
-                    config_mode: Some("unify".to_string()),
-                    ..ActiveClientSettingsUpdate::default()
-                },
-            )
-            .await
-            .expect("seed unify client mode");
+        let stale = update_capability_config(
+            State(context.app_state.clone()),
+            Json(ClientCapabilityConfigReq {
+                identifier: "client-late-server-level".to_string(),
+                config_mode: Some("unify".to_string()),
+                capability_source: CapabilitySource::Activated,
+                selected_profile_ids: Vec::new(),
+                source_revision_set: Default::default(),
+                unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
+                    route_mode: crate::clients::models::UnifyRouteMode::ServerLevel,
+                    server_ids: vec!["server-late-enable".to_string()],
+                    capability_refs: Default::default(),
+                }),
+            }),
+        )
+        .await;
+        assert_eq!(stale.unwrap_err(), StatusCode::CONFLICT);
+        let stale_relationship_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM direct_exposure_servers WHERE consumer_id = (SELECT identifier FROM client WHERE identifier = 'client-late-server-level')",
+        )
+        .fetch_one(&context.db_pool)
+        .await
+        .expect("count stale direct exposure writes");
+        assert_eq!(stale_relationship_count, 0);
+        let stale_consumer_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM client WHERE identifier = 'client-late-server-level'")
+                .fetch_one(&context.db_pool)
+                .await
+                .expect("count stale Consumer writes");
+        assert_eq!(stale_consumer_count, 0);
 
         let Json(response) = update_capability_config(
             State(context.app_state.clone()),
             Json(ClientCapabilityConfigReq {
                 identifier: "client-late-server-level".to_string(),
+                config_mode: None,
                 capability_source: CapabilitySource::Activated,
                 selected_profile_ids: Vec::new(),
+                source_revision_set: context
+                    .client_service
+                    .catalog_revision_set()
+                    .await
+                    .expect("load displayed catalog revisions")
+                    .into_iter()
+                    .collect(),
                 unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
                     route_mode: crate::clients::models::UnifyRouteMode::ServerLevel,
                     server_ids: vec!["server-late-enable".to_string()],
-                    capability_ids: Default::default(),
+                    capability_refs: Default::default(),
                 }),
             }),
         )
@@ -2152,17 +2444,20 @@ mod tests {
                 .is_empty()
         );
 
-        let stored_intent: Option<String> =
-            sqlx::query_scalar("SELECT unify_direct_exposure_intent FROM client WHERE identifier = ?")
-                .bind("client-late-server-level")
-                .fetch_one(&context.db_pool)
-                .await
-                .expect("load stored unify intent");
-        let stored_intent: serde_json::Value =
-            serde_json::from_str(stored_intent.as_deref().expect("stored intent payload"))
-                .expect("parse stored intent payload");
-        assert_eq!(stored_intent["route_mode"], "server_level");
-        assert_eq!(stored_intent["server_ids"], serde_json::json!(["server-late-enable"]));
+        let stored_servers: Vec<String> = sqlx::query_scalar(
+            r#"
+            SELECT des.server_id
+            FROM direct_exposure_servers des
+            JOIN client c ON c.identifier = des.consumer_id
+            WHERE c.identifier = ?
+            ORDER BY des.server_id
+            "#,
+        )
+        .bind("client-late-server-level")
+        .fetch_all(&context.db_pool)
+        .await
+        .expect("load stored Direct Exposure servers");
+        assert_eq!(stored_servers, ["server-late-enable"]);
 
         sqlx::query("UPDATE server_config SET enabled = 1 WHERE id = ?")
             .bind("server-late-enable")
@@ -2187,6 +2482,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stale_custom_save_leaves_no_consumer_or_custom_profile() {
+        let context = create_test_context().await;
+        insert_unify_server(
+            &context.db_pool,
+            "server-custom-stale",
+            "custom_stale_server",
+            true,
+            &["tool-a"],
+        )
+        .await;
+
+        let result = update_capability_config(
+            State(context.app_state.clone()),
+            Json(ClientCapabilityConfigReq {
+                identifier: "client-custom-stale".to_string(),
+                config_mode: Some("hosted".to_string()),
+                capability_source: CapabilitySource::Custom,
+                selected_profile_ids: Vec::new(),
+                source_revision_set: Default::default(),
+                unify_direct_exposure: None,
+            }),
+        )
+        .await;
+
+        assert_eq!(result.unwrap_err(), StatusCode::CONFLICT);
+        let consumer_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM client WHERE identifier = 'client-custom-stale'")
+                .fetch_one(&context.db_pool)
+                .await
+                .expect("count stale custom Consumer writes");
+        let profile_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM profile WHERE name = 'client-custom-stale_custom'")
+                .fetch_one(&context.db_pool)
+                .await
+                .expect("count stale custom Profile writes");
+        assert_eq!(consumer_count, 0);
+        assert_eq!(profile_count, 0);
+    }
+
+    #[tokio::test]
     async fn capability_config_roundtrips_unify_tool_selection() {
         let context = create_test_context().await;
         insert_unify_server(
@@ -2197,18 +2532,21 @@ mod tests {
             &["tool-a", "tool-b"],
         )
         .await;
+        let tool_ref = capability_ref("server-tools", CatalogCapabilityKind::Tools, "tool-b");
 
         let Json(response) = update_capability_config(
             State(context.app_state.clone()),
             Json(ClientCapabilityConfigReq {
                 identifier: "client-tool-live".to_string(),
+                config_mode: None,
                 capability_source: CapabilitySource::Activated,
                 selected_profile_ids: Vec::new(),
+                source_revision_set: displayed_catalog_revision_set(&context).await,
                 unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
                     route_mode: crate::clients::models::UnifyRouteMode::CapabilityLevel,
                     server_ids: Vec::new(),
-                    capability_ids: crate::clients::models::UnifyDirectCapabilityIds {
-                        tool_ids: vec!["tool_server_tool-b".to_string()],
+                    capability_refs: crate::clients::models::UnifyDirectCapabilityRefs {
+                        tool_refs: vec![tool_ref.clone()],
                         ..Default::default()
                     },
                 }),
@@ -2226,6 +2564,80 @@ mod tests {
             }]
         );
         assert!(data.unify_direct_exposure.diagnostics.invalid_tool_surfaces.is_empty());
+        assert_eq!(data.unify_direct_exposure.intent.capability_refs.tool_refs, [tool_ref]);
+    }
+
+    #[tokio::test]
+    async fn capability_level_direct_intent_survives_complete_removal() {
+        let context = create_test_context().await;
+        insert_unify_server(
+            &context.db_pool,
+            "server-unresolved",
+            "unresolved_server",
+            true,
+            &["tool-a"],
+        )
+        .await;
+        let tool_ref = capability_ref("server-unresolved", CatalogCapabilityKind::Tools, "tool-a");
+        let Json(_) = update_capability_config(
+            State(context.app_state.clone()),
+            Json(ClientCapabilityConfigReq {
+                identifier: "client-direct-unresolved".to_string(),
+                config_mode: None,
+                capability_source: CapabilitySource::Activated,
+                selected_profile_ids: Vec::new(),
+                source_revision_set: displayed_catalog_revision_set(&context).await,
+                unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
+                    route_mode: crate::clients::models::UnifyRouteMode::CapabilityLevel,
+                    server_ids: Vec::new(),
+                    capability_refs: crate::clients::models::UnifyDirectCapabilityRefs {
+                        tool_refs: vec![tool_ref.clone()],
+                        ..Default::default()
+                    },
+                }),
+            }),
+        )
+        .await
+        .expect("persist Direct Exposure CapabilityRef");
+
+        commit_tool_catalog(&context.db_pool, "server-unresolved", "unresolved_server", &[]).await;
+
+        let Json(response) = get_capability_config(
+            State(context.app_state.clone()),
+            Query(ClientConfigReq {
+                identifier: "client-direct-unresolved".to_string(),
+            }),
+        )
+        .await
+        .expect("reload unresolved Direct Exposure intent");
+        let data = response.data.expect("response data");
+        assert_eq!(
+            data.unify_direct_exposure.intent.capability_refs.tool_refs,
+            std::slice::from_ref(&tool_ref)
+        );
+        assert!(
+            data.unify_direct_exposure
+                .resolved_capabilities
+                .selected_tool_surfaces
+                .is_empty()
+        );
+        assert_eq!(
+            data.unify_direct_exposure.diagnostics.invalid_capability_refs,
+            std::slice::from_ref(&tool_ref)
+        );
+        let stored_ref: String = sqlx::query_scalar(
+            r#"
+            SELECT der.ref_id
+            FROM direct_exposure_refs der
+            JOIN client c ON c.identifier = der.consumer_id
+            WHERE c.identifier = ?
+            "#,
+        )
+        .bind("client-direct-unresolved")
+        .fetch_one(&context.db_pool)
+        .await
+        .expect("load persisted Direct Exposure ref");
+        assert_eq!(stored_ref, tool_ref);
     }
 
     #[tokio::test]
@@ -2241,20 +2653,25 @@ mod tests {
             &["test:///{id}"],
         )
         .await;
+        let prompt_ref = capability_ref("server-mixed", CatalogCapabilityKind::Prompts, "prompt-a");
+        let resource_ref = capability_ref("server-mixed", CatalogCapabilityKind::Resources, "test://resource-a");
+        let template_ref = capability_ref("server-mixed", CatalogCapabilityKind::ResourceTemplates, "test:///{id}");
 
         let Json(response) = update_capability_config(
             State(context.app_state.clone()),
             Json(ClientCapabilityConfigReq {
                 identifier: "client-mixed-live".to_string(),
+                config_mode: None,
                 capability_source: CapabilitySource::Activated,
                 selected_profile_ids: Vec::new(),
+                source_revision_set: displayed_catalog_revision_set(&context).await,
                 unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
                     route_mode: crate::clients::models::UnifyRouteMode::CapabilityLevel,
                     server_ids: Vec::new(),
-                    capability_ids: crate::clients::models::UnifyDirectCapabilityIds {
-                        prompt_ids: vec!["mixed_server_prompt-a".to_string()],
-                        resource_ids: vec![canonical_test_resource("mixed_server")],
-                        template_ids: vec![canonical_test_template("mixed_server")],
+                    capability_refs: crate::clients::models::UnifyDirectCapabilityRefs {
+                        prompt_refs: vec![prompt_ref],
+                        resource_refs: vec![resource_ref],
+                        template_refs: vec![template_ref],
                         ..Default::default()
                     },
                 }),
@@ -2323,18 +2740,21 @@ mod tests {
             &["tool-a", "tool-b"],
         )
         .await;
+        let tool_ref = capability_ref("server-global-only", CatalogCapabilityKind::Tools, "tool-b");
 
         let Json(response) = update_capability_config(
             State(context.app_state.clone()),
             Json(ClientCapabilityConfigReq {
                 identifier: "client-tool-live-global-enabled".to_string(),
+                config_mode: None,
                 capability_source: CapabilitySource::Activated,
                 selected_profile_ids: Vec::new(),
+                source_revision_set: displayed_catalog_revision_set(&context).await,
                 unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
                     route_mode: crate::clients::models::UnifyRouteMode::CapabilityLevel,
                     server_ids: Vec::new(),
-                    capability_ids: crate::clients::models::UnifyDirectCapabilityIds {
-                        tool_ids: vec!["global_only_server_tool-b".to_string()],
+                    capability_refs: crate::clients::models::UnifyDirectCapabilityRefs {
+                        tool_refs: vec![tool_ref],
                         ..Default::default()
                     },
                 }),
@@ -2357,7 +2777,7 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn hosted_capability_source_switch_emits_visible_change_event() {
+    async fn hosted_source_switch_without_surface_delta_does_not_enqueue_notification() {
         let context = create_test_context().await;
         let profile = Profile {
             id: Some("PROFHOSTED001".to_string()),
@@ -2375,25 +2795,34 @@ mod tests {
         profile::upsert_profile(&context.db_pool, &profile)
             .await
             .expect("insert hosted profile");
-        context
-            .client_service
-            .set_active_client_settings(
-                "client-a",
-                ActiveClientSettingsUpdate {
-                    config_mode: Some("hosted".to_string()),
-                    ..ActiveClientSettingsUpdate::default()
-                },
-            )
-            .await
-            .expect("seed hosted mode");
+        let _ = update_capability_config(
+            State(context.app_state.clone()),
+            Json(ClientCapabilityConfigReq {
+                identifier: "client-a".to_string(),
+                config_mode: Some("hosted".to_string()),
+                capability_source: CapabilitySource::Activated,
+                selected_profile_ids: Vec::new(),
+                source_revision_set: displayed_catalog_revision_set(&context).await,
+                unify_direct_exposure: None,
+            }),
+        )
+        .await
+        .expect("seed hosted mode through atomic capability configuration");
 
-        let mut rx = EventBus::global().subscribe_async();
+        let before_outbox: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM surface_outbox_events WHERE aggregate_id = 'client-a' AND delivered_at IS NULL",
+        )
+        .fetch_one(&context.db_pool)
+        .await
+        .expect("count pending Surface notifications");
         let Json(response) = update_capability_config(
             State(context.app_state.clone()),
             Json(ClientCapabilityConfigReq {
                 identifier: "client-a".to_string(),
+                config_mode: None,
                 capability_source: CapabilitySource::Profiles,
                 selected_profile_ids: vec!["PROFHOSTED001".to_string()],
+                source_revision_set: displayed_catalog_revision_set(&context).await,
                 unify_direct_exposure: None,
             }),
         )
@@ -2401,69 +2830,130 @@ mod tests {
         .expect("switch hosted capability source");
 
         assert!(response.success);
-        wait_for_client_visible_change_event(&mut rx, "client-a").await;
+        let after_outbox: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM surface_outbox_events WHERE aggregate_id = 'client-a' AND delivered_at IS NULL",
+        )
+        .fetch_one(&context.db_pool)
+        .await
+        .expect("count pending Surface notifications");
+        assert_eq!(after_outbox, before_outbox);
     }
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn mode_switch_to_hosted_emits_visible_change_event() {
+    async fn managed_mode_switch_without_surface_delta_does_not_enqueue_notification() {
         let context = create_test_context().await;
-        context
-            .client_service
-            .set_active_client_settings(
-                "client-a",
-                ActiveClientSettingsUpdate {
-                    config_mode: Some("unify".to_string()),
-                    ..ActiveClientSettingsUpdate::default()
-                },
-            )
-            .await
-            .expect("seed unify mode");
-
-        let mut rx = EventBus::global().subscribe_async();
-        let Json(response) = update_settings(
+        let _ = update_capability_config(
             State(context.app_state.clone()),
-            Json(ClientSettingsUpdateReq {
+            Json(ClientCapabilityConfigReq {
+                identifier: "client-a".to_string(),
+                config_mode: Some("unify".to_string()),
+                capability_source: CapabilitySource::Activated,
+                selected_profile_ids: Vec::new(),
+                source_revision_set: displayed_catalog_revision_set(&context).await,
+                unify_direct_exposure: None,
+            }),
+        )
+        .await
+        .expect("seed unify mode through atomic capability configuration");
+
+        let before_outbox: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM surface_outbox_events WHERE aggregate_id = 'client-a' AND delivered_at IS NULL",
+        )
+        .fetch_one(&context.db_pool)
+        .await
+        .expect("count pending Surface notifications");
+        let Json(response) = update_capability_config(
+            State(context.app_state.clone()),
+            Json(ClientCapabilityConfigReq {
+                identifier: "client-a".to_string(),
                 config_mode: Some("hosted".to_string()),
-                ..settings_update_req("client-a")
+                capability_source: CapabilitySource::Activated,
+                selected_profile_ids: Vec::new(),
+                source_revision_set: displayed_catalog_revision_set(&context).await,
+                unify_direct_exposure: None,
             }),
         )
         .await
         .expect("switch mode to hosted");
 
         assert!(response.success);
-        wait_for_client_visible_change_event(&mut rx, "client-a").await;
+        let after_outbox: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM surface_outbox_events WHERE aggregate_id = 'client-a' AND delivered_at IS NULL",
+        )
+        .fetch_one(&context.db_pool)
+        .await
+        .expect("count pending Surface notifications");
+        assert_eq!(after_outbox, before_outbox);
     }
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn mode_switch_to_transparent_does_not_emit_visible_change_event() {
+    async fn mode_switch_to_transparent_enqueues_durable_revocation() {
         let context = create_test_context().await;
         context
             .client_service
-            .set_active_client_settings(
-                "client-a",
-                ActiveClientSettingsUpdate {
-                    config_mode: Some("hosted".to_string()),
-                    ..ActiveClientSettingsUpdate::default()
-                },
-            )
+            .set_capability_config("client-a", CapabilitySource::Activated, Vec::new())
             .await
-            .expect("seed hosted mode");
-
-        let mut rx = EventBus::global().subscribe_async();
-        let Json(response) = update_settings(
+            .expect("create Consumer state");
+        sqlx::query("UPDATE client SET approval_status = 'approved' WHERE identifier = 'client-a'")
+            .execute(&context.db_pool)
+            .await
+            .expect("approve Consumer");
+        let _ = update_capability_config(
             State(context.app_state.clone()),
-            Json(ClientSettingsUpdateReq {
+            Json(ClientCapabilityConfigReq {
+                identifier: "client-a".to_string(),
+                config_mode: Some("hosted".to_string()),
+                capability_source: CapabilitySource::Activated,
+                selected_profile_ids: Vec::new(),
+                source_revision_set: displayed_catalog_revision_set(&context).await,
+                unify_direct_exposure: None,
+            }),
+        )
+        .await
+        .expect("seed hosted mode through atomic capability configuration");
+        let binding_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM consumer_surface_bindings WHERE consumer_id = 'client-a'")
+                .fetch_one(&context.db_pool)
+                .await
+                .expect("count initial Consumer binding");
+        assert_eq!(binding_count, 1);
+
+        let Json(response) = update_capability_config(
+            State(context.app_state.clone()),
+            Json(ClientCapabilityConfigReq {
+                identifier: "client-a".to_string(),
                 config_mode: Some("transparent".to_string()),
-                ..settings_update_req("client-a")
+                capability_source: CapabilitySource::Activated,
+                selected_profile_ids: Vec::new(),
+                source_revision_set: displayed_catalog_revision_set(&context).await,
+                unify_direct_exposure: None,
             }),
         )
         .await
         .expect("switch mode to transparent");
 
         assert!(response.success);
-        assert_no_client_visible_change_event(&mut rx, "client-a").await;
+        let binding_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM consumer_surface_bindings WHERE consumer_id = 'client-a'")
+                .fetch_one(&context.db_pool)
+                .await
+                .expect("count Consumer binding after leaving managed mode");
+        assert_eq!(binding_count, 0);
+        let revocation_payload: String = sqlx::query_scalar(
+            r#"
+            SELECT payload
+            FROM surface_outbox_events
+            WHERE aggregate_id = 'client-a' AND delivered_at IS NULL
+            ORDER BY created_at DESC, event_id DESC
+            LIMIT 1
+            "#,
+        )
+        .fetch_one(&context.db_pool)
+        .await
+        .expect("load pending managed access revocation");
+        assert!(revocation_payload.contains("managed_access_revoked"));
     }
 
     #[tokio::test]
@@ -2473,7 +2963,6 @@ mod tests {
         let result = update_settings(
             State(context.app_state.clone()),
             Json(ClientSettingsUpdateReq {
-                config_mode: Some("hosted".to_string()),
                 transports: Some(HashMap::from([("http".to_string(), selected_streamable_http_rule())])),
                 ..settings_update_req("client-a")
             }),
@@ -2487,8 +2976,19 @@ mod tests {
         assert!(error.message.contains("Invalid transport key 'http'"));
     }
 
+    #[test]
+    fn client_settings_contract_rejects_non_atomic_config_mode() {
+        let result = serde_json::from_value::<ClientSettingsUpdateReq>(json!({
+            "identifier": "client-a",
+            "config_mode": "hosted"
+        }));
+
+        let error = result.expect_err("config mode must use the atomic capability endpoint");
+        assert!(error.to_string().contains("unknown field `config_mode`"));
+    }
+
     #[tokio::test]
-    async fn capability_config_filters_stale_and_ineligible_unify_selections() {
+    async fn capability_config_preserves_registered_refs_that_are_not_currently_eligible() {
         let context = create_test_context().await;
         insert_unify_server(
             &context.db_pool,
@@ -2506,22 +3006,24 @@ mod tests {
             &["tool-x"],
         )
         .await;
+        let eligible_ref = capability_ref("server-eligible", CatalogCapabilityKind::Tools, "tool-a");
+        let ineligible_ref = capability_ref("server-ineligible", CatalogCapabilityKind::Tools, "tool-x");
+        let mut expected_refs = vec![eligible_ref.clone(), ineligible_ref.clone()];
+        expected_refs.sort();
 
         let Json(response) = update_capability_config(
             State(context.app_state.clone()),
             Json(ClientCapabilityConfigReq {
                 identifier: "client-invalid".to_string(),
+                config_mode: None,
                 capability_source: CapabilitySource::Activated,
                 selected_profile_ids: Vec::new(),
+                source_revision_set: displayed_catalog_revision_set(&context).await,
                 unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
                     route_mode: crate::clients::models::UnifyRouteMode::CapabilityLevel,
                     server_ids: Vec::new(),
-                    capability_ids: crate::clients::models::UnifyDirectCapabilityIds {
-                        tool_ids: vec![
-                            "eligible_server_tool-missing".to_string(),
-                            "ineligible_server_tool-x".to_string(),
-                            "eligible_server_tool-a".to_string(),
-                        ],
+                    capability_refs: crate::clients::models::UnifyDirectCapabilityRefs {
+                        tool_refs: vec![ineligible_ref.clone(), eligible_ref.clone()],
                         ..Default::default()
                     },
                 }),
@@ -2540,43 +3042,66 @@ mod tests {
             }]
         );
         assert_eq!(
-            data.unify_direct_exposure.intent.capability_ids.tool_ids,
-            vec!["eligible_server_tool-a".to_string()]
+            data.unify_direct_exposure.intent.capability_refs.tool_refs,
+            expected_refs
         );
         assert_eq!(
             data.unify_direct_exposure.diagnostics.invalid_server_ids,
             Vec::<String>::new()
         );
-        assert_eq!(data.unify_direct_exposure.diagnostics.invalid_capability_ids.len(), 2);
-        assert!(
-            data.unify_direct_exposure
-                .diagnostics
-                .invalid_capability_ids
-                .iter()
-                .any(|item| item == "eligible_server_tool-missing")
+        assert_eq!(
+            data.unify_direct_exposure.diagnostics.invalid_capability_refs,
+            vec![ineligible_ref.clone()]
         );
-        assert!(
-            data.unify_direct_exposure
-                .diagnostics
-                .invalid_capability_ids
-                .iter()
-                .any(|item| item == "ineligible_server_tool-x")
-        );
+        let stored_refs = sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT direct.ref_id
+            FROM direct_exposure_refs direct
+            JOIN client ON client.identifier = direct.consumer_id
+            WHERE client.identifier = ? AND direct.enabled = 1
+            ORDER BY direct.ref_id
+            "#,
+        )
+        .bind("client-invalid")
+        .fetch_all(&context.db_pool)
+        .await
+        .expect("load stored Direct Exposure refs");
+        assert_eq!(stored_refs, expected_refs);
+    }
 
-        let stored_intent: Option<String> =
-            sqlx::query_scalar("SELECT unify_direct_exposure_intent FROM client WHERE identifier = ?")
-                .bind("client-invalid")
+    #[tokio::test]
+    async fn failed_direct_exposure_write_does_not_partially_update_client_capability_source() {
+        let context = create_test_context().await;
+        let profile_id = insert_shared_profile(&context.db_pool, "atomic-profile").await;
+        let unknown_ref = format!("cref_sha256:{}", "0".repeat(64));
+
+        let result = update_capability_config(
+            State(context.app_state.clone()),
+            Json(ClientCapabilityConfigReq {
+                identifier: "client-atomic-direct".to_string(),
+                config_mode: None,
+                capability_source: CapabilitySource::Profiles,
+                selected_profile_ids: vec![profile_id],
+                source_revision_set: displayed_catalog_revision_set(&context).await,
+                unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
+                    route_mode: crate::clients::models::UnifyRouteMode::CapabilityLevel,
+                    server_ids: Vec::new(),
+                    capability_refs: crate::clients::models::UnifyDirectCapabilityRefs {
+                        tool_refs: vec![unknown_ref],
+                        ..Default::default()
+                    },
+                }),
+            }),
+        )
+        .await;
+
+        assert!(result.is_err());
+        let consumer_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM client WHERE identifier = 'client-atomic-direct'")
                 .fetch_one(&context.db_pool)
                 .await
-                .expect("load stored unify intent");
-        let stored_intent: serde_json::Value =
-            serde_json::from_str(stored_intent.as_deref().expect("stored intent payload"))
-                .expect("parse stored intent payload");
-        assert_eq!(stored_intent["route_mode"], "capability_level");
-        assert_eq!(
-            stored_intent["capability_ids"]["tool_ids"],
-            serde_json::json!(["eligible_server_tool-a"])
-        );
+                .expect("count Consumer rows after failed write");
+        assert_eq!(consumer_count, 0);
     }
 
     #[tokio::test]
@@ -2595,38 +3120,21 @@ mod tests {
             State(context.app_state.clone()),
             Json(ClientCapabilityConfigReq {
                 identifier: "client-prune-level".to_string(),
+                config_mode: None,
                 capability_source: CapabilitySource::Activated,
                 selected_profile_ids: Vec::new(),
+                source_revision_set: displayed_catalog_revision_set(&context).await,
                 unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
                     route_mode: crate::clients::models::UnifyRouteMode::ServerLevel,
                     server_ids: vec!["server-prune-level".to_string()],
-                    capability_ids: Default::default(),
+                    capability_refs: Default::default(),
                 }),
             }),
         )
         .await
         .expect("seed server-level capability config");
 
-        let _ = crate::api::handlers::server::update_server(
-            State(context.app_state.clone()),
-            Json(crate::api::models::server::ServerUpdateReq {
-                id: "server-prune-level".to_string(),
-                kind: None,
-                command: None,
-                url: None,
-                args: None,
-                env: None,
-                headers: None,
-                profile_ids: None,
-                enabled: None,
-                pending_import: None,
-                source: None,
-                meta: None,
-                unify_direct_exposure_eligible: Some(false),
-            }),
-        )
-        .await
-        .expect("disable direct exposure eligibility");
+        set_test_server_direct_exposure_eligible(&context.db_pool, "server-prune-level", false).await;
 
         let Json(response) = get_capability_config(
             State(context.app_state.clone()),
@@ -2647,7 +3155,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn server_eligibility_change_prunes_capability_level_direct_surfaces() {
+    async fn server_eligibility_change_hides_surfaces_without_removing_capability_ref_intent() {
         let context = create_test_context().await;
         insert_unify_server(
             &context.db_pool,
@@ -2666,48 +3174,48 @@ mod tests {
             &["test:///{id}"],
         )
         .await;
+        let requested_refs = crate::clients::models::UnifyDirectCapabilityRefs {
+            tool_refs: vec![capability_ref(
+                "server-prune-capabilities",
+                CatalogCapabilityKind::Tools,
+                "tool-a",
+            )],
+            prompt_refs: vec![capability_ref(
+                "server-prune-capabilities",
+                CatalogCapabilityKind::Prompts,
+                "prompt-a",
+            )],
+            resource_refs: vec![capability_ref(
+                "server-prune-capabilities",
+                CatalogCapabilityKind::Resources,
+                "test://resource-a",
+            )],
+            template_refs: vec![capability_ref(
+                "server-prune-capabilities",
+                CatalogCapabilityKind::ResourceTemplates,
+                "test:///{id}",
+            )],
+        };
 
         let _ = update_capability_config(
             State(context.app_state.clone()),
             Json(ClientCapabilityConfigReq {
                 identifier: "client-prune-capabilities".to_string(),
+                config_mode: None,
                 capability_source: CapabilitySource::Activated,
                 selected_profile_ids: Vec::new(),
+                source_revision_set: displayed_catalog_revision_set(&context).await,
                 unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
                     route_mode: crate::clients::models::UnifyRouteMode::CapabilityLevel,
                     server_ids: Vec::new(),
-                    capability_ids: crate::clients::models::UnifyDirectCapabilityIds {
-                        tool_ids: vec!["prune_capability_server_tool-a".to_string()],
-                        prompt_ids: vec!["prune_capability_server_prompt-a".to_string()],
-                        resource_ids: vec![canonical_test_resource("prune_capability_server")],
-                        template_ids: vec![canonical_test_template("prune_capability_server")],
-                    },
+                    capability_refs: requested_refs.clone(),
                 }),
             }),
         )
         .await
         .expect("seed capability-level direct surfaces");
 
-        let _ = crate::api::handlers::server::update_server(
-            State(context.app_state.clone()),
-            Json(crate::api::models::server::ServerUpdateReq {
-                id: "server-prune-capabilities".to_string(),
-                kind: None,
-                command: None,
-                url: None,
-                args: None,
-                env: None,
-                headers: None,
-                profile_ids: None,
-                enabled: None,
-                pending_import: None,
-                source: None,
-                meta: None,
-                unify_direct_exposure_eligible: Some(false),
-            }),
-        )
-        .await
-        .expect("disable capability-level direct eligibility");
+        set_test_server_direct_exposure_eligible(&context.db_pool, "server-prune-capabilities", false).await;
 
         let Json(response) = get_capability_config(
             State(context.app_state.clone()),
@@ -2743,10 +3251,7 @@ mod tests {
                 .selected_template_surfaces
                 .is_empty()
         );
-        assert_eq!(
-            data.unify_direct_exposure.intent.capability_ids,
-            crate::clients::models::UnifyDirectCapabilityIds::default()
-        );
+        assert_eq!(data.unify_direct_exposure.intent.capability_refs, requested_refs);
     }
 
     #[tokio::test]
@@ -2765,25 +3270,21 @@ mod tests {
             State(context.app_state.clone()),
             Json(ClientCapabilityConfigReq {
                 identifier: "client-disable-level".to_string(),
+                config_mode: None,
                 capability_source: CapabilitySource::Activated,
                 selected_profile_ids: Vec::new(),
+                source_revision_set: displayed_catalog_revision_set(&context).await,
                 unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
                     route_mode: crate::clients::models::UnifyRouteMode::ServerLevel,
                     server_ids: vec!["server-disable-level".to_string()],
-                    capability_ids: Default::default(),
+                    capability_refs: Default::default(),
                 }),
             }),
         )
         .await
         .expect("seed server-level config before disable");
 
-        let _ = crate::api::handlers::server::disable_server(
-            State(context.app_state.clone()),
-            Path("server-disable-level".to_string()),
-            Query(std::collections::HashMap::new()),
-        )
-        .await
-        .expect("disable server globally");
+        set_test_server_enabled(&context.db_pool, "server-disable-level", false).await;
 
         let Json(response) = get_capability_config(
             State(context.app_state.clone()),
@@ -2804,7 +3305,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn server_disable_prunes_capability_level_direct_surfaces() {
+    async fn server_disable_hides_surfaces_without_removing_capability_ref_intent() {
         let context = create_test_context().await;
         insert_unify_server(
             &context.db_pool,
@@ -2823,35 +3324,48 @@ mod tests {
             &["test:///{id}"],
         )
         .await;
+        let requested_refs = crate::clients::models::UnifyDirectCapabilityRefs {
+            tool_refs: vec![capability_ref(
+                "server-disable-capabilities",
+                CatalogCapabilityKind::Tools,
+                "tool-a",
+            )],
+            prompt_refs: vec![capability_ref(
+                "server-disable-capabilities",
+                CatalogCapabilityKind::Prompts,
+                "prompt-a",
+            )],
+            resource_refs: vec![capability_ref(
+                "server-disable-capabilities",
+                CatalogCapabilityKind::Resources,
+                "test://resource-a",
+            )],
+            template_refs: vec![capability_ref(
+                "server-disable-capabilities",
+                CatalogCapabilityKind::ResourceTemplates,
+                "test:///{id}",
+            )],
+        };
 
         let _ = update_capability_config(
             State(context.app_state.clone()),
             Json(ClientCapabilityConfigReq {
                 identifier: "client-disable-capabilities".to_string(),
+                config_mode: None,
                 capability_source: CapabilitySource::Activated,
                 selected_profile_ids: Vec::new(),
+                source_revision_set: displayed_catalog_revision_set(&context).await,
                 unify_direct_exposure: Some(crate::api::models::client::ClientUnifyDirectExposureReq {
                     route_mode: crate::clients::models::UnifyRouteMode::CapabilityLevel,
                     server_ids: Vec::new(),
-                    capability_ids: crate::clients::models::UnifyDirectCapabilityIds {
-                        tool_ids: vec!["disable_capability_server_tool-a".to_string()],
-                        prompt_ids: vec!["disable_capability_server_prompt-a".to_string()],
-                        resource_ids: vec![canonical_test_resource("disable_capability_server")],
-                        template_ids: vec![canonical_test_template("disable_capability_server")],
-                    },
+                    capability_refs: requested_refs.clone(),
                 }),
             }),
         )
         .await
         .expect("seed capability config before disable");
 
-        let _ = crate::api::handlers::server::disable_server(
-            State(context.app_state.clone()),
-            Path("server-disable-capabilities".to_string()),
-            Query(std::collections::HashMap::new()),
-        )
-        .await
-        .expect("disable capability server globally");
+        set_test_server_enabled(&context.db_pool, "server-disable-capabilities", false).await;
 
         let Json(response) = get_capability_config(
             State(context.app_state.clone()),
@@ -2887,6 +3401,7 @@ mod tests {
                 .selected_template_surfaces
                 .is_empty()
         );
+        assert_eq!(data.unify_direct_exposure.intent.capability_refs, requested_refs);
     }
 
     #[tokio::test]
@@ -2898,7 +3413,6 @@ mod tests {
             .set_active_client_settings(
                 "custom.runtime",
                 ActiveClientSettingsUpdate {
-                    config_mode: Some("hosted".to_string()),
                     config_file_state: Some(ClientConfigFileState::WithoutConfigFile),
                     description: Some("Runtime-only client".to_string()),
                     ..ActiveClientSettingsUpdate::default()
@@ -2906,6 +3420,10 @@ mod tests {
             )
             .await
             .expect("create active runtime-only client");
+        sqlx::query("UPDATE client SET config_mode = 'hosted' WHERE identifier = 'custom.runtime'")
+            .execute(&context.db_pool)
+            .await
+            .expect("seed hosted mode");
 
         let Json(response) = config_details(
             State(context.app_state.clone()),
@@ -3124,7 +3642,6 @@ mod tests {
         let Json(response) = update_settings(
             State(context.app_state.clone()),
             Json(ClientSettingsUpdateReq {
-                config_mode: Some("hosted".to_string()),
                 transport: Some("streamable_http".to_string()),
                 client_version: Some("1.2.3".to_string()),
                 display_name: Some("Custom Runtime".to_string()),
@@ -3182,7 +3699,6 @@ mod tests {
         let Json(update_response) = update_settings(
             State(context.app_state.clone()),
             Json(ClientSettingsUpdateReq {
-                config_mode: Some("hosted".to_string()),
                 transport: Some("stdio".to_string()),
                 display_name: Some("Client A".to_string()),
                 config_file_state: Some(ClientConfigFileState::WithConfigFile),
@@ -3264,7 +3780,6 @@ mod tests {
         let Json(update_response) = update_settings(
             State(context.app_state.clone()),
             Json(ClientSettingsUpdateReq {
-                config_mode: Some("hosted".to_string()),
                 transport: Some("stdio".to_string()),
                 display_name: Some("Zed Strict Inspect".to_string()),
                 config_file_state: Some(ClientConfigFileState::WithConfigFile),
@@ -3334,7 +3849,6 @@ mod tests {
         let Json(update_response) = update_settings(
             State(context.app_state.clone()),
             Json(ClientSettingsUpdateReq {
-                config_mode: Some("hosted".to_string()),
                 transport: Some("stdio".to_string()),
                 display_name: Some("Already Imported Client".to_string()),
                 config_file_state: Some(ClientConfigFileState::WithConfigFile),
@@ -3392,7 +3906,6 @@ mod tests {
                 "client-a",
                 ActiveClientSettingsUpdate {
                     display_name: Some("Inspect Existing Client".to_string()),
-                    config_mode: Some("hosted".to_string()),
                     transport: Some("stdio".to_string()),
                     config_file_state: Some(ClientConfigFileState::WithConfigFile),
                     config_path: Some(config_path.to_string_lossy().to_string()),
@@ -3405,7 +3918,8 @@ mod tests {
         sqlx::query(
             r#"
             UPDATE client
-            SET config_file_parse = 'not-json',
+            SET config_mode = 'hosted',
+                config_file_parse = 'not-json',
                 approval_status = 'approved'
             WHERE identifier = ?
             "#,
@@ -3462,7 +3976,6 @@ mod tests {
         let result = update_settings(
             State(context.app_state.clone()),
             Json(ClientSettingsUpdateReq {
-                config_mode: Some("hosted".to_string()),
                 transport: Some("streamable_http".to_string()),
                 display_name: Some("Invalid Runtime".to_string()),
                 config_file_state: Some(ClientConfigFileState::WithConfigFile),
@@ -3487,7 +4000,6 @@ mod tests {
         let Json(initial_response) = update_settings(
             State(context.app_state.clone()),
             Json(ClientSettingsUpdateReq {
-                config_mode: Some("hosted".to_string()),
                 transport: Some("streamable_http".to_string()),
                 display_name: Some("Clear Runtime".to_string()),
                 config_file_state: Some(ClientConfigFileState::WithConfigFile),
@@ -3504,7 +4016,6 @@ mod tests {
         let Json(clear_response) = update_settings(
             State(context.app_state.clone()),
             Json(ClientSettingsUpdateReq {
-                config_mode: Some("hosted".to_string()),
                 transport: Some("streamable_http".to_string()),
                 display_name: Some("Clear Runtime".to_string()),
                 config_file_state: Some(ClientConfigFileState::WithoutConfigFile),
@@ -3564,7 +4075,6 @@ mod tests {
         let Json(local_response) = update_settings(
             State(context.app_state.clone()),
             Json(ClientSettingsUpdateReq {
-                config_mode: Some("hosted".to_string()),
                 transport: Some("streamable_http".to_string()),
                 display_name: Some("Manual Runtime".to_string()),
                 config_file_state: Some(ClientConfigFileState::WithConfigFile),
@@ -3748,7 +4258,6 @@ mod tests {
         let Json(initial_response) = update_settings(
             State(context.app_state.clone()),
             Json(ClientSettingsUpdateReq {
-                config_mode: Some("hosted".to_string()),
                 transport: Some("streamable_http".to_string()),
                 display_name: Some("Empty Clear Runtime".to_string()),
                 config_file_state: Some(ClientConfigFileState::WithConfigFile),
@@ -3763,7 +4272,6 @@ mod tests {
         let Json(clear_response) = update_settings(
             State(context.app_state.clone()),
             Json(ClientSettingsUpdateReq {
-                config_mode: Some("hosted".to_string()),
                 transport: Some("streamable_http".to_string()),
                 display_name: Some("Empty Clear Runtime".to_string()),
                 config_path: Some("   ".to_string()),
@@ -3790,12 +4298,7 @@ mod tests {
 
         context
             .client_service
-            .set_client_settings(
-                "client-a",
-                Some("hosted".to_string()),
-                Some("streamable_http".to_string()),
-                None,
-            )
+            .set_client_settings("client-a", Some("streamable_http".to_string()), None)
             .await
             .expect("seed client settings");
 
@@ -3846,7 +4349,6 @@ mod tests {
         let Json(response) = update_settings(
             State(context.app_state.clone()),
             Json(ClientSettingsUpdateReq {
-                config_mode: Some("hosted".to_string()),
                 transport: Some("streamable_http".to_string()),
                 display_name: Some("Cherry Studio".to_string()),
                 config_file_state: Some(ClientConfigFileState::WithConfigFile),
@@ -3877,7 +4379,6 @@ mod tests {
         let result = update_settings(
             State(context.app_state.clone()),
             Json(ClientSettingsUpdateReq {
-                config_mode: Some("hosted".to_string()),
                 transport: Some("streamable_http".to_string()),
                 display_name: Some("Cherry Studio".to_string()),
                 config_file_state: Some(ClientConfigFileState::WithConfigFile),
@@ -3909,7 +4410,6 @@ mod tests {
                 "client-a",
                 ActiveClientSettingsUpdate {
                     display_name: Some("Suspended Client".to_string()),
-                    config_mode: Some("hosted".to_string()),
                     transport: Some("streamable_http".to_string()),
                     config_file_state: Some(ClientConfigFileState::WithConfigFile),
                     config_path: Some(config_path.to_string_lossy().to_string()),
@@ -3918,6 +4418,10 @@ mod tests {
             )
             .await
             .expect("seed active client state");
+        sqlx::query("UPDATE client SET config_mode = 'hosted' WHERE identifier = 'client-a'")
+            .execute(&context.db_pool)
+            .await
+            .expect("seed hosted mode");
 
         context
             .client_service
@@ -3928,7 +4432,6 @@ mod tests {
         let Json(response) = update_settings(
             State(context.app_state.clone()),
             Json(ClientSettingsUpdateReq {
-                config_mode: Some("hosted".to_string()),
                 transport: Some("streamable_http".to_string()),
                 client_version: Some("2.0.0".to_string()),
                 display_name: Some("Suspended Client".to_string()),
@@ -3963,7 +4466,6 @@ mod tests {
         let Json(update_response) = update_settings(
             State(context.app_state.clone()),
             Json(ClientSettingsUpdateReq {
-                config_mode: Some("hosted".to_string()),
                 transport: Some("streamable_http".to_string()),
                 client_version: Some("9.9.9".to_string()),
                 display_name: Some("Runtime Apply Client".to_string()),
@@ -4116,6 +4618,12 @@ mod tests {
         let config_path = context._temp_dir.path().join("runtime-attach-client.json");
         let parsed = seed_runtime_attachable_client(&context, identifier, &config_path).await;
         assert!(parsed["mcpServers"].get("MCPMate").is_some());
+        let surface_store = mcpmate_capability_store::SqliteSurfaceStore::new(context.db_pool.clone());
+        let initial_binding = surface_store
+            .load_binding(identifier)
+            .await
+            .expect("load managed Consumer Surface")
+            .expect("applying MCPMate to an approved managed Consumer must create its initial Surface publication");
 
         let Json(attach_response) = client_attach(
             State(context.app_state.clone()),
@@ -4134,6 +4642,12 @@ mod tests {
             data.warnings
         );
         assert_eq!(data.attachment_state, "attached");
+        let rebound = surface_store
+            .load_binding(identifier)
+            .await
+            .expect("reload managed Consumer Surface")
+            .expect("managed Consumer Surface remains published after reattach");
+        assert_eq!(rebound.generation, initial_binding.generation);
     }
 
     #[tokio::test]
@@ -4203,7 +4717,6 @@ mod tests {
         let Json(update_response) = update_settings(
             State(context.app_state.clone()),
             Json(ClientSettingsUpdateReq {
-                config_mode: Some("hosted".to_string()),
                 transport: Some("streamable_http".to_string()),
                 display_name: Some("Runtime Detach Idempotent".to_string()),
                 config_file_state: Some(ClientConfigFileState::WithConfigFile),
@@ -4259,7 +4772,6 @@ mod tests {
                 "client-a",
                 ActiveClientSettingsUpdate {
                     display_name: Some("Undetectable Detach Client".to_string()),
-                    config_mode: Some("hosted".to_string()),
                     transport: Some("streamable_http".to_string()),
                     config_file_state: Some(ClientConfigFileState::WithConfigFile),
                     config_path: Some(config_path.to_string_lossy().to_string()),
@@ -4272,7 +4784,8 @@ mod tests {
         sqlx::query(
             r#"
             UPDATE client
-            SET config_file_parse = 'not-json',
+            SET config_mode = 'hosted',
+                config_file_parse = 'not-json',
                 approval_status = 'approved',
                 attachment_state = 'attached'
             WHERE identifier = ?
@@ -4309,7 +4822,6 @@ mod tests {
         let Json(update_response) = update_settings(
             State(context.app_state.clone()),
             Json(ClientSettingsUpdateReq {
-                config_mode: Some("hosted".to_string()),
                 transport: Some("streamable_http".to_string()),
                 display_name: Some("Drift Attachment Client".to_string()),
                 config_file_state: Some(ClientConfigFileState::WithConfigFile),

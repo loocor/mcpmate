@@ -15,4 +15,4 @@ EOF
 fi
 
 require_command cargo
-run_in "$(project_dir backend)" cargo run -- "$@"
+run_cargo_in "$(project_dir backend)" run -- "$@"

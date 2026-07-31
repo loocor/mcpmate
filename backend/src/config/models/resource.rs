@@ -1,7 +1,6 @@
 // Resource models for MCPMate
 // Contains data models for resource configuration
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
@@ -18,12 +17,11 @@ pub struct ProfileResource {
     pub server_name: String,
     /// Resource URI (original URI from upstream server)
     pub resource_uri: String,
-    /// Whether the resource is enabled in this profile
+    pub unique_uri: String,
+    pub description: Option<String>,
     pub enabled: bool,
-    /// When the association was created
-    pub created_at: Option<DateTime<Utc>>,
-    /// When the association was last updated
-    pub updated_at: Option<DateTime<Utc>>,
+    pub state: String,
+    pub state_generation: i64,
 }
 
 /// Resource configuration update model

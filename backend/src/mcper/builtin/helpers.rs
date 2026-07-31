@@ -110,8 +110,7 @@ fn shape_tool_details(tools: Vec<ProfileToolWithDetails>) -> Vec<ToolDetail> {
     let mut details: Vec<ToolDetail> = tools
         .into_iter()
         .map(|tool| ToolDetail {
-            association_id: tool.id,
-            server_tool_id: tool.server_tool_id,
+            ref_id: tool.ref_id,
             server_id: tool.server_id,
             server_name: tool.server_name,
             tool_name: tool.tool_name,

@@ -18,6 +18,7 @@ use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_REPLACE_EXISTING, MOVEFIL
 /// Unified path service for consistent path handling across the application
 pub struct PathService {
     path_mapper: PathMapper,
+    backup_root: Option<PathBuf>,
 }
 
 const MAX_BACKUPS_PER_FILE: usize = 5;
@@ -27,7 +28,16 @@ impl PathService {
     pub fn new() -> Result<Self> {
         Ok(Self {
             path_mapper: PathMapper::new()?,
+            backup_root: None,
         })
+    }
+
+    pub fn with_backup_root(
+        mut self,
+        backup_root: impl Into<PathBuf>,
+    ) -> Self {
+        self.backup_root = Some(backup_root.into());
+        self
     }
 
     /// Resolve any path template with consistent logic
@@ -224,6 +234,9 @@ impl PathService {
     }
 
     fn backups_root(&self) -> Result<PathBuf> {
+        if let Some(backup_root) = &self.backup_root {
+            return Ok(backup_root.clone());
+        }
         let home_dir = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Cannot get user home directory"))?;
         Ok(home_dir.join(".mcpmate").join("backups").join("client"))
     }
@@ -475,6 +488,7 @@ impl Default for PathService {
     fn default() -> Self {
         Self::new().unwrap_or_else(|_| Self {
             path_mapper: PathMapper::default(),
+            backup_root: None,
         })
     }
 }

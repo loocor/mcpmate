@@ -378,12 +378,9 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .expect("connect in-memory registry");
-        crate::config::server::init::initialize_server_tables(&pool)
+        crate::config::initialization::run_initialization(&pool)
             .await
-            .expect("initialize server tables");
-        crate::config::profile::init::initialize_profile_tables(&pool)
-            .await
-            .expect("initialize profile tables");
+            .expect("initialize database");
         sqlx::query("PRAGMA foreign_keys = ON")
             .execute(&pool)
             .await
@@ -627,12 +624,9 @@ mod tests {
             )
             .await
             .expect("connect registry database");
-        crate::config::server::init::initialize_server_tables(&pool)
+        crate::config::initialization::run_initialization(&pool)
             .await
-            .expect("initialize server tables");
-        crate::config::profile::init::initialize_profile_tables(&pool)
-            .await
-            .expect("initialize profile tables");
+            .expect("initialize database");
         sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'everything', 'stdio')")
             .execute(&pool)
             .await

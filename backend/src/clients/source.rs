@@ -563,3 +563,8 @@ impl ClientConfigSource for DbTemplateSource {
         Ok(())
     }
 }
+
+/// Builds the runtime DB-backed [`ClientConfigSource`] used by `ClientConfigService`.
+pub fn db_client_config_source(db_pool: Arc<SqlitePool>) -> ConfigResult<Arc<dyn ClientConfigSource>> {
+    Ok(Arc::new(DbTemplateSource::new(db_pool)?))
+}

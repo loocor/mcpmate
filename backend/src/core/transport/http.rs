@@ -4,8 +4,8 @@
 use super::TransportType;
 use crate::common::constants::protocol;
 use crate::common::http::make_streamable_config;
-use crate::core::foundation::utils::{get_sse_service_timeout, get_sse_tools_timeout};
 use crate::core::models::MCPServerConfig;
+use crate::core::transport::timeout_policy::McpTimeoutPolicy;
 use anyhow::{Context, Result};
 use rmcp::{
     RoleClient,
@@ -57,6 +57,7 @@ pub(crate) async fn connect_http_initialized_for_validation(
     server_config: &MCPServerConfig,
     transport_type: TransportType,
     cancellation: tokio_util::sync::CancellationToken,
+    startup_timeout: Duration,
 ) -> Result<crate::core::transport::ClientService> {
     let url = server_config
         .url
@@ -70,8 +71,7 @@ pub(crate) async fn connect_http_initialized_for_validation(
                 build_configured_http_client(server_config)?,
                 config,
             );
-            build_initialized_service_with_cancellation(server_name, transport, cancellation, get_sse_service_timeout())
-                .await
+            build_initialized_service_with_cancellation(server_name, transport, cancellation, startup_timeout).await
         }
         TransportType::Stdio => anyhow::bail!("Stdio transport not supported by this function"),
     }
@@ -178,14 +178,13 @@ pub async fn connect_http_server_with_client(
         .as_ref()
         .context("URL not specified for HTTP server")?;
 
-    let service_timeout = get_sse_service_timeout();
-    let tools_timeout = get_sse_tools_timeout();
+    let policy = McpTimeoutPolicy::for_server(server_config.kind, server_config.command.as_deref(), None);
 
     let (service, tools, capabilities) = match transport_type {
         TransportType::StreamableHttp => {
             let config = make_streamable_config(url, &server_config.headers);
             let transport = StreamableHttpClientTransport::<reqwest::Client>::with_client(client, config);
-            build_service_tools(server_name, transport, service_timeout, tools_timeout).await?
+            build_service_tools(server_name, transport, policy.startup, policy.capability_operation).await?
         }
         TransportType::Stdio => {
             return Err(anyhow::anyhow!("Stdio transport not supported by this function"));
@@ -354,6 +353,7 @@ mod tests {
             .mount(&server)
             .await;
         let config = MCPServerConfig {
+            source_fingerprint: None,
             kind: ServerType::StreamableHttp,
             command: None,
             args: None,
@@ -371,6 +371,7 @@ mod tests {
             &config,
             TransportType::StreamableHttp,
             Default::default(),
+            std::time::Duration::from_secs(60),
         )
         .await;
 

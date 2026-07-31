@@ -1,10 +1,18 @@
 import { useMutation } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { extractImportStats, serversApi } from "../lib/api";
+import {
+	assertCompleteServerImport,
+	extractImportStats,
+	serversApi,
+} from "../lib/api";
 import { resolveAutoAddTargetProfileId } from "../lib/default-profile";
 import { notifyError, notifyInfo, notifySuccess } from "../lib/notify";
 import { formatNameList, summarizeSkipped } from "../lib/server-import-utils";
+import {
+	resolveImportDrawerOpen,
+	shouldAcceptImportDrawerChange,
+} from "../lib/import-drawer-lifecycle";
 import { useAppStore } from "../lib/store";
 import { Button } from "./ui/button";
 import {
@@ -72,13 +80,15 @@ export function ServerImportDrawer({
 	const [text, setText] = useState<string>(sample());
 	const [preview, setPreview] = useState<PreviewResult | null>(null);
 	const [importing, setImporting] = useState(false);
+	const importInFlightRef = useRef(false);
 	const { t } = useTranslation();
+	const effectiveOpen = resolveImportDrawerOpen(open, importing);
 
 	useEffect(() => {
-		if (!open) {
+		if (!effectiveOpen) {
 			setPreview(null);
 		}
-	}, [open]);
+	}, [effectiveOpen]);
 
 	const previewM = useMutation<PreviewResult, unknown, PreviewPayload>({
 		mutationFn: async (payload) => serversApi.previewServers(payload),
@@ -166,8 +176,12 @@ export function ServerImportDrawer({
 	}
 
 	async function doImport() {
+		if (importInFlightRef.current) {
+			return;
+		}
 		const p = parseImport();
 		if (!p.ok || !p.payload) return notifyError("Invalid JSON", p.error);
+		importInFlightRef.current = true;
 		try {
 			setImporting(true);
 			const targetProfileId = await resolveAutoAddTargetProfileId({
@@ -186,6 +200,7 @@ export function ServerImportDrawer({
 					: (res as { status?: string })?.status === "success" ||
 					!("error" in (res ?? {}));
 			if (didSucceed) {
+				assertCompleteServerImport(stats);
 				const { importedCount, skippedCount, skippedServers, skippedDetails } =
 					stats;
 				const skippedSummary = summarizeSkipped(skippedDetails, t);
@@ -217,6 +232,7 @@ export function ServerImportDrawer({
 		} catch (e) {
 			notifyError("Import failed", String(e));
 		} finally {
+			importInFlightRef.current = false;
 			setImporting(false);
 		}
 	}
@@ -231,7 +247,15 @@ export function ServerImportDrawer({
 	}
 
 	return (
-		<Drawer open={open} onOpenChange={onOpenChange}>
+		<Drawer
+			open={effectiveOpen}
+			onOpenChange={(nextOpen) => {
+				if (!shouldAcceptImportDrawerChange(nextOpen, importInFlightRef.current)) {
+					return;
+				}
+				onOpenChange(nextOpen);
+			}}
+		>
 			<DrawerContent>
 				<DrawerHeader>
 					<DrawerTitle>Import / Preview Servers</DrawerTitle>

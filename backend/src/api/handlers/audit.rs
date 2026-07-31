@@ -264,7 +264,6 @@ mod tests {
             audit_database: Some(audit_database),
             audit_service: Some(audit_service),
             config_application_state: Arc::new(crate::core::profile::ConfigApplicationStateManager::new()),
-            unified_query: None,
             client_service: None::<Arc<ClientConfigService>>,
             inspector_calls: Arc::new(InspectorCallRegistry::new()),
             inspector_sessions: Arc::new(InspectorSessionManager::new()),

@@ -3,8 +3,8 @@ use async_trait::async_trait;
 use futures::future::BoxFuture;
 use mcpmate_capability_store::{
     CapabilityCatalog, CapabilityKind as CatalogKind, CapabilityPayload, CatalogCommit, CatalogError, CatalogSnapshot,
-    InventoryState, KindObservation, ProjectionKey, ProjectionNameDomain, ProjectionPayload, SnapshotState,
-    SqliteCapabilityCatalog,
+    InventoryState, KindFailureKind, KindObservation, ProjectionKey, ProjectionNameDomain, ProjectionPayload,
+    SnapshotState, SqliteCapabilityCatalog,
 };
 use rmcp::service::{Peer, RoleClient};
 use sha2::{Digest, Sha256};
@@ -14,7 +14,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 
 use crate::config::database::Database;
-use crate::core::capability::connection_provider::CapabilityOwner;
+use crate::core::capability::connection_provider::{CapabilityAuthenticationFailureCode, CapabilityOwner};
 #[cfg(test)]
 use crate::core::capability::index::{CachedResourceInfo, CachedResourceTemplateInfo};
 use crate::core::capability::internal::{
@@ -30,7 +30,7 @@ pub struct ListCtx {
     pub capability: CapabilityType,
     pub server_id: String,
     pub refresh: Option<RefreshStrategy>,
-    pub timeout: Option<Duration>,
+    pub operation_timeout: Duration,
     pub validation_session: Option<String>,
     pub runtime_identity: Option<RuntimeIdentity>,
     pub connection_selection: Option<ConnectionSelection>,
@@ -148,42 +148,59 @@ fn catalog_kind(capability: CapabilityType) -> CatalogKind {
     }
 }
 
+fn catalog_payloads_for_kind(
+    records: Vec<mcpmate_capability_store::CatalogRecord>,
+    kind: CatalogKind,
+    name_domain: NameDomain,
+) -> Vec<CapabilityPayload> {
+    records
+        .into_iter()
+        .filter(|record| record.kind() == kind)
+        .map(|record| match name_domain {
+            NameDomain::External => record.effective_payload,
+            NameDomain::Upstream => record.source_payload,
+        })
+        .collect()
+}
+
 fn items_from_catalog(
     capability: CapabilityType,
     records: Vec<mcpmate_capability_store::CatalogRecord>,
+    name_domain: NameDomain,
 ) -> CapabilityItems {
+    let payloads = catalog_payloads_for_kind(records, catalog_kind(capability), name_domain);
     match capability {
         CapabilityType::Tools => CapabilityItems::Tools(
-            records
+            payloads
                 .into_iter()
-                .filter_map(|record| match record.payload {
+                .filter_map(|payload| match payload {
                     CapabilityPayload::Tool(tool) => Some(tool),
                     _ => None,
                 })
                 .collect(),
         ),
         CapabilityType::Prompts => CapabilityItems::Prompts(
-            records
+            payloads
                 .into_iter()
-                .filter_map(|record| match record.payload {
+                .filter_map(|payload| match payload {
                     CapabilityPayload::Prompt(prompt) => Some(prompt),
                     _ => None,
                 })
                 .collect(),
         ),
         CapabilityType::Resources => CapabilityItems::Resources(
-            records
+            payloads
                 .into_iter()
-                .filter_map(|record| match record.payload {
+                .filter_map(|payload| match payload {
                     CapabilityPayload::Resource(resource) => Some(resource),
                     _ => None,
                 })
                 .collect(),
         ),
         CapabilityType::ResourceTemplates => CapabilityItems::ResourceTemplates(
-            records
+            payloads
                 .into_iter()
-                .filter_map(|record| match record.payload {
+                .filter_map(|payload| match payload {
                     CapabilityPayload::ResourceTemplate(template) => Some(template),
                     _ => None,
                 })
@@ -219,10 +236,22 @@ fn projection_key(
         .as_ref()
         .map(ConnectionSelection::cache_scope_key)
         .unwrap_or_else(|| format!("{}#shared", ctx.server_id));
+    // A caller with a `visibility_snapshot` but no `runtime_identity` (builtin/broker call
+    // sites that resolve visibility ad hoc instead of through a bound client session) must
+    // never fall back to the unscoped "shared_raw" bucket: that bucket is shared with
+    // unfiltered management/API reads, and the snapshot's own `surface_fingerprint` already
+    // encodes the exact visibility scope (config mode, allowed capability sets, direct
+    // exposure) that produced this projection. Reusing it here keeps filtered projections
+    // isolated from the unfiltered baseline and from other visibility scopes.
     let surface_fingerprint = ctx
         .runtime_identity
         .as_ref()
         .map(|identity| identity.surface_fingerprint.clone())
+        .or_else(|| {
+            ctx.visibility_snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.surface_fingerprint.clone())
+        })
         .unwrap_or_else(|| "shared_raw".to_string());
     let revision_set = format!("{}:{revision}", ctx.server_id);
     let catalog_revision_set_hash = format!("{:x}", Sha256::digest(revision_set));
@@ -243,23 +272,13 @@ pub(crate) enum RuntimeFailureKind {
     Timeout,
     SessionGone,
     TransportClosed,
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "generation-aware owners are part of the read-service contract but the current pool has no generation counter"
-        )
-    )]
     StaleGeneration,
     Authentication,
+    AuthRequired,
+    Unauthorized,
+    Forbidden,
+    InsufficientScope,
     Protocol,
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "application failures remain part of the typed runtime contract and are exercised by read-service tests"
-        )
-    )]
     Application,
     Other,
 }
@@ -272,9 +291,68 @@ impl RuntimeFailureKind {
 
         match self {
             Self::SessionGone | Self::TransportClosed | Self::StaleGeneration => DiscoveryRetryDisposition::FreshOnce,
-            Self::Timeout | Self::Authentication | Self::Protocol | Self::Application | Self::Other => {
-                DiscoveryRetryDisposition::DoNotRetry
-            }
+            Self::Timeout
+            | Self::Authentication
+            | Self::AuthRequired
+            | Self::Unauthorized
+            | Self::Forbidden
+            | Self::InsufficientScope
+            | Self::Protocol
+            | Self::Application
+            | Self::Other => DiscoveryRetryDisposition::DoNotRetry,
+        }
+    }
+
+    pub(crate) const fn from_authentication_code(code: CapabilityAuthenticationFailureCode) -> Self {
+        match code {
+            CapabilityAuthenticationFailureCode::AuthRequired => Self::AuthRequired,
+            CapabilityAuthenticationFailureCode::Unauthorized => Self::Unauthorized,
+            CapabilityAuthenticationFailureCode::Forbidden => Self::Forbidden,
+            CapabilityAuthenticationFailureCode::InsufficientScope => Self::InsufficientScope,
+        }
+    }
+
+    pub(crate) const fn authentication_code(self) -> Option<CapabilityAuthenticationFailureCode> {
+        match self {
+            Self::Authentication | Self::AuthRequired => Some(CapabilityAuthenticationFailureCode::AuthRequired),
+            Self::Unauthorized => Some(CapabilityAuthenticationFailureCode::Unauthorized),
+            Self::Forbidden => Some(CapabilityAuthenticationFailureCode::Forbidden),
+            Self::InsufficientScope => Some(CapabilityAuthenticationFailureCode::InsufficientScope),
+            _ => None,
+        }
+    }
+
+    pub(crate) const fn persisted(self) -> KindFailureKind {
+        match self {
+            Self::Timeout => KindFailureKind::Timeout,
+            Self::SessionGone => KindFailureKind::SessionGone,
+            Self::TransportClosed => KindFailureKind::TransportClosed,
+            Self::StaleGeneration => KindFailureKind::StaleGeneration,
+            Self::Authentication => KindFailureKind::Authentication,
+            Self::AuthRequired => KindFailureKind::AuthRequired,
+            Self::Unauthorized => KindFailureKind::Unauthorized,
+            Self::Forbidden => KindFailureKind::Forbidden,
+            Self::InsufficientScope => KindFailureKind::InsufficientScope,
+            Self::Protocol => KindFailureKind::Protocol,
+            Self::Application => KindFailureKind::Application,
+            Self::Other => KindFailureKind::Other,
+        }
+    }
+
+    const fn from_persisted(kind: KindFailureKind) -> Self {
+        match kind {
+            KindFailureKind::Timeout => Self::Timeout,
+            KindFailureKind::SessionGone => Self::SessionGone,
+            KindFailureKind::TransportClosed => Self::TransportClosed,
+            KindFailureKind::StaleGeneration => Self::StaleGeneration,
+            KindFailureKind::Authentication => Self::Authentication,
+            KindFailureKind::AuthRequired => Self::AuthRequired,
+            KindFailureKind::Unauthorized => Self::Unauthorized,
+            KindFailureKind::Forbidden => Self::Forbidden,
+            KindFailureKind::InsufficientScope => Self::InsufficientScope,
+            KindFailureKind::Protocol => Self::Protocol,
+            KindFailureKind::Application => Self::Application,
+            KindFailureKind::Other => Self::Other,
         }
     }
 }
@@ -293,6 +371,24 @@ pub(crate) struct CapabilityDiscoveryObservation {
     pub(crate) items: CapabilityItems,
     pub(crate) flags: CapSyncFlags,
     pub(crate) kind_states: Vec<KindObservation>,
+}
+
+/// Full-server protocol observation used by management discovery.
+#[derive(Debug)]
+pub(crate) struct CapabilityFullDiscoveryObservation {
+    pub(crate) tools: Vec<rmcp::model::Tool>,
+    pub(crate) resources: Vec<rmcp::model::Resource>,
+    pub(crate) prompts: Vec<rmcp::model::Prompt>,
+    pub(crate) templates: Vec<rmcp::model::ResourceTemplate>,
+    pub(crate) flags: CapSyncFlags,
+    pub(crate) kind_states: Vec<KindObservation>,
+    pub(crate) failures: Vec<CapabilityKindFailure>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct CapabilityKindFailure {
+    pub(crate) kind: CapabilityType,
+    pub(crate) failure: RuntimeFailure,
 }
 
 pub(crate) enum CatalogReadFailure {
@@ -353,25 +449,6 @@ impl CapabilityEvidenceSink for SqliteCapabilityEvidenceSink {
     }
 }
 
-pub fn message_indicates_session_gone(msg_lower: &str) -> bool {
-    msg_lower.contains("gone") || contains_status_code(msg_lower, "404") || contains_status_code(msg_lower, "410")
-}
-
-/// Matches an HTTP status code as a standalone token rather than a bare substring, so arbitrary
-/// application content that happens to contain the same digits (a resource URI, a business
-/// value, an unrelated numeric id, ...) cannot be misread as a session-gone transport signal.
-fn contains_status_code(
-    msg_lower: &str,
-    code: &str,
-) -> bool {
-    let is_boundary = |c: Option<char>| !c.is_some_and(|c| c.is_ascii_alphanumeric());
-    msg_lower.match_indices(code).any(|(start, matched)| {
-        let before = msg_lower[..start].chars().next_back();
-        let after = msg_lower[start + matched.len()..].chars().next();
-        is_boundary(before) && is_boundary(after)
-    })
-}
-
 pub(crate) async fn handle_runtime_failure(
     pool: &Arc<Mutex<UpstreamConnectionPool>>,
     server_id: &str,
@@ -385,6 +462,10 @@ pub(crate) async fn handle_runtime_failure(
             FailureKind::RuntimeGone
         }
         RuntimeFailureKind::Authentication
+        | RuntimeFailureKind::AuthRequired
+        | RuntimeFailureKind::Unauthorized
+        | RuntimeFailureKind::Forbidden
+        | RuntimeFailureKind::InsufficientScope
         | RuntimeFailureKind::Protocol
         | RuntimeFailureKind::Application
         | RuntimeFailureKind::Other => FailureKind::RuntimeOther,
@@ -417,8 +498,13 @@ fn runtime_failure_from_capability(failure: Option<CapabilityFetchFailure>) -> O
             message: Some(message),
             timeout_ms: None,
         },
-        CapabilityFetchFailure::Authentication { message } => RuntimeFailure {
-            kind: RuntimeFailureKind::Authentication,
+        CapabilityFetchFailure::AuthRequired { message } => RuntimeFailure {
+            kind: RuntimeFailureKind::AuthRequired,
+            message: Some(message),
+            timeout_ms: None,
+        },
+        CapabilityFetchFailure::InsufficientScope { message } => RuntimeFailure {
+            kind: RuntimeFailureKind::InsufficientScope,
             message: Some(message),
             timeout_ms: None,
         },
@@ -445,6 +531,39 @@ pub(crate) async fn try_catalog_read(
     try_catalog_read_with_hook(ctx, database, || async {}).await
 }
 
+pub(crate) async fn persisted_kind_failure(
+    ctx: &ListCtx,
+    database: &Arc<Database>,
+) -> std::result::Result<Option<RuntimeFailure>, CatalogReadFailure> {
+    let (snapshot, _) = database
+        .load_capability_snapshot_typed(&ctx.server_id)
+        .await
+        .map_err(CatalogReadFailure::Catalog)?;
+    let Some(snapshot) = snapshot else {
+        return Ok(None);
+    };
+    if snapshot.state == SnapshotState::Invalidated {
+        return Ok(None);
+    }
+    let kind = catalog_kind(ctx.capability);
+    let Some(state) = snapshot
+        .kind_states
+        .iter()
+        .find(|state| state.kind == kind && state.inventory == InventoryState::Failed)
+    else {
+        return Ok(None);
+    };
+    Ok(Some(RuntimeFailure {
+        kind: state
+            .failure_kind
+            .clone()
+            .map(RuntimeFailureKind::from_persisted)
+            .unwrap_or(RuntimeFailureKind::Other),
+        message: state.error.clone(),
+        timeout_ms: state.timeout_ms.map(u128::from),
+    }))
+}
+
 /// Records a persisted snapshot as untrusted, invalidates the memory cache, and publishes the
 /// resulting catalog revision so other readers observe the same fact. Shared by every cache-read
 /// integrity check (config drift, shadow index divergence, ...) so each check only needs to
@@ -455,13 +574,18 @@ async fn invalidate_untrusted_snapshot(
     reason: String,
 ) -> std::result::Result<(), CatalogReadFailure> {
     let catalog = SqliteCapabilityCatalog::new(database.pool.clone());
-    let commit = SqliteCapabilityEvidenceSink::new(catalog)
-        .record(CapabilityEvidence::Invalidated {
-            server_id: snapshot.server_id.clone(),
-            reason,
-        })
+    let commit = catalog
+        .invalidate_server_if_current(
+            &snapshot.server_id,
+            snapshot.revision,
+            &snapshot.config_fingerprint,
+            &reason,
+        )
         .await
         .map_err(CatalogReadFailure::Catalog)?;
+    if !commit.changed {
+        return Ok(());
+    }
     database.capability_cache.invalidate_server(&snapshot.server_id).await;
     crate::config::server::capabilities::publish_catalog_commit(
         &snapshot.server_id,
@@ -533,11 +657,8 @@ where
 
     let projected_from_sqlite = Arc::new(AtomicBool::new(false));
     let projector_flag = projected_from_sqlite.clone();
-    let projection_database = database.clone();
-    let projection_server_id = ctx.server_id.clone();
-    let projection_name_domain = ctx.name_domain;
     let visibility_snapshot = ctx.visibility_snapshot.clone();
-    let raw_items = items_from_catalog(ctx.capability, snapshot.records.clone());
+    let raw_items = items_from_catalog(ctx.capability, snapshot.records.clone(), ctx.name_domain);
     let projected = database
         .capability_cache
         .get_or_project_at_epoch(
@@ -545,14 +666,7 @@ where
             projection_epoch,
             || async move {
                 projector_flag.store(true, Ordering::Relaxed);
-                let items = project_items_for_context(
-                    &projection_database,
-                    &projection_server_id,
-                    raw_items,
-                    projection_name_domain,
-                    visibility_snapshot.as_deref(),
-                )
-                .await?;
+                let items = apply_visibility_filter(raw_items, visibility_snapshot.as_deref());
                 Ok::<_, anyhow::Error>(projection_payload(items))
             },
         )
@@ -587,7 +701,7 @@ pub(crate) async fn discover_owner(
     let (items, flags, failure, kind_states) = fetch_runtime_items(
         ctx.capability,
         owner.peer.clone(),
-        ctx.timeout.unwrap_or_else(|| Duration::from_secs(10)),
+        ctx.operation_timeout,
         &owner.server_id,
         &owner.server_name,
         &owner.instance_id,
@@ -608,6 +722,169 @@ pub(crate) async fn discover_owner(
     }
 }
 
+pub(crate) async fn discover_all_kinds_owner(
+    ctx: &ListCtx,
+    owner: &CapabilityOwner,
+) -> std::result::Result<CapabilityFullDiscoveryObservation, RuntimeFailure> {
+    if owner.server_id != ctx.server_id {
+        return Err(RuntimeFailure {
+            kind: RuntimeFailureKind::Other,
+            message: Some(format!(
+                "owner targets server '{}' instead of '{}'",
+                owner.server_id, ctx.server_id
+            )),
+            timeout_ms: None,
+        });
+    }
+
+    let timeout = ctx.operation_timeout;
+    let mut tools = Vec::new();
+    let mut resources = Vec::new();
+    let mut prompts = Vec::new();
+    let mut templates = Vec::new();
+    let mut flags = CapSyncFlags::NONE;
+    let mut kind_states = Vec::new();
+    let mut failures = Vec::new();
+    let declared_capabilities = owner.peer.peer_info().map(|info| info.capabilities.clone());
+
+    for capability in [
+        CapabilityType::Tools,
+        CapabilityType::Prompts,
+        CapabilityType::Resources,
+        CapabilityType::ResourceTemplates,
+    ] {
+        let declared = match capability {
+            CapabilityType::Tools => declared_capabilities
+                .as_ref()
+                .and_then(|capabilities| capabilities.tools.as_ref())
+                .is_some(),
+            CapabilityType::Prompts => declared_capabilities
+                .as_ref()
+                .and_then(|capabilities| capabilities.prompts.as_ref())
+                .is_some(),
+            CapabilityType::Resources | CapabilityType::ResourceTemplates => declared_capabilities
+                .as_ref()
+                .and_then(|capabilities| capabilities.resources.as_ref())
+                .is_some(),
+        };
+        if !declared {
+            let kind = catalog_kind(capability);
+            kind_states.push(crate::config::server::capabilities::unsupported_complete_observation(
+                kind,
+            ));
+            let capability_flags = match capability {
+                CapabilityType::Tools => CapSyncFlags::TOOLS,
+                CapabilityType::Prompts => CapSyncFlags::PROMPTS,
+                CapabilityType::Resources => CapSyncFlags::RESOURCES,
+                CapabilityType::ResourceTemplates => CapSyncFlags::RESOURCE_TEMPLATES,
+            };
+            flags = flags.union(capability_flags);
+            continue;
+        }
+        let (items, capability_flags, failure, capability_states) = fetch_runtime_items(
+            capability,
+            owner.peer.clone(),
+            timeout,
+            &owner.server_id,
+            &owner.server_name,
+            &owner.instance_id,
+        )
+        .await
+        .map_err(|error| RuntimeFailure {
+            kind: RuntimeFailureKind::Other,
+            message: Some(error.to_string()),
+            timeout_ms: None,
+        })?;
+        if let Some(failure) = failure {
+            let kind = catalog_kind(capability);
+            let reason = format!(
+                "server_id={} server_name={} kinds=[{}] instance={:?} generation={:?} reason={}",
+                owner.server_id,
+                owner.server_name,
+                kind.as_str(),
+                Some(&owner.instance_id),
+                owner.connection_generation,
+                failure
+            );
+            tracing::debug!(
+                server_id = %owner.server_id,
+                capability = ?capability,
+                error = %failure,
+                "Full discovery recorded a failing capability kind and continued"
+            );
+            kind_states.push(
+                KindObservation::new(
+                    kind,
+                    mcpmate_capability_store::DeclarationState::Supported,
+                    InventoryState::Failed,
+                )
+                .with_failure(
+                    failure.kind.persisted(),
+                    reason,
+                    failure.timeout_ms.and_then(|timeout| u64::try_from(timeout).ok()),
+                ),
+            );
+            failures.push(CapabilityKindFailure {
+                kind: capability,
+                failure,
+            });
+            flags = flags.union(capability_flags);
+            continue;
+        }
+        flags = flags.union(capability_flags);
+        kind_states.extend(capability_states);
+        match items {
+            CapabilityItems::Tools(items) => tools = items,
+            CapabilityItems::Resources(items) => resources = items,
+            CapabilityItems::Prompts(items) => prompts = items,
+            CapabilityItems::ResourceTemplates(items) => templates = items,
+        }
+    }
+
+    Ok(CapabilityFullDiscoveryObservation {
+        tools,
+        resources,
+        prompts,
+        templates,
+        flags,
+        kind_states,
+        failures,
+    })
+}
+
+pub(crate) async fn commit_full_discovery_observation(
+    owner: &CapabilityOwner,
+    observation: &CapabilityFullDiscoveryObservation,
+    database: &Arc<Database>,
+) -> Result<i64> {
+    let commit = crate::config::server::capabilities::commit_capability_protocol_observation(
+        &database.pool,
+        database.capability_cache.as_ref(),
+        &owner.server_id,
+        &owner.server_name,
+        &owner.config_fingerprint,
+        crate::config::server::capabilities::CapabilityProtocolObservation {
+            initialize: owner.peer.peer_info().as_deref().cloned(),
+            tools: observation.tools.clone(),
+            resources: observation.resources.clone(),
+            prompts: observation.prompts.clone(),
+            templates: observation.templates.clone(),
+            kinds: observation.flags,
+            kind_states: observation.kind_states.clone(),
+        },
+    )
+    .await
+    .context("Failed to commit full live capability observation")?;
+    tracing::debug!(
+        server_id = %owner.server_id,
+        instance_id = %owner.instance_id,
+        owner_source = ?owner.source,
+        revision = commit.revision,
+        "Committed a full live capability observation"
+    );
+    Ok(commit.revision)
+}
+
 pub(crate) async fn commit_discovery_observation(
     owner: &CapabilityOwner,
     observation: &CapabilityDiscoveryObservation,
@@ -619,6 +896,7 @@ pub(crate) async fn commit_discovery_observation(
         database.capability_cache.as_ref(),
         &owner.server_id,
         &owner.server_name,
+        &owner.config_fingerprint,
         crate::config::server::capabilities::CapabilityProtocolObservation {
             initialize: owner.peer.peer_info().as_deref().cloned(),
             tools,
@@ -665,7 +943,7 @@ pub(crate) async fn project_discovery_observation(
                 projection_key(ctx, committed_revision),
                 projection_epoch,
                 || async move {
-                    let items = project_items_for_context(
+                    let items = project_live_items_for_context(
                         &projection_database,
                         &projection_server_id,
                         items,
@@ -685,7 +963,7 @@ pub(crate) async fn project_discovery_observation(
             "Skipped live projection cache warm because a newer catalog revision won"
         );
         Arc::new(projection_payload(
-            project_items_for_context(
+            project_live_items_for_context(
                 database,
                 &owner.server_id,
                 items,
@@ -716,20 +994,49 @@ pub(crate) async fn project_discovery_observation(
 
 pub(crate) async fn record_discovery_failure(
     ctx: &ListCtx,
-    _server_name: &str,
+    server_name: &str,
     instance_id: Option<&str>,
     connection_generation: Option<u64>,
     reason: &str,
+    failure: Option<&RuntimeFailure>,
     database: &Arc<Database>,
 ) -> mcpmate_capability_store::Result<()> {
-    crate::config::server::capabilities::record_capability_failure(
+    record_discovery_failures(
+        ctx,
+        server_name,
+        &[ctx.capability],
+        instance_id,
+        connection_generation,
+        reason,
+        failure,
+        database,
+    )
+    .await
+}
+
+pub(crate) async fn record_discovery_failures(
+    ctx: &ListCtx,
+    _server_name: &str,
+    kinds: &[CapabilityType],
+    instance_id: Option<&str>,
+    connection_generation: Option<u64>,
+    reason: &str,
+    failure: Option<&RuntimeFailure>,
+    database: &Arc<Database>,
+) -> mcpmate_capability_store::Result<()> {
+    let catalog_kinds = kinds.iter().copied().map(catalog_kind).collect::<Vec<_>>();
+    crate::config::server::capabilities::record_capability_failures(
         &database.pool,
         database.capability_cache.as_ref(),
+        &catalog_kinds,
         crate::config::server::capabilities::CapabilityFailureEvidence {
             server_id: ctx.server_id.clone(),
-            kind: catalog_kind(ctx.capability),
+            kind: catalog_kinds[0],
             instance_id: instance_id.map(ToOwned::to_owned),
             connection_generation,
+            failure_kind: failure.map(|failure| failure.kind.persisted()),
+            timeout_ms: failure
+                .and_then(|failure| failure.timeout_ms.and_then(|timeout_ms| u64::try_from(timeout_ms).ok())),
             reason: reason.to_string(),
         },
     )
@@ -750,11 +1057,19 @@ pub(crate) async fn record_capability_usage_evidence(
     server_id: &str,
     kind: CatalogKind,
     instance_id: Option<&str>,
-    error_message: &str,
+    error: &anyhow::Error,
 ) {
-    if !message_indicates_session_gone(&error_message.to_ascii_lowercase()) {
+    let Some(service_error) = error
+        .chain()
+        .find_map(|source| source.downcast_ref::<rmcp::service::ServiceError>())
+    else {
+        return;
+    };
+    if !matches!(service_error, rmcp::service::ServiceError::TransportClosed) {
         return;
     }
+
+    let reason = error.to_string();
     let outcome = crate::config::server::capabilities::record_capability_failure(
         &database.pool,
         database.capability_cache.as_ref(),
@@ -763,7 +1078,9 @@ pub(crate) async fn record_capability_usage_evidence(
             kind,
             instance_id: instance_id.map(ToOwned::to_owned),
             connection_generation: None,
-            reason: error_message.to_string(),
+            failure_kind: Some(KindFailureKind::TransportClosed),
+            timeout_ms: None,
+            reason,
         },
     )
     .await;
@@ -772,7 +1089,7 @@ pub(crate) async fn record_capability_usage_evidence(
             server_id,
             ?kind,
             %error,
-            "failed to record capability usage evidence for a session/transport failure"
+            "failed to record capability usage evidence for a closed transport"
         );
     }
 }
@@ -1119,13 +1436,13 @@ async fn call_tool_impl(
             Ok(res)
         }
         Ok(Err(e)) => {
-            let error_msg = format!("{}", e);
+            let error_msg = e.to_string();
             if let Some(instance_id) = selected_instance_id.as_deref() {
-                let lower = error_msg.to_ascii_lowercase();
-                let kind = if message_indicates_session_gone(&lower) {
-                    RuntimeFailureKind::SessionGone
-                } else {
-                    RuntimeFailureKind::Other
+                let kind = match &e {
+                    rmcp::service::ServiceError::TransportClosed => RuntimeFailureKind::TransportClosed,
+                    rmcp::service::ServiceError::Timeout { .. } => RuntimeFailureKind::Timeout,
+                    rmcp::service::ServiceError::McpError(_) => RuntimeFailureKind::Application,
+                    _ => RuntimeFailureKind::Other,
                 };
                 handle_runtime_failure(
                     pool,
@@ -1146,7 +1463,7 @@ async fn call_tool_impl(
                 error = %error_msg,
                 "[CALL] upstream call failed"
             );
-            Err(anyhow::anyhow!("Tool call failed: {}", error_msg))
+            Err(anyhow::Error::new(e).context("Tool call failed"))
         }
         Err(_) => {
             // TODO(mcpmate): revisit after RMCP fixes SSE stream recovery (see GitMCP long-tail investigation).
@@ -1281,19 +1598,28 @@ async fn project_external_items(
     Ok(items)
 }
 
-async fn project_items_for_context(
+async fn project_live_items_for_context(
     database: &Arc<Database>,
     server_id: &str,
     items: CapabilityItems,
     name_domain: NameDomain,
     visibility_snapshot: Option<&crate::core::profile::visibility::VisibilitySnapshot>,
 ) -> Result<CapabilityItems> {
-    let items = project_external_items(database, server_id, items, name_domain).await?;
+    Ok(apply_visibility_filter(
+        project_external_items(database, server_id, items, name_domain).await?,
+        visibility_snapshot,
+    ))
+}
+
+fn apply_visibility_filter(
+    items: CapabilityItems,
+    visibility_snapshot: Option<&crate::core::profile::visibility::VisibilitySnapshot>,
+) -> CapabilityItems {
     let Some(snapshot) = visibility_snapshot else {
-        return Ok(items);
+        return items;
     };
     let visibility = crate::core::profile::visibility::ProfileVisibilityService::new(None, None);
-    Ok(match items {
+    match items {
         CapabilityItems::Tools(items) => CapabilityItems::Tools(visibility.filter_tools_with_snapshot(snapshot, items)),
         CapabilityItems::Prompts(items) => {
             CapabilityItems::Prompts(visibility.filter_prompts_with_snapshot(snapshot, items))
@@ -1306,7 +1632,7 @@ async fn project_items_for_context(
             let (_, templates) = visibility.filter_resources_with_snapshot(snapshot, Vec::new(), items);
             CapabilityItems::ResourceTemplates(templates)
         }
-    })
+    }
 }
 
 #[cfg(test)]
@@ -1339,6 +1665,9 @@ mod tests {
         crate::config::server::init::initialize_server_tables(&pool)
             .await
             .expect("initialize server tables");
+        crate::config::client::init::initialize_client_table(&pool)
+            .await
+            .expect("initialize client tables");
         crate::config::profile::init::initialize_profile_tables(&pool)
             .await
             .expect("initialize profile tables");
@@ -1347,6 +1676,21 @@ mod tests {
             path: PathBuf::new(),
             capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
         })
+    }
+
+    #[test]
+    fn insufficient_scope_fetch_preserves_runtime_and_persisted_failure_kinds() {
+        let failure = runtime_failure_from_capability(Some(CapabilityFetchFailure::InsufficientScope {
+            message: "scope tools.read is required".to_string(),
+        }))
+        .expect("fetch failure maps to a runtime failure");
+
+        assert_eq!(failure.kind, RuntimeFailureKind::InsufficientScope);
+        assert_eq!(failure.kind.persisted(), KindFailureKind::InsufficientScope);
+        assert_eq!(
+            failure.kind.authentication_code(),
+            Some(CapabilityAuthenticationFailureCode::InsufficientScope)
+        );
     }
 
     fn runtime_initialize_result() -> rmcp::model::InitializeResult {
@@ -1409,13 +1753,39 @@ mod tests {
             capability: CapabilityType::Tools,
             server_id: "server-a".to_string(),
             refresh: Some(refresh),
-            timeout: None,
+            operation_timeout: crate::core::transport::timeout_policy::DEFAULT_CAPABILITY_OPERATION_TIMEOUT,
             validation_session: None,
             runtime_identity: None,
             connection_selection: None,
             visibility_snapshot: None,
             name_domain: NameDomain::Upstream,
         }
+    }
+
+    #[tokio::test]
+    async fn external_catalog_read_skips_identity_reprojection() {
+        let database = test_database().await;
+        insert_runtime_server(&database).await;
+        commit_runtime_catalog(&database, vec![runtime_tool("analyze")]).await;
+
+        let external: String = sqlx::query_scalar(
+            "SELECT unique_name FROM server_tools WHERE server_id = 'server-a' AND tool_name = 'analyze'",
+        )
+        .fetch_one(&database.pool)
+        .await
+        .expect("external tool name");
+
+        let mut ctx = list_ctx(RefreshStrategy::CacheFirst);
+        ctx.name_domain = NameDomain::External;
+        let pool = empty_runtime_pool(database.clone());
+
+        let result = list(&ctx, &pool, &database)
+            .await
+            .expect("external catalog read must not re-project persisted payload names");
+        let tools = result.items.into_tools().expect("tools result");
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name.as_ref(), external);
+        assert_ne!(tools[0].name.as_ref(), "analyze");
     }
 
     #[tokio::test]
@@ -1488,6 +1858,43 @@ mod tests {
             .expect("fresh catalog result exists");
         assert_eq!(fresh_result.meta.source, "sqlite_catalog");
         assert_eq!(database.capability_cache.metrics().await.projection_entries, 1);
+    }
+
+    #[tokio::test]
+    async fn stale_catalog_reader_cannot_invalidate_a_newer_ready_revision() {
+        let database = test_database().await;
+        insert_runtime_server(&database).await;
+        commit_runtime_catalog(&database, vec![runtime_tool("revision-one")]).await;
+
+        let (snapshot_loaded_tx, snapshot_loaded_rx) = tokio::sync::oneshot::channel();
+        let (continue_tx, continue_rx) = tokio::sync::oneshot::channel();
+        let read_database = database.clone();
+        let read_task = tokio::spawn(async move {
+            try_catalog_read_with_hook(&list_ctx(RefreshStrategy::CacheFirst), &read_database, || async move {
+                snapshot_loaded_tx.send(()).expect("signal revision-one snapshot load");
+                continue_rx.await.expect("continue stale reader");
+            })
+            .await
+            .unwrap_or_else(|_| panic!("stale catalog read must not fail"))
+        });
+
+        snapshot_loaded_rx.await.expect("reader loaded revision one");
+        commit_runtime_catalog(&database, vec![runtime_tool("revision-two")]).await;
+        continue_tx.send(()).expect("release stale reader");
+        let _ = read_task.await.expect("join stale reader");
+
+        let snapshot = SqliteCapabilityCatalog::new(database.pool.clone())
+            .load_snapshot("server-a")
+            .await
+            .expect("load latest catalog snapshot")
+            .expect("latest catalog snapshot exists");
+        assert_eq!(snapshot.revision, 2);
+        assert_eq!(snapshot.state, SnapshotState::Ready);
+        assert_eq!(snapshot.records.len(), 1);
+        match &snapshot.records[0].source_payload {
+            CapabilityPayload::Tool(tool) => assert_eq!(tool.name.as_ref(), "revision-two"),
+            other => panic!("unexpected latest payload: {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -1661,7 +2068,10 @@ mod tests {
             .await
             .expect_err("invalidated catalog must require live confirmation");
 
-        assert!(error.to_string().contains("No connected capability peer"));
+        assert!(
+            error.to_string().contains("capability discovery failed"),
+            "unexpected error: {error}"
+        );
         let snapshot = SqliteCapabilityCatalog::new(database.pool.clone())
             .load_snapshot("server-a")
             .await
@@ -1717,81 +2127,71 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn capability_usage_session_gone_evidence_marks_the_catalog_unavailable() {
-        let database = test_database().await;
-        insert_runtime_server(&database).await;
-        commit_runtime_catalog(&database, vec![runtime_tool("cached-tool")]).await;
-
-        record_capability_usage_evidence(
-            &database,
-            "server-a",
-            CatalogKind::Tools,
-            Some("runtime-instance"),
+    async fn opaque_capability_errors_never_invalidate_the_catalog_by_message_text() {
+        for error_message in [
             "session not found (status: 404)",
-        )
-        .await;
+            "upstream returned 410 gone",
+            "the transport is gone",
+            "resource not found: file:///reports/q410/report.pdf",
+            "invalid params: missing required field 'path'",
+        ] {
+            let database = test_database().await;
+            insert_runtime_server(&database).await;
+            commit_runtime_catalog(&database, vec![runtime_tool("cached-tool")]).await;
 
-        let snapshot = SqliteCapabilityCatalog::new(database.pool.clone())
-            .load_snapshot("server-a")
-            .await
-            .expect("load catalog after usage evidence")
-            .expect("catalog remains available for diagnosis");
-        assert_eq!(snapshot.state, SnapshotState::Unavailable);
-        assert_eq!(snapshot.revision, 2);
-        assert!(
-            snapshot
-                .last_error
-                .as_deref()
-                .is_some_and(|reason| reason.contains("session not found")),
-            "unexpected last_error: {:?}",
-            snapshot.last_error
-        );
+            let error = anyhow::anyhow!(error_message);
+            record_capability_usage_evidence(
+                &database,
+                "server-a",
+                CatalogKind::Tools,
+                Some("runtime-instance"),
+                &error,
+            )
+            .await;
+
+            let snapshot = SqliteCapabilityCatalog::new(database.pool.clone())
+                .load_snapshot("server-a")
+                .await
+                .expect("load catalog after opaque usage error")
+                .expect("catalog remains available");
+            assert_eq!(
+                snapshot.state,
+                SnapshotState::Ready,
+                "opaque error text must not invalidate the catalog: {error_message}"
+            );
+            assert_eq!(snapshot.revision, 1);
+        }
     }
 
     #[tokio::test]
-    async fn capability_usage_ordinary_error_does_not_invalidate_the_catalog() {
+    async fn structured_transport_closed_evidence_marks_the_catalog_unavailable() {
         let database = test_database().await;
         insert_runtime_server(&database).await;
         commit_runtime_catalog(&database, vec![runtime_tool("cached-tool")]).await;
+        let error = anyhow::Error::new(rmcp::service::ServiceError::TransportClosed)
+            .context("Failed to call upstream capability");
 
-        // A tool's own business/parameter error must never be escalated to a whole-catalog
-        // invalidation; only transport-level session/connection evidence qualifies.
         record_capability_usage_evidence(
             &database,
             "server-a",
             CatalogKind::Tools,
             Some("runtime-instance"),
-            "invalid params: missing required field 'path'",
+            &error,
         )
         .await;
 
         let snapshot = SqliteCapabilityCatalog::new(database.pool.clone())
             .load_snapshot("server-a")
             .await
-            .expect("load catalog after ordinary tool error")
-            .expect("catalog remains available");
-        assert_eq!(snapshot.state, SnapshotState::Ready);
-        assert_eq!(snapshot.revision, 1);
-    }
-
-    #[test]
-    fn session_gone_classifier_requires_a_standalone_status_code_not_an_arbitrary_substring() {
-        assert!(message_indicates_session_gone("session not found (status: 404)"));
-        assert!(message_indicates_session_gone("upstream returned 410 gone"));
-        assert!(message_indicates_session_gone("the transport is gone"));
-
-        // A URI, id, or other business value that merely contains the same digits as an HTTP
-        // status code must not be misread as a session-gone transport signal; only Batch 3's
-        // catalog-invalidating call site makes this distinction expensive to get wrong.
-        assert!(!message_indicates_session_gone(
-            "resource not found: file:///reports/q410/report.pdf"
-        ));
-        assert!(!message_indicates_session_gone(
-            "invalid params: expected 44100 but got 22050"
-        ));
-        assert!(!message_indicates_session_gone(
-            "invalid params: missing required field 'path'"
-        ));
+            .expect("load catalog after structured transport failure")
+            .expect("catalog remains available for diagnosis");
+        assert_eq!(snapshot.state, SnapshotState::Unavailable);
+        let tools = snapshot
+            .kind_states
+            .iter()
+            .find(|state| state.kind == CatalogKind::Tools)
+            .expect("tools failure is persisted");
+        assert_eq!(tools.failure_kind, Some(KindFailureKind::TransportClosed));
     }
 
     #[tokio::test]
@@ -1810,7 +2210,10 @@ mod tests {
             .await
             .expect_err("config mismatch must require live confirmation");
 
-        assert!(error.to_string().contains("No connected capability peer"));
+        assert!(
+            error.to_string().contains("capability discovery failed"),
+            "unexpected error: {error}"
+        );
         let snapshot = SqliteCapabilityCatalog::new(database.pool.clone())
             .load_snapshot("server-a")
             .await
@@ -1847,6 +2250,7 @@ mod tests {
             Some("runtime-instance"),
             None,
             "upstream unavailable",
+            None,
             &database,
         )
         .await
@@ -1920,7 +2324,7 @@ mod tests {
             capability: CapabilityType::Tools,
             server_id: "server-a".to_string(),
             refresh: Some(RefreshStrategy::Force),
-            timeout: None,
+            operation_timeout: crate::core::transport::timeout_policy::DEFAULT_CAPABILITY_OPERATION_TIMEOUT,
             validation_session: Some("validation-a".to_string()),
             runtime_identity: None,
             connection_selection: None,
@@ -1934,6 +2338,61 @@ mod tests {
 
         assert!(error.to_string().contains("validation-a"));
         assert!(error.to_string().contains("server-a"));
+    }
+
+    fn base_list_ctx() -> ListCtx {
+        ListCtx {
+            capability: CapabilityType::Tools,
+            server_id: "server-a".to_string(),
+            refresh: None,
+            operation_timeout: crate::core::transport::timeout_policy::DEFAULT_CAPABILITY_OPERATION_TIMEOUT,
+            validation_session: None,
+            runtime_identity: None,
+            connection_selection: None,
+            visibility_snapshot: None,
+            name_domain: NameDomain::External,
+        }
+    }
+
+    #[test]
+    fn projection_key_uses_runtime_identity_fingerprint_when_present() {
+        let mut ctx = base_list_ctx();
+        ctx.runtime_identity = Some(RuntimeIdentity {
+            client_id: "claude-code".to_string(),
+            profile_id: None,
+            surface_fingerprint: "fp-runtime".to_string(),
+        });
+
+        let key = projection_key(&ctx, 1);
+        assert_eq!(key.surface_fingerprint, "fp-runtime");
+    }
+
+    #[test]
+    fn projection_key_uses_visibility_snapshot_fingerprint_without_runtime_identity() {
+        // Builtin/broker call sites resolve visibility ad hoc and never populate
+        // `runtime_identity`. A filtered projection computed from that visibility scope
+        // must never land in the unscoped "shared_raw" bucket shared with unfiltered
+        // management/API reads (Codex review, PR #160).
+        let mut ctx = base_list_ctx();
+        ctx.visibility_snapshot = Some(Arc::new(
+            crate::core::profile::visibility::VisibilitySnapshot::for_test(
+                "hosted-client",
+                "fp-hosted-profile-a",
+                vec!["server-a".to_string()],
+                true,
+            ),
+        ));
+
+        let key = projection_key(&ctx, 1);
+        assert_eq!(key.surface_fingerprint, "fp-hosted-profile-a");
+        assert_ne!(key.surface_fingerprint, "shared_raw");
+    }
+
+    #[test]
+    fn projection_key_falls_back_to_shared_raw_only_without_any_visibility_context() {
+        let ctx = base_list_ctx();
+        let key = projection_key(&ctx, 1);
+        assert_eq!(key.surface_fingerprint, "shared_raw");
     }
 
     #[test]

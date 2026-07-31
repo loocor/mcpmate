@@ -9,11 +9,7 @@
 //!
 //! Used by: onboarding detection, runtime status API, stdio transport.
 
-use std::{
-    env, fs,
-    path::PathBuf,
-    process::Command as StdCommand,
-};
+use std::{env, fs, path::PathBuf, process::Command as StdCommand};
 
 use super::RuntimeManager;
 use crate::common::MCPMatePaths;
@@ -87,7 +83,10 @@ pub fn build_enriched_path(mcpmate_paths: &MCPMatePaths) -> String {
 }
 
 #[cfg(target_os = "macos")]
-fn append_platform_paths(entries: &mut Vec<String>, mcpmate_paths: &MCPMatePaths) {
+fn append_platform_paths(
+    entries: &mut Vec<String>,
+    mcpmate_paths: &MCPMatePaths,
+) {
     let base_dir = mcpmate_paths.base_dir();
 
     // Layer 4: MCPMate-specific directories (prepend so they take priority)
@@ -115,7 +114,10 @@ fn append_platform_paths(entries: &mut Vec<String>, mcpmate_paths: &MCPMatePaths
 }
 
 #[cfg(not(target_os = "macos"))]
-fn append_platform_paths(_entries: &mut Vec<String>, _mcpmate_paths: &MCPMatePaths) {
+fn append_platform_paths(
+    _entries: &mut Vec<String>,
+    _mcpmate_paths: &MCPMatePaths,
+) {
     // Non-macOS: only the process PATH is available.
     // Windows / Linux enrichment can be added here when needed.
 }
@@ -145,7 +147,10 @@ impl CommandResolver {
     }
 
     /// Resolve a command through managed → enriched PATH → UV Python fallback.
-    pub fn resolve(&self, command: &str) -> Option<ResolvedCommand> {
+    pub fn resolve(
+        &self,
+        command: &str,
+    ) -> Option<ResolvedCommand> {
         // Layer 1: MCPMate-managed runtime
         let manager = RuntimeManager::with_paths(&self.paths);
         if let Some(path) = manager.get_command_path(command) {
@@ -188,15 +193,15 @@ impl CommandResolver {
             }
         }
 
-        tracing::warn!(
-            command,
-            "[resolve] All layers exhausted — command not found"
-        );
+        tracing::warn!(command, "[resolve] All layers exhausted — command not found");
         None
     }
 
     /// Resolve `uv` via Layers 1-2, then locate UV-managed Python.
-    fn find_uv_python(&self, command: &str) -> Option<PathBuf> {
+    fn find_uv_python(
+        &self,
+        command: &str,
+    ) -> Option<PathBuf> {
         let uv = self.resolve("uv")?;
         try_find_uv_python(&uv.path, command)
     }
@@ -208,7 +213,10 @@ impl CommandResolver {
 }
 
 /// Search for a command in a custom PATH string (colon-separated).
-fn which_in_path(command: &str, path: &str) -> Option<PathBuf> {
+fn which_in_path(
+    command: &str,
+    path: &str,
+) -> Option<PathBuf> {
     for dir in path.split(':') {
         let dir = dir.trim();
         if dir.is_empty() {
@@ -255,18 +263,17 @@ fn looks_like_python_command(command: &str) -> bool {
 /// (`python`, `python3`, or `py`).  Runs `uv python dir` to discover
 /// the actual Python directory (which may differ from the default),
 /// then returns the most recently installed matching binary.
-pub fn try_find_uv_python(uv_path: &std::path::Path, command: &str) -> Option<PathBuf> {
+pub fn try_find_uv_python(
+    uv_path: &std::path::Path,
+    command: &str,
+) -> Option<PathBuf> {
     let cmd_lower = command.trim().to_lowercase();
     if !matches!(cmd_lower.as_str(), "python" | "python3" | "py") {
         return None;
     }
 
     // Ask uv where it stores Python
-    let output = StdCommand::new(uv_path)
-        .arg("python")
-        .arg("dir")
-        .output()
-        .ok()?;
+    let output = StdCommand::new(uv_path).arg("python").arg("dir").output().ok()?;
 
     if !output.status.success() {
         tracing::debug!(
@@ -331,11 +338,7 @@ pub fn try_find_uv_python(uv_path: &std::path::Path, command: &str) -> Option<Pa
     let python_path = version_dir.join("bin").join(&cmd_lower);
 
     if python_path.exists() {
-        tracing::info!(
-            "[uv-python] Found {} → {}",
-            command,
-            python_path.display()
-        );
+        tracing::info!("[uv-python] Found {} → {}", command, python_path.display());
         Some(python_path)
     } else {
         tracing::debug!(
@@ -366,9 +369,7 @@ mod tests {
 
     #[test]
     fn dedup_and_join_preserves_first_occurrence() {
-        let result = path::dedup_and_join(vec![
-            "/a".into(), "/b".into(), "/a".into(), "/c".into(),
-        ]);
+        let result = path::dedup_and_join(vec!["/a".into(), "/b".into(), "/a".into(), "/c".into()]);
         assert_eq!(result, "/a:/b:/c");
     }
 

@@ -25,7 +25,12 @@ import {
 import { useFieldArray, useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
-import { clientsApi, serversApi } from "../../lib/api";
+import {
+	assertCompleteCapabilityBatch,
+	clientsApi,
+	configSuitsApi,
+	serversApi,
+} from "../../lib/api";
 import {
 	resolveAutoAddTargetProfileId,
 	useAutoAddTargetProfile,
@@ -40,6 +45,10 @@ import {
 import { readClipboardText } from "../../lib/clipboard";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError } from "../../lib/notify";
+import {
+	resolveImportDrawerOpen,
+	shouldAcceptImportDrawerChange,
+} from "../../lib/import-drawer-lifecycle";
 import { cn, toTitleCase } from "../../lib/utils";
 import { onboardingApi } from "../../lib/onboarding-api";
 import {
@@ -600,6 +609,9 @@ export const ServerInstallWizard = forwardRef(
 			}
 		}, [namespaceOriginalInput, watchedName]);
 		const [isImportActionPending, setIsImportActionPending] = useState(false);
+		const isImportPending =
+			isImportActionPending || installPipeline.state.isImporting;
+		const effectiveDrawerOpen = resolveImportDrawerOpen(isOpen, isImportPending);
 		const [selectedAuthMode, setSelectedAuthMode] = useState<
 			"header" | "oauth"
 		>("header");
@@ -642,6 +654,9 @@ export const ServerInstallWizard = forwardRef(
 		);
 
 		const cleanupPendingImportServer = useCallback(() => {
+			if (importInFlightRef.current) {
+				return;
+			}
 			const pendingId = pendingImportServerRef.current;
 			if (!pendingId) {
 				return;
@@ -679,11 +694,30 @@ export const ServerInstallWizard = forwardRef(
 				await serversApi.updateServer(
 					publishedServerId,
 					draftToServerConfig(draft, {
-						enabled: true,
 						pending_import: false,
-						profile_ids: targetProfileId ? [targetProfileId] : undefined,
 					}),
 				);
+				const publishedServer = await serversApi.getServer(publishedServerId);
+				const sourceRevisionSet =
+					publishedServer.data?.source_revision_set;
+				if (!sourceRevisionSet) {
+					throw new Error(
+						"Capability catalog revisions are not loaded. Refresh the server and retry.",
+					);
+				}
+				await serversApi.enableServer(
+					publishedServerId,
+					sourceRevisionSet,
+				);
+				if (targetProfileId) {
+					const profileServers =
+						await configSuitsApi.getServers(targetProfileId);
+					await configSuitsApi.enableServer(
+						targetProfileId,
+						publishedServerId,
+						profileServers.source_revision_set,
+					);
+				}
 				await queryClient.invalidateQueries({ queryKey: ["servers"] });
 				if (targetProfileId) {
 					await queryClient.invalidateQueries({
@@ -1408,13 +1442,15 @@ export const ServerInstallWizard = forwardRef(
 						installPipeline.setPreviewLoading(true);
 						const hiddenServerId = pendingImportServerRef.current;
 						try {
-							const [tools, resources, prompts, resourceTemplates] =
-								await Promise.all([
-								serversApi.listTools(hiddenServerId, "force"),
-								serversApi.listResources(hiddenServerId, "force"),
-								serversApi.listPrompts(hiddenServerId, "force"),
-								serversApi.listResourceTemplates(hiddenServerId, "force"),
-							]);
+							const capabilityLists = await serversApi.listAllCapabilities(
+								hiddenServerId,
+								"force",
+							);
+							assertCompleteCapabilityBatch(capabilityLists);
+							const tools = capabilityLists.tools;
+							const resources = capabilityLists.resources;
+							const prompts = capabilityLists.prompts;
+							const resourceTemplates = capabilityLists.templates;
 
 							if (previewEpoch !== wizardSessionEpochRef.current) {
 								return;
@@ -1518,6 +1554,9 @@ export const ServerInstallWizard = forwardRef(
 
 		// Overlay close handler (immediate, no delay)
 		const handleOverlayClose = useCallback(() => {
+			if (importInFlightRef.current) {
+				return;
+			}
 			if (!isClosing) {
 				setIsClosing(true);
 				cleanupPendingImportServer();
@@ -1548,7 +1587,6 @@ export const ServerInstallWizard = forwardRef(
 				if (onImport) {
 					await Promise.resolve(onImport([draft]));
 					clearPendingImportState();
-					handleOverlayClose();
 					return;
 				}
 
@@ -1558,7 +1596,6 @@ export const ServerInstallWizard = forwardRef(
 				}
 
 				clearPendingImportState();
-				handleOverlayClose();
 			} finally {
 				importInFlightRef.current = false;
 				setIsImportActionPending(false);
@@ -1571,12 +1608,14 @@ export const ServerInstallWizard = forwardRef(
 			runImportPipeline,
 			tryFinalizePublishImport,
 			clearPendingImportState,
-			handleOverlayClose,
 			isEditMode,
 		]);
 
 		// Cancel close handler (with delay for complete reset)
 		const handleCancelClose = useCallback(() => {
+			if (importInFlightRef.current) {
+				return;
+			}
 			if (!isClosing) {
 				setIsClosing(true);
 				cleanupPendingImportServer();
@@ -1619,11 +1658,11 @@ export const ServerInstallWizard = forwardRef(
 		const wasOpenRef = useRef(false);
 		useLayoutEffect(() => {
 			const wasOpen = wasOpenRef.current;
-			if (isOpen !== wasOpen) {
+			if (effectiveDrawerOpen !== wasOpen) {
 				resetWizardSession();
 			}
-			wasOpenRef.current = isOpen;
-		}, [isOpen, resetWizardSession]);
+			wasOpenRef.current = effectiveDrawerOpen;
+		}, [effectiveDrawerOpen, resetWizardSession]);
 
 		// Hydrate form when an initial draft is provided (e.g., Market mode)
 		// Create a stable key that only changes when the actual draft content changes
@@ -2459,7 +2498,6 @@ export const ServerInstallWizard = forwardRef(
 																			targetServerId,
 																			draftToServerConfig(draft, {
 																				pending_import: true,
-																				enabled: false,
 																			}),
 																		);
 																	} else {
@@ -3271,8 +3309,7 @@ export const ServerInstallWizard = forwardRef(
 		const isFlexFillStep = currentStep === "form" || currentStep === "preview";
 		const detectedServerCount = installPipeline.state.drafts.length;
 		const headerPluralCount = detectedServerCount > 1 ? detectedServerCount : 1;
-		const isImportBusy =
-			isImportActionPending || installPipeline.state.isImporting;
+		const isImportBusy = isImportPending;
 		const hasImportableDrafts =
 			hiddenPreviewReady ||
 			(installPipeline.state.dryRunStats?.importedCount ?? 0) > 0;
@@ -3302,8 +3339,12 @@ export const ServerInstallWizard = forwardRef(
 		return (
 			<>
 				<Drawer
-					open={isOpen}
-					onOpenChange={(open) => !open && handleOverlayClose()}
+					open={effectiveDrawerOpen}
+					onOpenChange={(open) => {
+						if (shouldAcceptImportDrawerChange(open, isImportBusy) && !open) {
+							handleOverlayClose();
+						}
+					}}
 				>
 					<DrawerContent className={INSTALL_DRAWER_CONTENT_CLASS}>
 						<DrawerHeader className="shrink-0">
@@ -3532,8 +3573,7 @@ export const ServerInstallWizard = forwardRef(
 										}
 										disabled={
 											isSubmitting ||
-											(currentStep === "result" &&
-												installPipeline.state.isImporting)
+											(currentStep === "result" && isImportBusy)
 										}
 									>
 										{currentStep === "preview" || currentStep === "result"

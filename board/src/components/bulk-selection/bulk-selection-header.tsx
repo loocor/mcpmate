@@ -5,8 +5,9 @@ import type { BulkAction } from "./types";
 import { useBulkSelectionLabels } from "./use-bulk-selection-labels";
 
 type BulkSelectionHeaderProps = {
-	title: ReactNode;
-	description: ReactNode;
+	title?: ReactNode;
+	description?: ReactNode;
+	leading?: ReactNode;
 	isBulkMode: boolean;
 	onToggleBulkMode: () => void;
 	actions: BulkAction[];
@@ -17,6 +18,7 @@ type BulkSelectionHeaderProps = {
 export function BulkSelectionHeader({
 	title,
 	description,
+	leading,
 	isBulkMode,
 	onToggleBulkMode,
 	actions,
@@ -33,17 +35,25 @@ export function BulkSelectionHeader({
 				className,
 			)}
 		>
-			<div className="min-w-0">
-				<div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-					{title}
+			{leading ? (
+				<div className="min-w-0 flex-1">{leading}</div>
+			) : (
+				<div className="min-w-0">
+					{title ? (
+						<div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+							{title}
+						</div>
+					) : null}
+					{description ? (
+						<div
+							className="truncate text-xs text-slate-500 dark:text-slate-400"
+							title={descriptionTitle}
+						>
+							{description}
+						</div>
+					) : null}
 				</div>
-				<div
-					className="truncate text-xs text-slate-500 dark:text-slate-400"
-					title={descriptionTitle}
-				>
-					{description}
-				</div>
-			</div>
+			)}
 			<div className="flex shrink-0 items-center gap-2">
 				{trailing}
 				<BulkSelectionToolbar

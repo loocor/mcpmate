@@ -12,7 +12,7 @@ use crate::{
     api::{models::runtime::*, routes::AppState},
     audit::{AuditAction, AuditStatus},
     common::{RuntimeType, paths::global_paths},
-    runtime::{CommandResolver, RuntimeInstaller, RuntimeManager, ResolveSource},
+    runtime::{CommandResolver, ResolveSource, RuntimeInstaller, RuntimeManager},
 };
 
 pub async fn install(

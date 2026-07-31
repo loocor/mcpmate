@@ -16,7 +16,7 @@ pub mod system;
 use std::sync::Arc;
 
 use aide::{axum::ApiRouter, openapi::OpenApi};
-use axum::http::{Request, Response};
+use axum::http::{Request, Response, StatusCode};
 use axum::{Router, routing::get};
 use std::time::Duration as StdDuration;
 use tokio::sync::{Mutex, RwLock};
@@ -35,6 +35,24 @@ pub fn unavailable_secret_store_readiness(reason_code: &str) -> crate::core::sec
     crate::core::secrets::store::SecretStoreReadiness::unavailable(reason_code, "Secret store is unavailable")
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HttpResponseLogLevel {
+    Error,
+    Warn,
+    Debug,
+}
+
+fn http_response_log_level(status: StatusCode) -> HttpResponseLogLevel {
+    match status {
+        StatusCode::BAD_GATEWAY | StatusCode::SERVICE_UNAVAILABLE | StatusCode::GATEWAY_TIMEOUT => {
+            HttpResponseLogLevel::Warn
+        }
+        _ if status.is_server_error() => HttpResponseLogLevel::Error,
+        _ if status.is_client_error() => HttpResponseLogLevel::Warn,
+        _ => HttpResponseLogLevel::Debug,
+    }
+}
+
 /// Application state shared across all routes
 pub struct AppState {
     /// Connection pool for upstream servers
@@ -51,8 +69,6 @@ pub struct AppState {
     pub audit_service: Option<Arc<crate::audit::AuditService>>,
     /// Configuration application state manager
     pub config_application_state: Arc<crate::core::profile::ConfigApplicationStateManager>,
-    /// Unified query adapter (optional, for gradual migration)
-    pub unified_query: Option<Arc<crate::core::capability::UnifiedQueryAdapter>>,
     /// Client configuration service (template-driven)
     pub client_service: Option<Arc<ClientConfigService>>,
     /// Inspector call registry (long-running tool calls)
@@ -132,32 +148,6 @@ async fn create_router_internal(
     let inspector_calls = Arc::new(InspectorCallRegistry::new());
     let inspector_sessions = Arc::new(InspectorSessionManager::new());
     inspector_service::set_call_registry(inspector_calls.clone());
-
-    // Create unified query adapter (optional, for incremental migration)
-    let unified_query = if database.is_some() {
-        crate::core::capability::UnifiedQueryIntegration::create_adapter(Arc::new(AppState {
-            connection_pool: connection_pool.clone(),
-            metrics_collector: metrics_collector.clone(),
-            http_proxy: http_proxy.clone(),
-            profile_merge_service: profile_merge_service.clone(),
-            database: database.clone(),
-            audit_database: audit_database.clone(),
-            audit_service: audit_service.clone(),
-            config_application_state: config_application_state.clone(),
-            unified_query: None, // avoid recursion
-            client_service: None,
-            inspector_calls: inspector_calls.clone(),
-            inspector_sessions: inspector_sessions.clone(),
-            oauth_manager: RwLock::new(None),
-            secret_store: RwLock::new(None),
-            secret_store_readiness: RwLock::new(crate::core::secrets::store::SecretStoreReadiness::unavailable(
-                "not_initialized",
-                "Secret store initialization has not run yet",
-            )),
-        }))
-    } else {
-        None
-    };
 
     // Reuse the proxy-owned client service when available so API startup does not
     // repeat discovery bootstrap work already completed during proxy setup.
@@ -240,7 +230,6 @@ async fn create_router_internal(
         audit_database,
         audit_service,
         config_application_state,
-        unified_query,
         client_service,
         inspector_calls,
         inspector_sessions,
@@ -282,8 +271,8 @@ async fn create_router_internal(
         .nest("/api", api_router)
         .nest("/ws", inspector_ws)
         .merge(openapi::openapi_routes(api))
-        // Lightweight request/response logging for debugging 5xx issues
-        // Logs method, path, status, and latency. 5xx at ERROR, 4xx at WARN, others at DEBUG.
+        // Lightweight request/response logging with one event per completed request.
+        // Internal 5xx failures use ERROR; expected upstream/temporary failures and 4xx use WARN.
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(|req: &Request<_>| {
@@ -299,28 +288,54 @@ async fn create_router_internal(
                 })
                 .on_response(|res: &Response<_>, latency: StdDuration, span: &tracing::Span| {
                     let status = res.status();
-                    if status.is_server_error() {
-                        tracing::error!(
+                    match http_response_log_level(status) {
+                        HttpResponseLogLevel::Error => tracing::error!(
                             parent: span,
                             status = %status,
                             latency_ms = %latency.as_millis(),
-                            "HTTP response completed with 5xx"
-                        );
-                    } else if status.is_client_error() {
-                        tracing::warn!(
+                            "HTTP response completed with unexpected 5xx"
+                        ),
+                        HttpResponseLogLevel::Warn if status.is_server_error() => tracing::warn!(
+                            parent: span,
+                            status = %status,
+                            latency_ms = %latency.as_millis(),
+                            "HTTP response completed with upstream or temporary 5xx"
+                        ),
+                        HttpResponseLogLevel::Warn => tracing::warn!(
                             parent: span,
                             status = %status,
                             latency_ms = %latency.as_millis(),
                             "HTTP response completed with 4xx"
-                        );
-                    } else {
-                        tracing::debug!(
+                        ),
+                        HttpResponseLogLevel::Debug => tracing::debug!(
                             parent: span,
                             status = %status,
                             latency_ms = %latency.as_millis(),
                             "HTTP response completed"
-                        );
+                        ),
                     }
-                }),
+                })
+                .on_failure(()),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::StatusCode;
+
+    use super::{HttpResponseLogLevel, http_response_log_level};
+
+    #[test]
+    fn expected_upstream_http_failures_are_warnings_without_hiding_internal_errors() {
+        for (status, expected) in [
+            (StatusCode::INTERNAL_SERVER_ERROR, HttpResponseLogLevel::Error),
+            (StatusCode::BAD_GATEWAY, HttpResponseLogLevel::Warn),
+            (StatusCode::SERVICE_UNAVAILABLE, HttpResponseLogLevel::Warn),
+            (StatusCode::GATEWAY_TIMEOUT, HttpResponseLogLevel::Warn),
+            (StatusCode::BAD_REQUEST, HttpResponseLogLevel::Warn),
+            (StatusCode::OK, HttpResponseLogLevel::Debug),
+        ] {
+            assert_eq!(http_response_log_level(status), expected, "status {status}");
+        }
+    }
 }

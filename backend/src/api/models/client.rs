@@ -1,6 +1,6 @@
 use crate::clients::analyzer::InspectedServerEntry;
 use crate::clients::models::{
-    CapabilitySource, ClientConfigFileState, ClientRegistrationOrigin, UnifyDirectCapabilityIds,
+    CapabilitySource, ClientConfigFileState, ClientRegistrationOrigin, UnifyDirectCapabilityRefs,
     UnifyDirectExposureConfig, UnifyDirectExposureDiagnostics, UnifyDirectExposureIntent,
 };
 use crate::common::ClientCategory;
@@ -8,6 +8,7 @@ use crate::macros::resp::api_resp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sqlx;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -555,6 +556,234 @@ pub struct ApiError {
     pub details: Option<serde_json::Value>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SurfaceReviewLifecycleData {
+    Pending,
+    Resolved,
+    Obsolete,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SurfaceReviewOwnerTypeData {
+    StandardProfile,
+    CustomProfile,
+    ConsumerDirectExposure,
+    ProfileServerExposure,
+    ConsumerServerExposure,
+    ModeRule,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SurfaceReviewResolutionActionData {
+    ApproveTarget,
+    RejectTarget,
+    KeepIntent,
+    RemoveIntent,
+    RebindRef,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SurfaceReviewOwnerData {
+    pub owner_type: SurfaceReviewOwnerTypeData,
+    pub owner_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SurfaceReviewDecisionData {
+    pub decision_id: String,
+    pub resolution_action: SurfaceReviewResolutionActionData,
+    #[serde(default)]
+    pub resolution_payload: Option<serde_json::Value>,
+    pub actor: String,
+    pub decided_at: String,
+    #[serde(default)]
+    pub supersedes_decision_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SurfaceReviewFieldDiffData {
+    pub path: String,
+    #[serde(default)]
+    pub before: Option<serde_json::Value>,
+    #[serde(default)]
+    pub target: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SurfaceReviewItemData {
+    pub review_item_id: String,
+    pub proposal_id: String,
+    pub consumer_id: String,
+    #[serde(default)]
+    pub binding_generation: Option<i64>,
+    pub ref_id: String,
+    #[serde(default)]
+    pub before_capability_id: Option<String>,
+    #[serde(default)]
+    pub target_capability_id: Option<String>,
+    pub target_key: String,
+    pub change_class: String,
+    pub policy_action: String,
+    pub lifecycle: SurfaceReviewLifecycleData,
+    pub owners: Vec<SurfaceReviewOwnerData>,
+    #[serde(default)]
+    pub current_decision: Option<SurfaceReviewDecisionData>,
+    #[serde(default)]
+    pub before_record: Option<serde_json::Value>,
+    #[serde(default)]
+    pub target_record: Option<serde_json::Value>,
+    pub field_diff: Vec<SurfaceReviewFieldDiffData>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SurfaceReviewListQuery {
+    #[serde(default)]
+    pub consumer_id: Option<String>,
+    #[serde(default)]
+    pub owner_type: Option<SurfaceReviewOwnerTypeData>,
+    #[serde(default)]
+    pub owner_id: Option<String>,
+    #[serde(default)]
+    pub state: Option<SurfaceReviewLifecycleData>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SurfaceReviewPath {
+    pub review_item_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SurfaceReviewListData {
+    pub items: Vec<SurfaceReviewItemData>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SurfaceReviewSummaryEntryData {
+    pub owner: SurfaceReviewOwnerData,
+    pub pending_count: u64,
+    pub earliest_created_at: String,
+    pub change_classes: BTreeMap<String, u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SurfaceReviewSummaryData {
+    pub pending_count: u64,
+    pub failed_reconciliation_count: u64,
+    pub entries: Vec<SurfaceReviewSummaryEntryData>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SurfaceReviewActionReq {
+    pub expected_target_key: String,
+    pub expected_binding_generation: i64,
+    pub actor: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SurfaceReviewActionData {
+    pub review_item_id: String,
+    pub decision_id: String,
+    pub resolution_action: SurfaceReviewResolutionActionData,
+    pub binding_generation: i64,
+    pub effective_surface_changed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SurfaceIntentResolutionActionData {
+    KeepIntent,
+    RemoveIntent,
+    RebindRef,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SurfaceIntentPreviewReq {
+    pub action: SurfaceIntentResolutionActionData,
+    #[serde(default)]
+    pub owner: Option<SurfaceReviewOwnerData>,
+    #[serde(default)]
+    pub new_ref_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SurfaceIntentPreviewData {
+    pub review_item_id: String,
+    pub action: SurfaceIntentResolutionActionData,
+    #[serde(default)]
+    pub owner: Option<SurfaceReviewOwnerData>,
+    pub owner_revision: String,
+    pub impacted_consumer_ids: Vec<String>,
+    pub impact_token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SurfaceIntentResolveReq {
+    pub action: SurfaceIntentResolutionActionData,
+    #[serde(default)]
+    pub owner: Option<SurfaceReviewOwnerData>,
+    #[serde(default)]
+    pub new_ref_id: Option<String>,
+    pub expected_owner_revision: String,
+    pub impact_token: String,
+    pub expected_target_key: String,
+    pub expected_binding_generation: i64,
+    pub actor: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SurfacePublicationListQuery {
+    pub consumer_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SurfacePublicationData {
+    pub publication_id: String,
+    pub consumer_id: String,
+    pub manifest_id: String,
+    #[serde(default)]
+    pub proposal_id: Option<String>,
+    pub reason: String,
+    pub published_by: String,
+    pub published_at: String,
+    #[serde(default)]
+    pub supersedes_publication_id: Option<String>,
+    pub active: bool,
+    pub rollback_eligible: bool,
+    pub rollback_blocks: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SurfacePublicationListData {
+    pub publications: Vec<SurfacePublicationData>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SurfacePublicationPath {
+    pub publication_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SurfaceRollbackReq {
+    pub consumer_id: String,
+    pub expected_binding_generation: i64,
+    pub actor: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SurfaceRollbackData {
+    pub publication_id: String,
+    pub rolled_back_to_publication_id: String,
+    pub consumer_id: String,
+    pub active_manifest_id: String,
+    pub binding_generation: i64,
+}
+
 // ==========================================
 // SPECIFIC API RESPONSE TYPES
 // ==========================================
@@ -576,6 +805,41 @@ api_resp!(
     "Client configuration update response"
 );
 api_resp!(ClientDeleteResp, ClientDeleteData, "Client deletion response");
+api_resp!(
+    SurfaceReviewListResp,
+    SurfaceReviewListData,
+    "Consumer Surface review list response"
+);
+api_resp!(
+    SurfaceReviewItemResp,
+    SurfaceReviewItemData,
+    "Consumer Surface review detail response"
+);
+api_resp!(
+    SurfaceReviewSummaryResp,
+    SurfaceReviewSummaryData,
+    "Consumer Surface review summary response"
+);
+api_resp!(
+    SurfaceReviewActionResp,
+    SurfaceReviewActionData,
+    "Consumer Surface review action response"
+);
+api_resp!(
+    SurfaceIntentPreviewResp,
+    SurfaceIntentPreviewData,
+    "Consumer Surface intent impact preview response"
+);
+api_resp!(
+    SurfacePublicationListResp,
+    SurfacePublicationListData,
+    "Consumer Surface publication history response"
+);
+api_resp!(
+    SurfaceRollbackResp,
+    SurfaceRollbackData,
+    "Consumer Surface rollback response"
+);
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Client config file parse rule inspection request")]
@@ -650,6 +914,8 @@ pub struct ClientCapabilityConfigData {
     #[schemars(description = "Unify-only direct exposure state and diagnostics")]
     #[serde(default)]
     pub unify_direct_exposure: ClientUnifyDirectExposureData,
+    #[schemars(description = "Catalog revision set represented by this management payload")]
+    pub source_revision_set: super::CatalogRevisionSet,
 }
 api_resp!(
     ClientCapabilityConfigResp,
@@ -659,12 +925,10 @@ api_resp!(
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(description = "Client settings update request (partial)")]
+#[serde(deny_unknown_fields)]
 pub struct ClientSettingsUpdateReq {
     #[schemars(description = "Client identifier")]
     pub identifier: String,
-    #[schemars(description = "Management mode: unify|hosted|transparent")]
-    #[serde(default)]
-    pub config_mode: Option<String>,
     #[schemars(
         description = "Transport protocol: auto|sse|stdio|streamable_http (sse remains for legacy client compatibility)"
     )]
@@ -718,8 +982,6 @@ pub struct ClientSettingsUpdateReq {
 pub struct ClientSettingsUpdateData {
     pub identifier: String,
     pub display_name: String,
-    #[serde(default)]
-    pub config_mode: Option<String>,
     pub transport: String,
     #[serde(default)]
     pub client_version: Option<String>,
@@ -774,6 +1036,9 @@ api_resp!(
 pub struct ClientCapabilityConfigReq {
     #[schemars(description = "Client identifier")]
     pub identifier: String,
+    #[schemars(description = "Optional management mode update committed with the Surface publication")]
+    #[serde(default)]
+    pub config_mode: Option<String>,
     #[schemars(description = "Capability source for client-scoped runtime policy")]
     pub capability_source: CapabilitySource,
     #[schemars(description = "Selected shared profile ids when using profiles mode")]
@@ -782,6 +1047,8 @@ pub struct ClientCapabilityConfigReq {
     #[schemars(description = "Optional Unify direct exposure state update")]
     #[serde(default)]
     pub unify_direct_exposure: Option<ClientUnifyDirectExposureReq>,
+    #[schemars(description = "Exact catalog revision set displayed before this management save")]
+    pub source_revision_set: super::CatalogRevisionSet,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
@@ -806,7 +1073,7 @@ pub struct ClientUnifyDirectExposureReq {
     pub server_ids: Vec<String>,
     #[schemars(description = "Selected direct capability ids for capability-level direct exposure")]
     #[serde(default)]
-    pub capability_ids: UnifyDirectCapabilityIds,
+    pub capability_refs: UnifyDirectCapabilityRefs,
 }
 
 impl From<ClientUnifyDirectExposureReq> for UnifyDirectExposureIntent {
@@ -814,7 +1081,7 @@ impl From<ClientUnifyDirectExposureReq> for UnifyDirectExposureIntent {
         Self {
             route_mode: value.route_mode,
             server_ids: value.server_ids,
-            capability_ids: value.capability_ids,
+            capability_refs: value.capability_refs,
         }
     }
 }

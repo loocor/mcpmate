@@ -62,6 +62,7 @@ async fn preview_one(
     };
 
     let raw_cfg = MCPServerConfig {
+        source_fingerprint: None,
         kind,
         command: item.command.clone(),
         url: item.url.clone(),
@@ -249,21 +250,25 @@ fn build_item(
         tools: ServerToolsData {
             items: tool_items,
             state: "ok".to_string(),
+            degraded_reason: None,
             meta: meta.clone(),
         },
         resources: ServerResourcesData {
             items: resource_items,
             state: "ok".to_string(),
+            degraded_reason: None,
             meta: meta.clone(),
         },
         resource_templates: ServerResourceTemplatesData {
             items: template_items,
             state: "ok".to_string(),
+            degraded_reason: None,
             meta: meta.clone(),
         },
         prompts: ServerPromptsData {
             items: prompt_items,
             state: "ok".to_string(),
+            degraded_reason: None,
             meta,
         },
     })
@@ -281,25 +286,29 @@ fn empty_with_error(
     ServerPreviewItemData {
         name,
         ok: false,
-        error: Some(err),
+        error: Some(err.clone()),
         tools: ServerToolsData {
             items: Vec::new(),
             state: "error".to_string(),
+            degraded_reason: Some(err.clone()),
             meta: meta.clone(),
         },
         resources: ServerResourcesData {
             items: Vec::new(),
             state: "error".to_string(),
+            degraded_reason: Some(err.clone()),
             meta: meta.clone(),
         },
         resource_templates: ServerResourceTemplatesData {
             items: Vec::new(),
             state: "error".to_string(),
+            degraded_reason: Some(err.clone()),
             meta: meta.clone(),
         },
         prompts: ServerPromptsData {
             items: Vec::new(),
             state: "error".to_string(),
+            degraded_reason: Some(err),
             meta,
         },
     }
@@ -568,6 +577,7 @@ mod tests {
             ("http_token", "runtime-bearer-token"),
         ]);
         let raw = MCPServerConfig {
+            source_fingerprint: None,
             kind: crate::common::server::ServerType::StreamableHttp,
             command: None,
             args: None,

@@ -105,7 +105,7 @@ pub async fn load_cached_capability_descriptions(
             if !complete_kinds.contains(&record.kind()) {
                 continue;
             }
-            match &record.payload {
+            match &record.effective_payload {
                 CapabilityPayload::Tool(tool) => {
                     insert_description(&mut index.tools, &server_id, &tool.name, tool.description.as_deref());
                     insert_description(

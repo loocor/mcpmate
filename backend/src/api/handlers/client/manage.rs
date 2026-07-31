@@ -25,7 +25,8 @@ pub(crate) async fn invalidate_client_runtime_visibility(identifier: &str) {
                 removed_sessions += 1;
             }
 
-            let (tools_count, prompts_count, resources_count) = proxy_server.notify_all_list_changed().await;
+            let (tools_count, prompts_count, resources_count) =
+                proxy_server.notify_transparent_all_list_changed().await;
             tracing::info!(
                 client = %identifier,
                 removed_sessions,

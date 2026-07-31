@@ -13,7 +13,6 @@ use crate::{
         common::{internal_error, map_anyhow_error, map_database_error},
     },
     common::server::ServerType,
-    config::server::capabilities::sync_via_connection_pool,
     config::server::{ImportOptions, ImportOutcome, SkippedServer, import::server_meta_from_payload, import_batch},
     config::server::{
         get_server_headers, headers::has_non_empty_authorization_header, merge_env_for_update, merge_headers_for_update,
@@ -33,6 +32,26 @@ use std::{
     collections::{BTreeSet, HashMap},
     str::FromStr,
 };
+
+async fn discover_server_capabilities(
+    state: &Arc<AppState>,
+    database: Arc<Database>,
+    server_id: &str,
+) -> Result<(), crate::core::capability::read_service::CapabilityReadError> {
+    let lists = crate::core::capability::read_service::CapabilityReadService::from_runtime(
+        database,
+        state.connection_pool.clone(),
+    )
+    .list_all_kinds(
+        server_id,
+        Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
+    )
+    .await?;
+    if let Some(error) = lists.into_first_error() {
+        return Err(error);
+    }
+    Ok(())
+}
 
 /// Validate server configuration
 #[inline]
@@ -215,71 +234,6 @@ async fn add_server_to_profile(
         .await
         .map_err(map_anyhow_error)
         .map(|_| ())
-}
-
-/// Add server to profile with capabilities sync
-async fn add_server_to_profile_with_sync(
-    _state: &Arc<AppState>,
-    db: &Database,
-    profile_id: &str,
-    server_id: &str,
-    enabled: bool,
-) -> Result<(), ApiError> {
-    // Add server to profile
-    profile::add_server_to_profile(&db.pool, profile_id, server_id, enabled)
-        .await
-        .map_err(map_anyhow_error)?;
-
-    // Sync server capabilities to the profile (async, non-blocking)
-    if false {
-        let pool_clone = db.pool.clone();
-        let profile_id_clone = profile_id.to_string();
-        let server_id_clone = server_id.to_string();
-        let _noop = ();
-
-        // Use the same semaphore to limit concurrent operations
-        static CAPABILITY_SYNC_SEMAPHORE: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
-        let semaphore = CAPABILITY_SYNC_SEMAPHORE.get_or_init(|| tokio::sync::Semaphore::new(2));
-
-        tokio::spawn(async move {
-            // Acquire semaphore permit
-            let _permit = match semaphore.try_acquire() {
-                Ok(permit) => permit,
-                Err(_) => {
-                    tracing::warn!(
-                        "Too many concurrent capability sync operations. Skipping sync for server {} to profile {}",
-                        server_id_clone,
-                        profile_id_clone
-                    );
-                    return;
-                }
-            };
-
-            if let Err(e) = crate::config::profile::sync_server_capabilities(
-                &pool_clone,
-                &profile_id_clone,
-                &server_id_clone,
-                crate::config::profile::ServerCapabilityAction::Add,
-            )
-            .await
-            {
-                tracing::warn!(
-                    "Failed to sync capabilities for server {} to profile {}: {}",
-                    server_id_clone,
-                    profile_id_clone,
-                    e
-                );
-            } else {
-                tracing::debug!(
-                    "Successfully synced capabilities for server {} to profile {}",
-                    server_id_clone,
-                    profile_id_clone
-                );
-            }
-        });
-    }
-
-    Ok(())
 }
 
 async fn upsert_meta_payload(
@@ -528,7 +482,7 @@ pub async fn create_server(
 
             let profile = crate::config::profile::get_profile(&db.pool, profile_id)
                 .await
-                .map_err(map_anyhow_error)?
+                .map_err(|error| ApiError::InternalError(error.to_string()))?
                 .ok_or_else(|| ApiError::NotFound(format!("Profile with ID '{}' not found", profile_id)))?;
 
             if !profile.is_active {
@@ -556,16 +510,7 @@ pub async fn create_server(
 
     // Initial capability discovery persists the transactional SQLite catalog.
     if !server.pending_import {
-        if let Err(error) = sync_via_connection_pool(
-            &state.connection_pool,
-            &db.pool,
-            db.capability_cache.as_ref(),
-            &server_id,
-            &payload.name,
-            crate::config::server::capabilities::default_pool_lock_timeout_secs(),
-        )
-        .await
-        {
+        if let Err(error) = discover_server_capabilities(&state, db.clone(), &server_id).await {
             tracing::warn!(server_id = %server_id, error = %error, "Initial capability sync failed after server creation");
         }
     }
@@ -623,6 +568,13 @@ pub async fn create_server(
         namespace_issue: common::load_namespace_issue(&db.pool, &server_id)
             .await
             .map_err(map_anyhow_error)?,
+        source_revision_set: crate::core::capability::materializer::SurfaceAuthoringLoader::load_catalog_revision_set(
+            &db.pool,
+        )
+        .await
+        .map_err(|error| ApiError::InternalError(error.to_string()))?
+        .into_iter()
+        .collect(),
     }));
 
     let mut data = Map::new();
@@ -673,6 +625,7 @@ pub async fn update_server(
     Json(payload): Json<ServerUpdateReq>,
 ) -> Result<Json<ServerDetailsResp>, ApiError> {
     let started_at = std::time::Instant::now();
+    validate_server_update_management_contract(&payload)?;
     let db = common::get_database_from_state(&state)?;
 
     let id = payload.id.clone();
@@ -685,6 +638,10 @@ pub async fn update_server(
         .id
         .clone()
         .ok_or_else(|| internal_error("Server ID not found"))?;
+    let previous_config_fingerprint =
+        crate::config::server::capabilities::current_config_fingerprint(&db.pool, &server_id)
+            .await
+            .map_err(map_anyhow_error)?;
 
     // Strictly validate server type format (if provided)
     let validated_server_type = if let Some(ref kind) = payload.kind {
@@ -724,14 +681,6 @@ pub async fn update_server(
 
     if let Some(s) = payload.source {
         updated_server.source = Some(s);
-    }
-
-    if let Some(enabled) = payload.enabled {
-        updated_server.enabled = enabled.into();
-    }
-
-    if let Some(unify_direct_exposure_eligible) = payload.unify_direct_exposure_eligible {
-        updated_server.unify_direct_exposure_eligible = unify_direct_exposure_eligible;
     }
 
     if let Some(pending_import) = payload.pending_import {
@@ -782,56 +731,25 @@ pub async fn update_server(
         upsert_meta_payload(&db, &server_id, meta_payload).await?;
     }
 
-    // Update server enabled status if provided
-    if let Some(profile_ids) = payload.profile_ids.as_ref() {
-        let enabled_flag = payload.enabled.unwrap_or(true);
-        let mut unique_profiles = BTreeSet::new();
-        for profile_id in profile_ids {
-            if !unique_profiles.insert(profile_id) {
-                continue;
-            }
+    let current_config_fingerprint =
+        crate::config::server::capabilities::current_config_fingerprint(&db.pool, &server_id)
+            .await
+            .map_err(map_anyhow_error)?;
+    let configuration_changed = previous_config_fingerprint != current_config_fingerprint;
 
-            let profile = crate::config::profile::get_profile(&db.pool, profile_id)
-                .await
-                .map_err(map_anyhow_error)?
-                .ok_or_else(|| ApiError::NotFound(format!("Profile with ID '{}' not found", profile_id)))?;
-
-            if !profile.is_active {
-                return Err(ApiError::BadRequest(format!("Profile '{}' is not active", profile_id)));
-            }
-
-            add_server_to_profile_with_sync(&state, &db, profile_id, &server_id, enabled_flag).await?;
-            tracing::info!(
-                server_id = %server_id,
-                profile_id = %profile_id,
-                "Updated server '{}' association in profile '{}' (enabled={})",
-                existing_server.name,
-                profile_id,
-                enabled_flag
-            );
-        }
+    if !updated_server.pending_import && configuration_changed {
+        let mut pool = state.connection_pool.lock().await;
+        pool.invalidate_server_runtime(&server_id).await;
+        pool.sync_servers_from_active_profile()
+            .await
+            .map_err(map_anyhow_error)?;
+        drop(pool);
     }
 
-    if existing_server.pending_import && !updated_server.pending_import {
-        if let Err(error) = sync_via_connection_pool(
-            &state.connection_pool,
-            &db.pool,
-            db.capability_cache.as_ref(),
-            &server_id,
-            &existing_server.name,
-            crate::config::server::capabilities::default_pool_lock_timeout_secs(),
-        )
-        .await
-        {
-            tracing::warn!(server_id = %server_id, error = %error, "Capability sync failed after completing server import");
+    if !updated_server.pending_import && (configuration_changed || existing_server.pending_import) {
+        if let Err(error) = discover_server_capabilities(&state, db.clone(), &server_id).await {
+            tracing::warn!(server_id = %server_id, error = %error, "Capability sync failed after server configuration update");
         }
-    }
-
-    let direct_constraint_changed = existing_server.enabled.as_bool() != updated_server.enabled.as_bool()
-        || existing_server.unify_direct_exposure_eligible != updated_server.unify_direct_exposure_eligible;
-
-    if direct_constraint_changed {
-        common::reconcile_client_direct_exposure_after_server_constraint_change(&state, &server_id).await?;
     }
 
     // Get server details via shared helper
@@ -874,6 +792,13 @@ pub async fn update_server(
         oauth_requires_reconnect: oauth_summary.oauth_requires_reconnect,
         oauth_issue: oauth_summary.oauth_issue,
         namespace_issue: None,
+        source_revision_set: crate::core::capability::materializer::SurfaceAuthoringLoader::load_catalog_revision_set(
+            &db.pool,
+        )
+        .await
+        .map_err(|error| ApiError::InternalError(error.to_string()))?
+        .into_iter()
+        .collect(),
     }));
 
     let mut data = Map::new();
@@ -895,6 +820,25 @@ pub async fn update_server(
     .await;
 
     Ok(response)
+}
+
+fn validate_server_update_management_contract(payload: &ServerUpdateReq) -> Result<(), ApiError> {
+    if payload.enabled.is_some() {
+        return Err(ApiError::BadRequest(
+            "Update global server status through /api/mcp/servers/manage".to_string(),
+        ));
+    }
+    if payload.profile_ids.is_some() {
+        return Err(ApiError::BadRequest(
+            "Update profile server relationships through /api/mcp/profile/servers/manage".to_string(),
+        ));
+    }
+    if payload.unify_direct_exposure_eligible.is_some() {
+        return Err(ApiError::BadRequest(
+            "Update direct exposure eligibility through /api/mcp/servers/manage".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Import servers from JSON configuration (now uses unified core)
@@ -954,9 +898,8 @@ pub async fn import_servers(
     };
 
     let outcome = import_batch(
-        &db.pool,
-        db.capability_cache.clone(),
-        &state.connection_pool,
+        db.clone(),
+        Some(&state.connection_pool),
         mcp_servers,
         ImportOptions::dashboard_import(payload.dry_run, payload.target_profile_id.clone()),
     )
@@ -968,6 +911,7 @@ pub async fn import_servers(
         skipped,
         failed,
         scheduled: _,
+        runtime_sync_error,
     } = outcome;
 
     let imported_servers: Vec<String> = imported.into_iter().map(|s| s.name).collect();
@@ -983,6 +927,7 @@ pub async fn import_servers(
         failed_count: failed_servers.len(),
         failed_servers,
         error_details,
+        runtime_sync_error,
     };
 
     let mut data = Map::new();
@@ -995,11 +940,15 @@ pub async fn import_servers(
         Value::from(import_data.skipped_count as u64),
     );
     data.insert("failed_count".to_string(), Value::from(import_data.failed_count as u64));
+    if let Some(error) = import_data.runtime_sync_error.as_ref() {
+        data.insert("runtime_sync_error".to_string(), Value::from(error.clone()));
+    }
+    let audit_error = import_data.runtime_sync_error.clone();
     crate::audit::interceptor::emit_event(
         state.audit_service.as_ref(),
         crate::audit::interceptor::build_rest_event(
             crate::audit::AuditAction::ServerImport,
-            if import_data.failed_count > 0 {
+            if import_data.failed_count > 0 || audit_error.is_some() {
                 crate::audit::AuditStatus::Failed
             } else {
                 crate::audit::AuditStatus::Success
@@ -1010,7 +959,7 @@ pub async fn import_servers(
             None,
             payload.target_profile_id,
             Some(data),
-            None,
+            audit_error,
         ),
     )
     .await;
@@ -1070,8 +1019,8 @@ async fn delete_server_records(
         .await
         .map_err(map_database_error)?;
 
-    mcpmate_capability_store::SqliteCapabilityCatalog::new(db.pool.clone())
-        .remove_server_in_transaction(&mut tx, server_id)
+    crate::core::capability::reconciliation::CatalogSurfaceReconciler::new(db.pool.clone())
+        .retire_server_in_transaction(&mut tx, server_id)
         .await
         .map_err(|error| ApiError::InternalError(error.to_string()))?;
 
@@ -1089,10 +1038,7 @@ async fn delete_server_records(
     // - server_meta (has FK to server_config.id)
     // - server_oauth_config (has FK to server_config.id)
     // - server_oauth_tokens (has FK to server_config.id)
-    // - profile_server (has FK to server_config.id)
-    // - profile_resource (has FK to server_config.id)
-    // - profile_prompt (has FK to server_config.id)
-    // - profile_tool (has FK to server_tools.id, which cascades from server_config)
+    // Capability refs, versions, and authoring intent remain as retired history.
 
     tx.commit().await.map_err(map_database_error)?;
     db.capability_cache.invalidate_server(server_id).await;
@@ -1162,6 +1108,24 @@ pub async fn delete_server(
 
 #[cfg(test)]
 mod tests {
+    use super::validate_server_update_management_contract;
+    use crate::api::{handlers::ApiError, models::server::ServerUpdateReq};
+
+    #[test]
+    fn server_update_rejects_surface_management_bypasses() {
+        for payload in [
+            serde_json::json!({"id": "server-a", "enabled": true}),
+            serde_json::json!({"id": "server-a", "profile_ids": ["profile-a"]}),
+            serde_json::json!({"id": "server-a", "unify_direct_exposure_eligible": true}),
+        ] {
+            let request: ServerUpdateReq = serde_json::from_value(payload).unwrap();
+            assert!(matches!(
+                validate_server_update_management_contract(&request),
+                Err(ApiError::BadRequest(_))
+            ));
+        }
+    }
+
     use super::*;
     use crate::{
         config::models::{ServerOAuthConfig, ServerOAuthToken},
@@ -1687,7 +1651,6 @@ for line in sys.stdin:
             audit_database: None,
             audit_service: None,
             config_application_state: Arc::new(ConfigApplicationStateManager::new()),
-            unified_query: None,
             client_service: None,
             inspector_calls: Arc::new(InspectorCallRegistry::new()),
             inspector_sessions: Arc::new(InspectorSessionManager::new()),

@@ -8,14 +8,13 @@ use serde_json::Value;
 use tokio::sync::Mutex;
 
 use crate::api::handlers::server::common::{InspectParams, RefreshStrategy};
-use crate::api::routes::AppState;
 use crate::config::database::Database;
 use crate::config::models::Server;
 use crate::config::server;
 use crate::core::capability::domain::{
     CapabilityError, CapabilityItem, CapabilityResult, CapabilityType, DataSource,
-    PromptArgument as DomainPromptArgument, PromptCapability, QueryContext, ResourceCapability,
-    ResourceTemplateCapability, ResponseMetadata, ToolCapability,
+    PromptArgument as DomainPromptArgument, PromptCapability, ResourceCapability, ResourceTemplateCapability,
+    ResponseMetadata, ToolCapability,
 };
 use crate::core::capability::read_service::CapabilityReadService;
 use crate::core::capability::runtime::{
@@ -23,7 +22,7 @@ use crate::core::capability::runtime::{
 };
 use crate::core::pool::UpstreamConnectionPool;
 
-/// Performance metrics collection trait used by the unified query service.
+/// Performance metrics collection trait used by capability query helpers.
 pub trait MetricsCollector {
     fn record_capability_query_duration(
         &self,
@@ -44,173 +43,68 @@ pub trait MetricsCollector {
     );
 }
 
-/// Shared state for unified capability queries
-pub struct UnifiedQueryService {
+/// Unified entry for profile token metrics and capability ledger reads.
+pub async fn query_capabilities(
     pool: Arc<Mutex<UpstreamConnectionPool>>,
     database: Arc<Database>,
-    app_state: Arc<AppState>,
-    timeout_duration: Duration,
+    server_id: &str,
+    capability_type: CapabilityType,
+    params: &InspectParams,
+) -> Result<CapabilityResult, CapabilityError> {
+    let server = load_server(&database, server_id).await?;
+    ensure_server_enabled(&server, server_id)?;
+
+    let timeout = params
+        .timeout
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| Duration::from_secs(DEFAULT_QUERY_TIMEOUT_SECS));
+    let list_ctx = ListCtx {
+        capability: capability_type,
+        server_id: server_id.to_string(),
+        refresh: Some(map_refresh_strategy(params.refresh)),
+        operation_timeout: timeout,
+        validation_session: None,
+        runtime_identity: None,
+        connection_selection: None,
+        visibility_snapshot: None,
+        name_domain: crate::core::capability::runtime::NameDomain::External,
+    };
+    let capability_service = CapabilityReadService::from_runtime(database, pool);
+    let list_result = capability_service
+        .list(&list_ctx)
+        .await
+        .map_err(|err| CapabilityError::RuntimeError(err.to_string()))?;
+
+    Ok(list_to_capability_result(list_result, capability_type))
 }
 
-impl std::fmt::Debug for UnifiedQueryService {
-    fn fmt(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-    ) -> std::fmt::Result {
-        f.debug_struct("UnifiedQueryService")
-            .field("pool_strong_refs", &Arc::strong_count(&self.pool))
-            .field("database_strong_refs", &Arc::strong_count(&self.database))
-            .field("app_state_refs", &Arc::strong_count(&self.app_state))
-            .field("timeout_duration", &self.timeout_duration)
-            .finish()
-    }
+async fn load_server(
+    database: &Database,
+    server_id: &str,
+) -> Result<Server, CapabilityError> {
+    server::get_server_by_id(&database.pool, server_id)
+        .await
+        .map_err(|err| CapabilityError::InternalError(err.to_string()))?
+        .ok_or_else(|| CapabilityError::InternalError(format!("Server {server_id} not found")))
 }
 
-pub struct UnifiedQueryServiceBuilder {
-    pool: Option<Arc<Mutex<UpstreamConnectionPool>>>,
-    database: Option<Arc<Database>>,
-    app_state: Option<Arc<AppState>>,
-    timeout: Duration,
-}
-
-impl UnifiedQueryServiceBuilder {
-    pub fn new() -> Self {
-        Self {
-            pool: None,
-            database: None,
-            app_state: None,
-            timeout: Duration::from_secs(DEFAULT_QUERY_TIMEOUT_SECS),
-        }
-    }
-
-    pub fn with_pool(
-        mut self,
-        pool: Arc<Mutex<UpstreamConnectionPool>>,
-    ) -> Self {
-        self.pool = Some(pool);
-        self
-    }
-
-    pub fn with_database(
-        mut self,
-        database: Arc<Database>,
-    ) -> Self {
-        self.database = Some(database);
-        self
-    }
-
-    pub fn with_app_state(
-        mut self,
-        app_state: Arc<AppState>,
-    ) -> Self {
-        self.app_state = Some(app_state);
-        self
-    }
-
-    pub fn with_timeout(
-        mut self,
-        timeout: Duration,
-    ) -> Self {
-        self.timeout = timeout;
-        self
-    }
-
-    pub fn build(self) -> Result<UnifiedQueryService, String> {
-        Ok(UnifiedQueryService {
-            pool: self.pool.ok_or("Connection pool is required")?,
-            database: self.database.ok_or("Database is required")?,
-            app_state: self.app_state.ok_or("App state is required")?,
-            timeout_duration: self.timeout,
-        })
-    }
-}
-
-impl Default for UnifiedQueryServiceBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl UnifiedQueryService {
-    /// Unified entry for capability listing with cache-first strategy
-    pub async fn query_capabilities(
-        &self,
-        server_id: &str,
-        capability_type: CapabilityType,
-        params: &InspectParams,
-        context: QueryContext,
-    ) -> Result<CapabilityResult, CapabilityError> {
-        let server = self.load_server(server_id).await?;
-        self.ensure_server_enabled(&server, server_id)?;
-
-        let list_ctx = self.build_list_ctx(server_id, capability_type, params, context);
-        let capability_service = CapabilityReadService::from_runtime(self.database.clone(), self.pool.clone());
-
-        let list_result = capability_service
-            .list(&list_ctx)
-            .await
-            .map_err(|err| CapabilityError::RuntimeError(err.to_string()))?;
-
-        Ok(list_to_capability_result(list_result, capability_type))
-    }
-
-    async fn load_server(
-        &self,
-        server_id: &str,
-    ) -> Result<Server, CapabilityError> {
-        server::get_server_by_id(&self.database.pool, server_id)
-            .await
-            .map_err(|err| CapabilityError::InternalError(err.to_string()))?
-            .ok_or_else(|| CapabilityError::InternalError(format!("Server {} not found", server_id)))
-    }
-
-    fn ensure_server_enabled(
-        &self,
-        server: &Server,
-        server_id: &str,
-    ) -> Result<(), CapabilityError> {
-        if !server.enabled.as_bool() {
-            return Err(CapabilityError::ServerDisabled {
-                server_id: server_id.to_string(),
-            });
-        }
-
-        Ok(())
-    }
-
-    fn build_list_ctx(
-        &self,
-        server_id: &str,
-        capability_type: CapabilityType,
-        params: &InspectParams,
-        context: QueryContext,
-    ) -> ListCtx {
-        let timeout = params.timeout.map(Duration::from_secs).unwrap_or(self.timeout_duration);
-
-        ListCtx {
-            capability: capability_type,
+fn ensure_server_enabled(
+    server: &Server,
+    server_id: &str,
+) -> Result<(), CapabilityError> {
+    if !server.enabled.as_bool() {
+        return Err(CapabilityError::ServerDisabled {
             server_id: server_id.to_string(),
-            refresh: Some(map_refresh_strategy(params.refresh)),
-            timeout: Some(timeout),
-            validation_session: validation_session(context),
-            runtime_identity: None,
-            connection_selection: None,
-            visibility_snapshot: None,
-            name_domain: crate::core::capability::runtime::NameDomain::External,
-        }
+        });
     }
+
+    Ok(())
 }
 
 fn map_refresh_strategy(refresh: Option<RefreshStrategy>) -> RuntimeRefreshStrategy {
     match refresh.unwrap_or(RefreshStrategy::CacheFirst) {
         RefreshStrategy::Force => RuntimeRefreshStrategy::Force,
         _ => RuntimeRefreshStrategy::CacheFirst,
-    }
-}
-
-fn validation_session(context: QueryContext) -> Option<String> {
-    match context {
-        QueryContext::ApiCall | QueryContext::McpClient => None,
     }
 }
 
@@ -352,11 +246,5 @@ mod tests {
         assert_eq!(projected.uri_template, external_template);
         assert_eq!(projected.unique_template, external_template);
         assert_eq!(projected.name.as_deref(), Some("File"));
-    }
-
-    #[test]
-    fn ordinary_query_contexts_do_not_pin_shared_validation_sessions() {
-        assert_eq!(validation_session(QueryContext::ApiCall), None);
-        assert_eq!(validation_session(QueryContext::McpClient), None);
     }
 }

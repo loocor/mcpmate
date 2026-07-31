@@ -13,6 +13,9 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
+    "types": [
+      "bun"
+    ],
     "isolatedModules": true,
     "moduleDetection": "force",
     "noEmit": true,

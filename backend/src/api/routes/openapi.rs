@@ -392,6 +392,70 @@ macro_rules! aide_wrapper_query {
     };
 }
 
+#[macro_export]
+macro_rules! aide_wrapper_path {
+    ($module:ident :: $handler:ident, $path_type:ty, $response_type:ty, $description:expr) => {
+        paste::paste! {
+            pub async fn [<$handler _aide>](
+                axum::extract::State(state): axum::extract::State<std::sync::Arc<$crate::api::routes::AppState>>,
+                axum::extract::Path(path): axum::extract::Path<$path_type>
+            ) -> impl aide::axum::IntoApiResponse {
+                use axum::response::IntoResponse;
+                match $module::$handler(axum::extract::State(state), axum::extract::Path(path)).await {
+                    Ok(json_response) => json_response.into_response(),
+                    Err(api_error) => api_error.into_response(),
+                }
+            }
+
+            pub fn [<$handler _docs>](
+                op: aide::transform::TransformOperation
+            ) -> aide::transform::TransformOperation {
+                op.description($description)
+                    .tag(stringify!($module))
+                    .response::<200, axum::Json<$response_type>>()
+                    .response::<404, ()>()
+                    .response::<500, ()>()
+            }
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! aide_wrapper_path_payload {
+    ($module:ident :: $handler:ident, $path_type:ty, $json_type:ty, $response_type:ty, $description:expr) => {
+        paste::paste! {
+            pub async fn [<$handler _aide>](
+                axum::extract::State(state): axum::extract::State<std::sync::Arc<$crate::api::routes::AppState>>,
+                axum::extract::Path(path): axum::extract::Path<$path_type>,
+                axum::extract::Json(json): axum::extract::Json<$json_type>
+            ) -> impl aide::axum::IntoApiResponse {
+                use axum::response::IntoResponse;
+                match $module::$handler(
+                    axum::extract::State(state),
+                    axum::extract::Path(path),
+                    axum::extract::Json(json),
+                ).await {
+                    Ok(json_response) => json_response.into_response(),
+                    Err(api_error) => api_error.into_response(),
+                }
+            }
+
+            pub fn [<$handler _docs>](
+                op: aide::transform::TransformOperation
+            ) -> aide::transform::TransformOperation {
+                op.description($description)
+                    .tag(stringify!($module))
+                    .input::<axum::Json<$json_type>>()
+                    .response::<200, axum::Json<$response_type>>()
+                    .response::<400, ()>()
+                    .response::<404, ()>()
+                    .response::<409, ()>()
+                    .response::<500, ()>()
+            }
+        }
+    };
+}
+
 /// Macro for POST endpoints with payload body
 ///
 /// Usage:

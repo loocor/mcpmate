@@ -1762,6 +1762,9 @@ impl BrokerService {
             }
             Err(error) => {
                 let error_str = error.to_string();
+                let error = anyhow::Error::new(error);
+                self.record_usage_evidence(&server_id, mcpmate_capability_store::CapabilityKind::Tools, &error)
+                    .await;
                 if error_str.contains("timeout") || error_str.contains("Timeout") || error_str.contains("timed out") {
                     Ok(UcanError::timeout("tool", tool_name, timeout_secs).to_call_tool_result())
                 } else {
@@ -1805,7 +1808,7 @@ impl BrokerService {
                 capability: crate::core::capability::CapabilityType::Tools,
                 server_id: server_id.clone(),
                 refresh: Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
-                timeout: Some(std::time::Duration::from_secs(10)),
+                operation_timeout: crate::core::transport::timeout_policy::DEFAULT_CAPABILITY_OPERATION_TIMEOUT,
                 validation_session: None,
                 runtime_identity: runtime_identity.clone(),
                 connection_selection: client_context.connection_selection(server_id.clone()),
@@ -1931,7 +1934,7 @@ impl BrokerService {
                 capability: crate::core::capability::CapabilityType::Prompts,
                 server_id: server_id.clone(),
                 refresh: Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
-                timeout: Some(std::time::Duration::from_secs(10)),
+                operation_timeout: crate::core::transport::timeout_policy::DEFAULT_CAPABILITY_OPERATION_TIMEOUT,
                 validation_session: None,
                 runtime_identity: runtime_identity.clone(),
                 connection_selection: client_context.connection_selection(server_id.clone()),
@@ -2059,7 +2062,7 @@ impl BrokerService {
                 capability: crate::core::capability::CapabilityType::Resources,
                 server_id: server_id.clone(),
                 refresh: Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
-                timeout: Some(std::time::Duration::from_secs(10)),
+                operation_timeout: crate::core::transport::timeout_policy::DEFAULT_CAPABILITY_OPERATION_TIMEOUT,
                 validation_session: None,
                 runtime_identity: runtime_identity.clone(),
                 connection_selection: client_context.connection_selection(server_id.clone()),
@@ -2192,7 +2195,7 @@ impl BrokerService {
                 capability: crate::core::capability::CapabilityType::ResourceTemplates,
                 server_id: server_id.clone(),
                 refresh: Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
-                timeout: Some(std::time::Duration::from_secs(10)),
+                operation_timeout: crate::core::transport::timeout_policy::DEFAULT_CAPABILITY_OPERATION_TIMEOUT,
                 validation_session: None,
                 runtime_identity: runtime_identity.clone(),
                 connection_selection: client_context.connection_selection(server_id.clone()),
@@ -2364,7 +2367,12 @@ impl BrokerService {
                     serde_json::to_string_pretty(&result).context("Failed to serialize Unify prompt result")?,
                 )]))
             }
-            Err(e) => Ok(UcanError::upstream_error("prompt", prompt_name, &e.to_string()).to_call_tool_result()),
+            Err(e) => {
+                let error_str = e.to_string();
+                self.record_usage_evidence(&server_id, mcpmate_capability_store::CapabilityKind::Prompts, &e)
+                    .await;
+                Ok(UcanError::upstream_error("prompt", prompt_name, &error_str).to_call_tool_result())
+            }
         }
     }
 
@@ -2413,8 +2421,29 @@ impl BrokerService {
                     serde_json::to_string_pretty(&result).context("Failed to serialize Unify resource result")?,
                 )]))
             }
-            Err(e) => Ok(UcanError::upstream_error("resource", resource_uri, &e.to_string()).to_call_tool_result()),
+            Err(e) => {
+                let error_str = e.to_string();
+                self.record_usage_evidence(&server_id, mcpmate_capability_store::CapabilityKind::Resources, &e)
+                    .await;
+                Ok(UcanError::upstream_error("resource", resource_uri, &error_str).to_call_tool_result())
+            }
         }
+    }
+
+    async fn record_usage_evidence(
+        &self,
+        server_id: &str,
+        kind: mcpmate_capability_store::CapabilityKind,
+        error: &anyhow::Error,
+    ) {
+        crate::core::capability::runtime::record_capability_usage_evidence(
+            &self.database,
+            server_id,
+            kind,
+            None,
+            error,
+        )
+        .await;
     }
 
     async fn acquire_peer(

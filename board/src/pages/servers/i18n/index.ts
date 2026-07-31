@@ -139,6 +139,7 @@ export const serversTranslations = {
 				headerAuth: "Header auth",
 				oauth: "OAuth",
 				oauthWarning: "Authorization expired — reauthorize required",
+				authOff: "Off",
 			},
 			iconAlt: {
 				named: "{{name}} icon",
@@ -303,6 +304,50 @@ export const serversTranslations = {
 				title: "{{label}} ({{count}})",
 				empty: "No {{label}} from this server",
 				emptyAll: "No capabilities from this server",
+				partialFailure: "Some capabilities could not be discovered",
+				partialFailureDescription:
+					"Capability discovery was incomplete. Open logs for diagnostic details.",
+				viewLogs: "View logs",
+				authentication: {
+					reauthorizeAction: "Reauthorize",
+					editAction: "Edit authentication",
+					required: {
+						title: "Authentication required",
+						description:
+							"Configure authentication before discovering this server's capabilities.",
+						action: "Edit authentication",
+					},
+					secureStore: {
+						title: "Secure Store is unavailable",
+						description:
+							"OAuth credentials cannot be accessed until Secure Store is ready.",
+						action: "Open security settings",
+					},
+					oauthRequired: {
+						title: "OAuth authorization required",
+						description:
+							"Authorize this server before discovering its capabilities.",
+						action: "Authorize",
+					},
+					headerRequired: {
+						title: "Header authentication required",
+						description:
+							"The upstream requires or rejected the configured header credential. Review the server authentication settings.",
+						action: "Edit authentication",
+					},
+					forbidden: {
+						title: "Authorization rejected",
+						description:
+							"The upstream denied capability access for the current authorization.",
+						action: "Reauthorize",
+					},
+					insufficientScope: {
+						title: "Additional authorization scope required",
+						description:
+							"The current authorization does not grant the scope required to discover capabilities.",
+						action: "Reauthorize",
+					},
+				},
 			},
 			debug: {
 				proxyUnavailable:
@@ -1126,6 +1171,7 @@ export const serversTranslations = {
 				headerAuth: "请求头鉴权",
 				oauth: "OAuth",
 				oauthWarning: "授权已过期，请重新授权",
+				authOff: "关闭",
 			},
 			iconAlt: {
 				named: "{{name}} 图标",
@@ -1289,6 +1335,44 @@ export const serversTranslations = {
 				title: "{{label}} ({{count}})",
 				empty: "该服务器无 {{label}}",
 				emptyAll: "该服务器暂无能力",
+				partialFailure: "部分能力未能完成发现",
+				partialFailureDescription: "能力发现未完整完成，请打开日志查看诊断详情。",
+				viewLogs: "查看日志",
+				authentication: {
+					reauthorizeAction: "重新授权",
+					editAction: "编辑认证",
+					required: {
+						title: "需要认证",
+						description: "请先配置认证，再发现此服务器的能力。",
+						action: "编辑认证",
+					},
+					secureStore: {
+						title: "安全存储不可用",
+						description: "安全存储就绪前无法访问 OAuth 凭证。",
+						action: "打开安全设置",
+					},
+					oauthRequired: {
+						title: "需要 OAuth 授权",
+						description: "请先授权此服务器，再发现其能力。",
+						action: "授权",
+					},
+					headerRequired: {
+						title: "需要请求头认证",
+						description:
+							"上游要求认证或拒绝了当前请求头凭证，请检查服务器认证设置。",
+						action: "编辑认证",
+					},
+					forbidden: {
+						title: "授权被拒绝",
+						description: "上游拒绝了当前授权对能力的访问。",
+						action: "重新授权",
+					},
+					insufficientScope: {
+						title: "需要额外授权范围",
+						description: "当前授权不包含发现能力所需的权限范围。",
+						action: "重新授权",
+					},
+				},
 			},
 			debug: {
 				proxyUnavailable: "代理模式不可用：该服务器未在任何激活的配置中启用。",
@@ -2064,6 +2148,7 @@ export const serversTranslations = {
 				headerAuth: "ヘッダー認証",
 				oauth: "OAuth",
 				oauthWarning: "認可の期限切れ — 再認可が必要です",
+				authOff: "オフ",
 			},
 			iconAlt: {
 				named: "{{name}} のアイコン",
@@ -2229,6 +2314,48 @@ export const serversTranslations = {
 				title: "{{label}} ({{count}})",
 				empty: "このサーバーには {{label}} がありません",
 				emptyAll: "このサーバーには機能がありません",
+				partialFailure: "一部の機能を検出できませんでした",
+				partialFailureDescription:
+					"機能検出が完了しませんでした。診断の詳細はログを確認してください。",
+				viewLogs: "ログを表示",
+				authentication: {
+					reauthorizeAction: "再認可",
+					editAction: "認証を編集",
+					required: {
+						title: "認証が必要です",
+						description: "機能を検出する前に、このサーバーの認証を設定してください。",
+						action: "認証を編集",
+					},
+					secureStore: {
+						title: "Secure Store を利用できません",
+						description:
+							"Secure Store の準備が完了するまで OAuth 認証情報にアクセスできません。",
+						action: "セキュリティ設定を開く",
+					},
+					oauthRequired: {
+						title: "OAuth 認可が必要です",
+						description: "機能を検出する前にこのサーバーを認可してください。",
+						action: "認可",
+					},
+					headerRequired: {
+						title: "ヘッダー認証が必要です",
+						description:
+							"上流が認証を要求したか、設定済みのヘッダー認証情報を拒否しました。認証設定を確認してください。",
+						action: "認証を編集",
+					},
+					forbidden: {
+						title: "認可が拒否されました",
+						description:
+							"上流は現在の認可による機能へのアクセスを拒否しました。",
+						action: "再認可",
+					},
+					insufficientScope: {
+						title: "追加の認可スコープが必要です",
+						description:
+							"現在の認可には機能検出に必要なスコープがありません。",
+						action: "再認可",
+					},
+				},
 			},
 			debug: {
 				proxyUnavailable:

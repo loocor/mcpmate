@@ -10,26 +10,6 @@ use tokio::time::timeout;
 use super::error::{CoreError, CoreResult};
 use crate::common::constants::commands;
 
-/// determine appropriate connection timeout based on command type
-pub fn get_connection_timeout(command: &str) -> Duration {
-    match command {
-        commands::DOCKER => Duration::from_secs(120),
-        commands::NODE | commands::NPM | commands::NPX => Duration::from_secs(60),
-        commands::UV | commands::UVX | commands::BUN | commands::BUNX => Duration::from_secs(30),
-        _ => Duration::from_secs(10),
-    }
-}
-
-/// determine appropriate tools listing timeout based on command type
-pub fn get_tools_timeout(command: &str) -> Duration {
-    match command {
-        commands::DOCKER => Duration::from_secs(60),
-        commands::NODE | commands::NPM | commands::NPX => Duration::from_secs(60),
-        commands::UV | commands::UVX | commands::BUN | commands::BUNX => Duration::from_secs(20),
-        _ => Duration::from_secs(10),
-    }
-}
-
 /// determine appropriate SSE connection timeout
 pub fn get_sse_connection_timeout() -> Duration {
     if let Ok(v) = std::env::var("MCPMATE_SSE_CONNECT_TIMEOUT_MS") {
