@@ -10,6 +10,7 @@ mod connection;
 mod executor;
 mod health;
 mod monitoring;
+mod startup;
 
 // Business logic managers (separated from core pool logic)
 mod config;
@@ -21,6 +22,7 @@ mod types;
 pub use connection::UpstreamConnectionPool;
 pub(crate) use connection::{
     ValidationConnectionBackoff, ValidationReservationLease, ValidationReservationToken, ValidationShutdownError,
+    apply_pool_failure_updates,
 };
 
 // Re-export selected types for external coordination

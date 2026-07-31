@@ -402,23 +402,21 @@ pub async fn get_upstream_prompt(
         }
 
         if target_instance_id.is_none() {
-            if let Some(selection) = connection_selection {
-                let scoped_selection = crate::core::capability::ConnectionSelection {
+            drop(pool);
+            let scoped_selection = connection_selection
+                .map(|selection| crate::core::capability::ConnectionSelection {
                     server_id: server_key.to_string(),
                     affinity_key: selection.affinity_key.clone(),
-                };
-                let iid = pool
-                    .ensure_connected_with_selection(&scoped_selection)
-                    .await
-                    .map_err(|e| anyhow!("Failed to ensure scoped connection for server '{}': {}", server_key, e))?;
-                target_instance_id = Some(iid);
-            } else {
-                let iid = pool
-                    .ensure_connected(server_key)
-                    .await
-                    .map_err(|e| anyhow!("Failed to ensure connection for server '{}': {}", server_key, e))?;
-                target_instance_id = Some(iid);
-            }
+                })
+                .unwrap_or_else(|| crate::core::capability::ConnectionSelection {
+                    server_id: server_key.to_string(),
+                    affinity_key: crate::core::capability::AffinityKey::Default,
+                });
+            let iid = UpstreamConnectionPool::ensure_connected_coordinated(connection_pool, &scoped_selection)
+                .await
+                .map_err(|e| anyhow!("Failed to ensure connection for server '{}': {}", server_key, e))?;
+            pool = connection_pool.lock().await;
+            target_instance_id = Some(iid);
         }
 
         let iid = target_instance_id.expect("instance id must be set");

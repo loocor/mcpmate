@@ -307,6 +307,9 @@ pub struct UpstreamConnectionPool {
     next_validation_owner_epoch: Arc<AtomicU64>,
     health_reconnect_epochs: HashMap<(String, String), u64>,
     next_health_reconnect_epoch: Arc<AtomicU64>,
+    /// In-flight production startup attempts keyed by production route identity.
+    pub(crate) startup_attempts: HashMap<types::ProductionRouteKey, super::startup::StartupAttemptEntry>,
+    pub(crate) next_startup_attempt: Arc<AtomicU64>,
     /// Server configuration
     pub config: Arc<Config>,
     /// Map of server ID to map of instance ID to cancellation token
@@ -342,6 +345,8 @@ impl UpstreamConnectionPool {
             next_validation_owner_epoch: self.next_validation_owner_epoch.clone(),
             health_reconnect_epochs: HashMap::new(),
             next_health_reconnect_epoch: self.next_health_reconnect_epoch.clone(),
+            startup_attempts: HashMap::new(),
+            next_startup_attempt: self.next_startup_attempt.clone(),
             config: self.config.clone(),
             cancellation_tokens: HashMap::new(),
             process_monitor: None,
@@ -383,6 +388,8 @@ impl UpstreamConnectionPool {
             next_validation_owner_epoch: Arc::new(AtomicU64::new(1)),
             health_reconnect_epochs: HashMap::new(),
             next_health_reconnect_epoch: Arc::new(AtomicU64::new(1)),
+            startup_attempts: HashMap::new(),
+            next_startup_attempt: Arc::new(AtomicU64::new(1)),
             config,
             cancellation_tokens: HashMap::new(),
             process_monitor: Some(process_monitor),
@@ -1331,7 +1338,7 @@ impl UpstreamConnectionPool {
             return ValidationSuccessFinalization::Lost(connection);
         }
 
-        apply_validation_failure_updates(self, failure_updates);
+        apply_pool_failure_updates(self, failure_updates);
         let session = self
             .validation_sessions
             .get(attempt.token.session_id())
@@ -1404,7 +1411,7 @@ impl UpstreamConnectionPool {
         let committed = {
             let mut pool = shared.lock().await;
             if pool.claim_validation_attempt(&attempt.token, attempt.attempt_id, &attempt.server_id) {
-                apply_validation_failure_updates(&mut pool, failure_updates);
+                apply_pool_failure_updates(&mut pool, failure_updates);
                 true
             } else {
                 false
@@ -1689,7 +1696,7 @@ struct PendingValidationConnection {
     armed: bool,
 }
 
-fn apply_validation_failure_updates(
+pub(crate) fn apply_pool_failure_updates(
     pool: &mut UpstreamConnectionPool,
     updates: Vec<(String, types::FailureState)>,
 ) {
@@ -2481,12 +2488,7 @@ mod tests {
             )
             .await
         );
-        assert!(
-            pool.lock()
-                .await
-                .remaining_backoff("validation:server-1")
-                .is_none()
-        );
+        assert!(pool.lock().await.remaining_backoff("validation:server-1").is_none());
 
         UpstreamConnectionPool::release_validation_reservation(&pool, &token)
             .await

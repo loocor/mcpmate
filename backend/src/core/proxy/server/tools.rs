@@ -248,18 +248,18 @@ pub(super) async fn call_tool(
     } else {
         let t_connect_begin = std::time::Instant::now();
         {
-            let mut pool_guard = server.connection_pool.lock().await;
-            if let Some(selection) = client.connection_selection(server_id.clone()) {
-                pool_guard
-                    .ensure_connected_with_selection(&selection)
-                    .await
-                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-            } else {
-                pool_guard
-                    .ensure_connected(&server_id)
-                    .await
-                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-            }
+            let selection = client.connection_selection(server_id.clone()).unwrap_or_else(|| {
+                crate::core::capability::ConnectionSelection {
+                    server_id: server_id.clone(),
+                    affinity_key: crate::core::capability::AffinityKey::Default,
+                }
+            });
+            crate::core::pool::UpstreamConnectionPool::ensure_connected_coordinated(
+                &server.connection_pool,
+                &selection,
+            )
+            .await
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         }
         let pool_guard = server.connection_pool.lock().await;
         let snap = pool_guard.get_snapshot();

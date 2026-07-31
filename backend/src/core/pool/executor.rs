@@ -19,7 +19,6 @@ use crate::{
         server::{ServerType, TransportType},
         sync::SyncHelper,
     },
-    core::capability::ConnectionSelection,
     core::{
         events,
         foundation::types::{
@@ -284,48 +283,8 @@ impl UpstreamConnectionPool {
         self.connect_internal(server_id, instance_id).await
     }
 
-    /// Ensure a server has at least one connected instance and return its instance_id.
-    ///
-    /// **Note**: This method uses `AffinityKey::Default` and bypasses affinity-aware routing.
-    /// For production routing, use `ensure_connected_with_selection()` with a proper
-    /// `ConnectionSelection` derived from `ClientContext::connection_selection()`.
-    pub async fn ensure_connected(
-        &mut self,
-        server_id: &str,
-    ) -> Result<String> {
-        let selection = ConnectionSelection {
-            server_id: server_id.to_string(),
-            affinity_key: crate::core::capability::AffinityKey::Default,
-        };
-        self.ensure_connected_with_selection(&selection).await
-    }
-
-    /// Ensure a connection exists for a production route using affinity-aware routing.
-    ///
-    /// This method implements the full production routing lifecycle:
-    /// 1. Check if a route already exists via `resolve_production_route`
-    /// 2. If exists and instance is ready, return the instance_id
-    /// 3. If not, allocate a new route via `allocate_production_route`
-    /// 4. Establish the connection via `connect_internal`
-    pub async fn ensure_connected_with_selection(
-        &mut self,
-        selection: &ConnectionSelection,
-    ) -> Result<String> {
-        if let Some(instance_id) = self.resolve_production_route(selection) {
-            if let Ok(Some(ready_id)) = self.select_ready_instance_id(selection) {
-                if ready_id == instance_id {
-                    return Ok(instance_id);
-                }
-            }
-        }
-
-        let instance_id = self.allocate_production_route(selection);
-        self.connect_internal(&selection.server_id, &instance_id).await?;
-        Ok(instance_id)
-    }
-
     /// Internal connection logic
-    async fn connect_internal(
+    pub(crate) async fn connect_internal(
         &mut self,
         server_id: &str,
         instance_id: &str,
@@ -1113,7 +1072,7 @@ impl UpstreamConnectionPool {
     /// Enable and start a server.
     ///
     /// This is an admin/control-plane operation that creates a shared connection.
-    /// Production routing will use `ensure_connected_with_selection()` with proper affinity.
+    /// Production demand routing goes through the startup ownership coordinator.
     pub async fn enable_server(
         &mut self,
         server_id: &str,

@@ -429,9 +429,15 @@ async fn run_background_sync_and_collect_events(
         mcp_servers: HashMap::from([(server_id.to_string(), server_config)]),
         ..Default::default()
     };
-    let mut pool = UpstreamConnectionPool::new(Arc::new(config), Some(database));
-    let instance_id = pool
-        .ensure_connected(server_id)
+    let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
+        Arc::new(config),
+        Some(database),
+    )));
+    let selection = mcpmate::core::capability::ConnectionSelection {
+        server_id: server_id.to_string(),
+        affinity_key: mcpmate::core::capability::AffinityKey::Default,
+    };
+    let instance_id = UpstreamConnectionPool::ensure_connected_coordinated(&pool, &selection)
         .await
         .expect("connect background sync owner");
     let mut counts = CatalogEventCounts::default();
@@ -446,7 +452,9 @@ async fn run_background_sync_and_collect_events(
     while let Ok(event) = receiver.try_recv() {
         counts.observe(event);
     }
-    pool.disconnect(server_id, &instance_id)
+    pool.lock()
+        .await
+        .disconnect(server_id, &instance_id)
         .await
         .expect("disconnect background sync owner");
     counts
@@ -1965,10 +1973,11 @@ async fn successful_production_startup_has_one_capability_sync_owner() {
     handlers.init().expect("install production event handlers");
     let mut receiver = EventBus::global().subscribe_async();
 
-    let instance_id = pool
-        .lock()
-        .await
-        .ensure_connected(server_id)
+    let selection = mcpmate::core::capability::ConnectionSelection {
+        server_id: server_id.to_string(),
+        affinity_key: mcpmate::core::capability::AffinityKey::Default,
+    };
+    let instance_id = UpstreamConnectionPool::ensure_connected_coordinated(&pool, &selection)
         .await
         .expect("connect startup owner");
     let mut events = CatalogEventCounts::default();

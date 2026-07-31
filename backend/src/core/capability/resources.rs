@@ -443,26 +443,24 @@ pub async fn read_upstream_resource(
         }
 
         if target_instance_id.is_none() {
-            if let Some(selection) = connection_selection {
-                let scoped_selection = crate::core::capability::ConnectionSelection {
+            drop(pool);
+            let scoped_selection = connection_selection
+                .map(|selection| crate::core::capability::ConnectionSelection {
                     server_id: server_id.to_string(),
                     affinity_key: selection.affinity_key.clone(),
-                };
-                let iid = pool
-                    .ensure_connected_with_selection(&scoped_selection)
-                    .await
-                    .context(format!(
-                        "Failed to ensure scoped connection for server '{}' (resource '{}')",
-                        server_id, uri
-                    ))?;
-                target_instance_id = Some(iid);
-            } else {
-                let iid = pool.ensure_connected(server_id).await.context(format!(
+                })
+                .unwrap_or_else(|| crate::core::capability::ConnectionSelection {
+                    server_id: server_id.to_string(),
+                    affinity_key: crate::core::capability::AffinityKey::Default,
+                });
+            let iid = UpstreamConnectionPool::ensure_connected_coordinated(connection_pool, &scoped_selection)
+                .await
+                .context(format!(
                     "Failed to ensure connection for server '{}' (resource '{}')",
                     server_id, uri
                 ))?;
-                target_instance_id = Some(iid);
-            }
+            pool = connection_pool.lock().await;
+            target_instance_id = Some(iid);
         }
 
         let iid = target_instance_id.expect("instance id must be set");
