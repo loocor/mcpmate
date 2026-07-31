@@ -7,6 +7,7 @@ import type {
 } from "./types";
 
 const WEB_DEV_CALLBACK_ORIGIN = "http://127.0.0.1:5173";
+const OAUTH_CALLBACK_STORAGE_KEY = "mcpmate.oauth.callback";
 function isHttpCallbackSurface(): boolean {
 	if (typeof window === "undefined") {
 		return false;
@@ -64,8 +65,8 @@ export async function resolveOAuthCallbackAccess(
 }
 
 function popupFeatures(): string {
-	const width = Math.min(500, window.outerWidth - 40);
-	const height = Math.min(700, window.outerHeight - 60);
+	const width = Math.max(320, Math.min(500, window.outerWidth - 40));
+	const height = Math.max(480, Math.min(700, window.outerHeight - 60));
 	const left = window.screenX + (window.outerWidth - width) / 2;
 	const top = window.screenY + (window.outerHeight - height) / 2;
 	return `width=${width},height=${height},left=${left},top=${top}`;
@@ -76,6 +77,44 @@ interface OAuthPopupPreparationCopy {
 	heading: string;
 	description: string;
 	language: string;
+}
+
+function tryAction(action: () => void): boolean {
+	try {
+		action();
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+export function publishOAuthCallbackNotification(
+	payload: OAuthCallbackNotificationPayload,
+): void {
+	const opener = window.opener;
+	if (opener && tryAction(() => opener.postMessage(payload, window.location.origin))) {
+		tryAction(() => opener.focus());
+		return;
+	}
+
+	if ("BroadcastChannel" in window) {
+		const published = tryAction(() => {
+			const channel = new BroadcastChannel("mcpmate-oauth");
+			try {
+				channel.postMessage(payload);
+			} finally {
+				channel.close();
+			}
+		});
+		if (published) {
+			return;
+		}
+	}
+
+	tryAction(() => {
+		window.localStorage.setItem(OAUTH_CALLBACK_STORAGE_KEY, JSON.stringify(payload));
+		window.localStorage.removeItem(OAUTH_CALLBACK_STORAGE_KEY);
+	});
 }
 
 function escapeHtml(value: string): string {

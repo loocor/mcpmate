@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+	publishOAuthCallbackNotification,
 	reserveOAuthAuthorizationWindow,
 	startOAuthAccessFlow,
 } from "./oauth-callback-access";
@@ -9,6 +10,7 @@ import type { OAuthConfigRequest, OAuthStatus } from "./types";
 const originalPrepareOAuth = serversApi.prepareOAuth;
 const originalInitiateOAuth = serversApi.initiateOAuth;
 const originalWindow = globalThis.window;
+const originalBroadcastChannel = globalThis.BroadcastChannel;
 
 const config: OAuthConfigRequest = {
 	authorization_endpoint: "",
@@ -18,7 +20,14 @@ const config: OAuthConfigRequest = {
 	redirect_uri: "",
 };
 
-function installWebWindow(open: Window["open"], assign: Location["assign"]): void {
+function installWebWindow(
+	open: Window["open"],
+	assign: Location["assign"],
+	dimensions: { outerWidth: number; outerHeight: number } = {
+		outerWidth: 1440,
+		outerHeight: 900,
+	},
+): void {
 	Object.defineProperty(globalThis, "window", {
 		configurable: true,
 		value: {
@@ -27,8 +36,8 @@ function installWebWindow(open: Window["open"], assign: Location["assign"]): voi
 				origin: "http://localhost:5173",
 				assign,
 			},
-			outerWidth: 1440,
-			outerHeight: 900,
+			outerWidth: dimensions.outerWidth,
+			outerHeight: dimensions.outerHeight,
 			screenX: 0,
 			screenY: 0,
 			open,
@@ -63,6 +72,10 @@ afterEach(() => {
 	Object.defineProperty(globalThis, "window", {
 		configurable: true,
 		value: originalWindow,
+	});
+	Object.defineProperty(globalThis, "BroadcastChannel", {
+		configurable: true,
+		value: originalBroadcastChannel,
 	});
 });
 
@@ -149,5 +162,105 @@ describe("reserveOAuthAuthorizationWindow", () => {
 		expect(popupHtml).toContain("<title>MCPMate OAuth</title>");
 		expect(popupHtml).toContain("Preparing authorization");
 		expect(popupHtml).toContain("Discovering OAuth metadata and registering a secure client.");
+	});
+
+	test("uses positive popup dimensions in a very small browser window", () => {
+		let features = "";
+		const authorizationWindow = {
+			opener: window,
+			document: {
+				open: () => undefined,
+				write: () => undefined,
+				close: () => undefined,
+			},
+		} as unknown as Window;
+		installWebWindow(
+			(_url, _target, windowFeatures) => {
+				features = String(windowFeatures);
+				return authorizationWindow;
+			},
+			() => undefined,
+			{ outerWidth: 20, outerHeight: 40 },
+		);
+
+		reserveOAuthAuthorizationWindow({
+			title: "MCPMate OAuth",
+			heading: "Preparing authorization",
+			description: "Preparing a secure authorization window.",
+			language: "en",
+		});
+
+		expect(features).toContain("width=320");
+		expect(features).toContain("height=480");
+	});
+});
+
+describe("publishOAuthCallbackNotification", () => {
+	test("publishes an opener-independent storage event payload", () => {
+		let storedPayload = "";
+		let removedKey = "";
+		installWebWindow(() => null, () => undefined);
+		Object.assign(window, {
+			opener: null,
+			localStorage: {
+				setItem: (key: string, value: string) => {
+					if (key === "mcpmate.oauth.callback") {
+						storedPayload = value;
+					}
+				},
+				removeItem: (key: string) => {
+					removedKey = key;
+				},
+			},
+		});
+		const payload = {
+			type: "OAUTH_CALLBACK_ERROR" as const,
+			error: "Authorization failed",
+			timestamp: 123,
+		};
+
+		publishOAuthCallbackNotification(payload);
+
+		expect(JSON.parse(storedPayload)).toEqual(payload);
+		expect(removedKey).toBe("mcpmate.oauth.callback");
+	});
+
+	test("does not publish a storage fallback when BroadcastChannel succeeds", () => {
+		const channelMessages: unknown[] = [];
+		let storageWrites = 0;
+		class TestBroadcastChannel {
+			constructor(_name: string) {}
+
+			postMessage(payload: unknown): void {
+				channelMessages.push(payload);
+			}
+
+			close(): void {}
+		}
+		installWebWindow(() => null, () => undefined);
+		Object.assign(window, {
+			opener: null,
+			BroadcastChannel: TestBroadcastChannel,
+			localStorage: {
+				setItem: () => {
+					storageWrites += 1;
+				},
+				removeItem: () => undefined,
+			},
+		});
+		Object.defineProperty(globalThis, "BroadcastChannel", {
+			configurable: true,
+			value: TestBroadcastChannel,
+		});
+		const payload = {
+			type: "OAUTH_CALLBACK_ERROR" as const,
+			error: "Authorization failed",
+			timestamp: 123,
+		};
+
+		publishOAuthCallbackNotification(payload);
+
+		expect(channelMessages).toEqual([payload]);
+		expect(storageWrites).toBe(0);
 	});
 });

@@ -6,6 +6,7 @@ import { serversApi } from "../../lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
+import { publishOAuthCallbackNotification } from "../../lib/oauth-callback-access";
 
 export function OAuthCallbackPage() {
 	const { t, i18n } = useTranslation("servers");
@@ -36,33 +37,6 @@ export function OAuthCallbackPage() {
 		const callbackCode: string = code;
 		const callbackState: string = state;
 
-		const runSafely = (action: () => void) => {
-			try {
-				action();
-			} catch (error) {
-				void error;
-			}
-		};
-
-		const notifyMainWindow = (payload: Record<string, unknown>) => {
-			const targetOrigin = window.location.origin;
-
-			runSafely(() => {
-				if (window.opener) {
-					window.opener.postMessage(payload, targetOrigin);
-					window.opener.focus();
-				}
-			});
-
-			if (typeof window !== "undefined" && "BroadcastChannel" in window) {
-				runSafely(() => {
-					const channel = new BroadcastChannel("mcpmate-oauth");
-					channel.postMessage(payload);
-					channel.close();
-				});
-			}
-		};
-
 		async function processCallback() {
 			if (hasProcessedRef.current) {
 				return;
@@ -83,7 +57,7 @@ export function OAuthCallbackPage() {
 					timestamp: Date.now(),
 				};
 
-				notifyMainWindow(successPayload);
+				publishOAuthCallbackNotification(successPayload);
 
 				redirectTimer = setTimeout(() => {
 					window.close();
@@ -97,7 +71,7 @@ export function OAuthCallbackPage() {
 					  });
 				setErrorMessage(errorMsg);
 
-				notifyMainWindow({
+				publishOAuthCallbackNotification({
 					type: "OAUTH_CALLBACK_ERROR",
 					error: errorMsg,
 					timestamp: Date.now(),
