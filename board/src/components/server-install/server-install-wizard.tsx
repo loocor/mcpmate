@@ -2473,7 +2473,7 @@ export const ServerInstallWizard = forwardRef(
 																	shouldFocus: false,
 																});
 															}}
-															onInitiateOAuth={async (config) => {
+															onInitiateOAuth={async (config, authorizationWindow) => {
 																const namespaceValid = await trigger("name", {
 																	shouldFocus: true,
 																});
@@ -2536,6 +2536,7 @@ export const ServerInstallWizard = forwardRef(
 																await startOAuthAccessFlow(
 																	targetServerId,
 																	config,
+																	authorizationWindow,
 																);
 															}}
 														/>
