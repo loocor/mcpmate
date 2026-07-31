@@ -873,7 +873,8 @@ impl UpstreamConnectionPool {
             return Ok(());
         };
         let peer_info = service.peer_info();
-        if let Some(peer) = peer_info.as_ref() {
+        let initialize = crate::core::transport::client::legacy_initialize_result(peer_info.as_deref())?;
+        if let Some(peer) = initialize.as_ref() {
             crate::config::server::meta::update_server_info(
                 &database.pool,
                 &server_id,
@@ -886,7 +887,7 @@ impl UpstreamConnectionPool {
             .with_context(|| format!("Failed to persist standard server information for '{server_id}'"))?;
         }
 
-        let server_icons = peer_info.as_ref().and_then(|info| info.server_info.icons.clone());
+        let server_icons = initialize.as_ref().and_then(|info| info.server_info.icons.clone());
         let icons_database = database.clone();
         let icons_server_id = server_id.clone();
         tokio::spawn(async move {

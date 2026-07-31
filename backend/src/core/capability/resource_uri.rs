@@ -1482,14 +1482,14 @@ mod tests {
     #[tokio::test]
     async fn rewrites_only_typed_embedded_resource_content_in_tool_results() {
         use rmcp::model::{
-            Annotations, AudioContent, CallToolResult, ContentBlock, Icon, Meta, Resource, ResourceContents, Role,
-            TextContent,
+            Annotations, AudioContent, CallToolResult, ContentBlock, Icon, MetaObject, Resource, ResourceContents,
+            Role, TextContent,
         };
 
         let annotations = Annotations::default()
             .with_audience(vec![Role::User])
             .with_priority(0.75);
-        let mut meta = Meta::new();
+        let mut meta = MetaObject::new();
         meta.0.insert("source".to_string(), serde_json::json!("upstream"));
 
         let mut result = CallToolResult::structured(serde_json::json!({

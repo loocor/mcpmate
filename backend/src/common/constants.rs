@@ -123,16 +123,30 @@ pub mod client_headers {
 
 /// MCP protocol constants shared across client and server boundaries.
 pub mod protocol {
+    use std::borrow::Cow;
+
+    use rmcp::model::ProtocolVersion;
+
     pub const MCP_PROTOCOL_VERSION_HEADER: &str = "MCP-Protocol-Version";
     pub const MCP_PROTOCOL_VERSION_HEADER_LOWER: &str = "mcp-protocol-version";
 
-    pub const V_2024_11_05: &str = "2024-11-05";
-    pub const V_2025_03_26: &str = "2025-03-26";
-    pub const V_2025_06_18: &str = "2025-06-18";
-    pub const V_2025_11_25: &str = "2025-11-25";
+    pub const CURRENT_VERSION: &str = "2025-11-25";
+    pub const SUPPORTED_DOWNSTREAM_PROTOCOL_VERSION_VALUES: &[ProtocolVersion] = &[
+        ProtocolVersion::V_2025_11_25,
+        ProtocolVersion::V_2025_06_18,
+        ProtocolVersion::V_2025_03_26,
+        ProtocolVersion::V_2024_11_05,
+    ];
 
-    pub const CURRENT_VERSION: &str = V_2025_11_25;
-    pub const SUPPORTED_DOWNSTREAM_PROTOCOL_VERSIONS: &[&str] = &[CURRENT_VERSION, V_2025_06_18, V_2025_03_26];
+    pub fn supported_downstream_protocol_versions() -> Cow<'static, [ProtocolVersion]> {
+        Cow::Borrowed(SUPPORTED_DOWNSTREAM_PROTOCOL_VERSION_VALUES)
+    }
+
+    pub fn supports_downstream_protocol_version(protocol_version: &str) -> bool {
+        SUPPORTED_DOWNSTREAM_PROTOCOL_VERSION_VALUES
+            .iter()
+            .any(|supported| supported.as_str() == protocol_version)
+    }
 }
 
 /// Database constants for unified database operations

@@ -45,6 +45,9 @@ where
         service.peer_info().is_some(),
         "Server '{server_name}' completed initialize without peer information"
     );
+    service
+        .set_response_cache_config(rmcp::ClientCacheConfig::disabled())
+        .await;
 
     Ok(service)
 }
@@ -125,4 +128,47 @@ pub async fn connect_server_simple(
     Option<u32>,
 )> {
     connect_server(server_name, server_config, server_type, transport_type, None, None).await
+}
+
+#[cfg(test)]
+mod tests {
+    use rmcp::{
+        ClientCacheConfig, ServerHandler, ServiceExt,
+        model::{ServerCapabilities, ServerInfo},
+    };
+    use tokio_util::sync::CancellationToken;
+
+    use super::initialize_client_service;
+
+    #[derive(Clone)]
+    struct TestServer;
+
+    impl ServerHandler for TestServer {
+        fn get_info(&self) -> ServerInfo {
+            ServerInfo::new(ServerCapabilities::default())
+        }
+    }
+
+    #[tokio::test]
+    async fn initialized_client_disables_rmcp_response_cache() {
+        let (server_transport, client_transport) = tokio::io::duplex(4096);
+        let server = tokio::spawn(async move {
+            let service = TestServer.serve(server_transport).await.expect("serve test server");
+            service.waiting().await.expect("wait for test server");
+        });
+
+        let service = initialize_client_service(
+            "cache-policy",
+            client_transport,
+            CancellationToken::new(),
+            std::time::Duration::from_secs(1),
+        )
+        .await
+        .expect("initialize client");
+
+        assert_eq!(service.response_cache_config().await, ClientCacheConfig::disabled());
+
+        service.cancel().await.expect("cancel client");
+        server.await.expect("join test server");
+    }
 }

@@ -1,13 +1,40 @@
 use once_cell::sync::OnceCell;
 use rmcp::{
     ClientHandler, RoleClient,
-    model::{ClientCapabilities, ClientInfo, Implementation, ProtocolVersion},
+    model::{
+        ClientCapabilities, ClientInfo, Implementation, InitializeResult, NotificationMetaObject, ProgressToken,
+        ProtocolVersion, ServerPeerInfo,
+    },
 };
 
 use crate::core::proxy::server::ProxyServer;
 
 fn global_proxy_server() -> Option<ProxyServer> {
     ProxyServer::global().and_then(|server| server.try_lock().ok().map(|guard| guard.clone()))
+}
+
+pub(crate) fn legacy_initialize_result(peer_info: Option<&ServerPeerInfo>) -> anyhow::Result<Option<InitializeResult>> {
+    peer_info
+        .map(|peer| {
+            let server_info = peer.server_info.clone().ok_or_else(|| {
+                anyhow::anyhow!("Legacy initialize completed without server implementation information")
+            })?;
+            let mut result = InitializeResult::new(peer.capabilities.clone())
+                .with_protocol_version(peer.protocol_version.clone())
+                .with_server_info(server_info);
+            if let Some(instructions) = peer.instructions.clone() {
+                result = result.with_instructions(instructions);
+            }
+            result.meta = peer.meta.clone();
+            Ok(result)
+        })
+        .transpose()
+}
+
+fn notification_progress_token(meta: &NotificationMetaObject) -> Option<ProgressToken> {
+    meta.get("progressToken")
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok())
 }
 
 /// Minimal upstream client handler used by the proxy when connecting to upstream MCP servers.
@@ -45,10 +72,8 @@ impl UpstreamClientHandler {
 
 impl ClientHandler for UpstreamClientHandler {
     fn get_info(&self) -> ClientInfo {
-        // Use the older widely supported version for upstream compatibility;
-        // the proxy edge validates downstream protocol headers separately.
         ClientInfo::new(ClientCapabilities::default(), Self::build_client_impl())
-            .with_protocol_version(ProtocolVersion::V_2025_03_26)
+            .with_protocol_version(ProtocolVersion::V_2025_11_25)
     }
 
     async fn on_progress(
@@ -67,7 +92,7 @@ impl ClientHandler for UpstreamClientHandler {
         if let Some(server_id) = self.server_id.get() {
             if let Some(proxy_server) = global_proxy_server() {
                 let _ = proxy_server
-                    .forward_upstream_progress(server_id, params.clone(), context.meta.get_progress_token())
+                    .forward_upstream_progress(server_id, params.clone(), notification_progress_token(&context.meta))
                     .await;
             }
         }
@@ -117,12 +142,39 @@ impl ClientHandler for UpstreamClientHandler {
         if let Some(server_id) = self.server_id.get() {
             if let Some(proxy_server) = global_proxy_server() {
                 let _ = proxy_server
-                    .forward_upstream_log(server_id, params.clone(), context.meta.get_progress_token())
+                    .forward_upstream_log(server_id, params.clone(), notification_progress_token(&context.meta))
                     .await;
             }
         }
-        let token = context.meta.get_progress_token();
+        let token = notification_progress_token(&context.meta);
         let token_ref = token.as_ref();
         let _ = crate::inspector::service::inspector_forward_log(token_ref, &params).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_initialize_result_preserves_initialize_fields() {
+        let original = InitializeResult::new(rmcp::model::ServerCapabilities::default())
+            .with_protocol_version(ProtocolVersion::V_2025_11_25)
+            .with_server_info(Implementation::new("test-server", "1.0.0"))
+            .with_instructions("test instructions");
+        let peer_info = ServerPeerInfo::from(original.clone());
+
+        let converted = legacy_initialize_result(Some(&peer_info))
+            .expect("convert legacy peer info")
+            .expect("peer info should produce initialize result");
+
+        assert_eq!(converted, original);
+    }
+
+    #[test]
+    fn upstream_client_prefers_2025_11_25() {
+        let handler = UpstreamClientHandler::new("test-server".to_string());
+
+        assert_eq!(handler.get_info().protocol_version, ProtocolVersion::V_2025_11_25);
     }
 }

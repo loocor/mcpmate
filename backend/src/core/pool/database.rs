@@ -206,7 +206,7 @@ impl UpstreamConnectionPool {
             _profile_data.len()
         );
 
-        let initialize = service.peer_info().as_deref().cloned();
+        let initialize = crate::core::transport::client::legacy_initialize_result(service.peer_info().as_deref())?;
         let mut discovered_tools: Vec<Tool> = Vec::new();
         let mut discovered_resources: Vec<Resource> = Vec::new();
         let mut discovered_prompts: Vec<rmcp::model::Prompt> = Vec::new();

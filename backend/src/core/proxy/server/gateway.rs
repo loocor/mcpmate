@@ -17,10 +17,9 @@ use anyhow::Context;
 use async_trait::async_trait;
 use once_cell::sync::OnceCell;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, GetPromptRequestParams, GetPromptResult, InitializeRequestParams,
-    ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, ReadResourceRequestParams,
-    ReadResourceResult, RequestId, ResourceUpdatedNotificationParam, ServerInfo, SubscribeRequestParams,
-    UnsubscribeRequestParams,
+    CallToolRequestParams, GetPromptRequestParams, InitializeRequestParams, ListPromptsResult,
+    ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, ReadResourceRequestParams, RequestId,
+    ResourceUpdatedNotificationParam, ServerInfo, SubscribeRequestParams, UnsubscribeRequestParams,
 };
 use rmcp::{ServerHandler, service::RequestContext};
 use serde_json::{Map, Value};
@@ -860,21 +859,23 @@ impl ProxyServer {
     }
 
     fn is_valid_protocol_version(protocol_version: &str) -> bool {
-        protocol::SUPPORTED_DOWNSTREAM_PROTOCOL_VERSIONS.contains(&protocol_version)
+        protocol::supports_downstream_protocol_version(protocol_version)
     }
 
     fn validate_protocol_version(protocol_version: &str) -> Result<(), rmcp::ErrorData> {
         if Self::is_valid_protocol_version(protocol_version) {
             return Ok(());
         }
-        Err(rmcp::ErrorData::invalid_request(
-            format!(
-                "Unsupported {}: {}",
-                protocol::MCP_PROTOCOL_VERSION_HEADER,
-                protocol_version
-            ),
-            None,
-        ))
+        let requested = serde_json::from_value(serde_json::Value::String(protocol_version.to_string()))
+            .map_err(|error| rmcp::ErrorData::invalid_params(error.to_string(), None))?;
+        Err(Self::unsupported_protocol_version(requested))
+    }
+
+    fn unsupported_protocol_version(protocol_version: rmcp::model::ProtocolVersion) -> rmcp::ErrorData {
+        rmcp::ErrorData::unsupported_protocol_version(
+            protocol_version,
+            protocol::supported_downstream_protocol_versions().as_ref(),
+        )
     }
 
     pub fn new(config: Arc<crate::core::models::Config>) -> Self {
@@ -1128,7 +1129,7 @@ impl ProxyServer {
         let server_config = rmcp::transport::StreamableHttpServerConfig::default()
             .with_sse_keep_alive(Some(std::time::Duration::from_secs(15)))
             .with_sse_retry(Some(std::time::Duration::from_secs(3)))
-            .with_stateful_mode(true)
+            .with_legacy_session_mode(true)
             .with_json_response(false)
             .with_cancellation_token(self.cancellation_token.clone());
         let session_manager = std::sync::Arc::new(
@@ -1705,12 +1706,28 @@ impl ProxyServer {
 }
 
 impl ServerHandler for ProxyServer {
+    fn supported_protocol_versions(&self) -> std::borrow::Cow<'static, [rmcp::model::ProtocolVersion]> {
+        protocol::supported_downstream_protocol_versions()
+    }
+
+    fn discover(
+        &self,
+        _context: RequestContext<rmcp::RoleServer>,
+    ) -> impl std::future::Future<Output = Result<rmcp::model::DiscoverResult, rmcp::ErrorData>> + Send + '_ {
+        std::future::ready(Err(rmcp::ErrorData::method_not_found::<
+            rmcp::model::DiscoverRequestMethod,
+        >()))
+    }
+
     async fn initialize(
         &self,
         request: InitializeRequestParams,
         context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ServerInfo, rmcp::ErrorData> {
         let started_at = std::time::Instant::now();
+        if !Self::is_valid_protocol_version(request.protocol_version.as_str()) {
+            return Err(Self::unsupported_protocol_version(request.protocol_version.clone()));
+        }
         self.enforce_origin_if_present(&context)?;
         tracing::info!(
             client_protocol = %request.protocol_version,
@@ -1866,7 +1883,7 @@ impl ServerHandler for ProxyServer {
             .enable_resources_subscribe()
             .build();
         ServerInfo::new(capabilities)
-            .with_protocol_version(rmcp::model::ProtocolVersion::LATEST)
+            .with_protocol_version(rmcp::model::ProtocolVersion::V_2025_11_25)
             .with_server_info(crate::common::constants::branding::create_implementation())
             .with_instructions(crate::common::constants::branding::DESCRIPTION.to_string())
     }
@@ -1906,7 +1923,7 @@ impl ServerHandler for ProxyServer {
         &self,
         request: CallToolRequestParams,
         _context: RequestContext<rmcp::RoleServer>,
-    ) -> Result<CallToolResult, rmcp::ErrorData> {
+    ) -> Result<rmcp::model::CallToolResponse, rmcp::ErrorData> {
         let audit_client = self.resolve_bound_client_context(&_context).await.ok();
         let started_at = std::time::Instant::now();
         let target = Some(request.name.to_string());
@@ -1935,7 +1952,7 @@ impl ServerHandler for ProxyServer {
             result.as_ref().err().map(ToString::to_string),
         )
         .await;
-        result
+        result.map(Into::into)
     }
 
     async fn list_resources(
@@ -1983,7 +2000,7 @@ impl ServerHandler for ProxyServer {
         &self,
         request: ReadResourceRequestParams,
         _context: RequestContext<rmcp::RoleServer>,
-    ) -> Result<ReadResourceResult, rmcp::ErrorData> {
+    ) -> Result<rmcp::model::ReadResourceResponse, rmcp::ErrorData> {
         let audit_client = self.resolve_bound_client_context(&_context).await.ok();
         let started_at = std::time::Instant::now();
         let target = Some(request.uri.to_string());
@@ -2009,7 +2026,7 @@ impl ServerHandler for ProxyServer {
             result.as_ref().err().map(ToString::to_string),
         )
         .await;
-        result
+        result.map(Into::into)
     }
 
     async fn list_prompts(
@@ -2047,7 +2064,7 @@ impl ServerHandler for ProxyServer {
         &self,
         request: GetPromptRequestParams,
         _context: RequestContext<rmcp::RoleServer>,
-    ) -> Result<GetPromptResult, rmcp::ErrorData> {
+    ) -> Result<rmcp::model::GetPromptResponse, rmcp::ErrorData> {
         let audit_client = self.resolve_bound_client_context(&_context).await.ok();
         let started_at = std::time::Instant::now();
         let target = Some(request.name.to_string());
@@ -2076,7 +2093,7 @@ impl ServerHandler for ProxyServer {
             result.as_ref().err().map(ToString::to_string),
         )
         .await;
-        result
+        result.map(Into::into)
     }
 }
 
@@ -2239,11 +2256,14 @@ mod tests {
             &self,
             request: ReadResourceRequestParams,
             _context: rmcp::service::RequestContext<rmcp::RoleServer>,
-        ) -> Result<ReadResourceResult, rmcp::ErrorData> {
-            Ok(ReadResourceResult::new(vec![rmcp::model::ResourceContents::text(
-                format!("read:{}", request.uri),
-                request.uri,
-            )]))
+        ) -> Result<rmcp::model::ReadResourceResponse, rmcp::ErrorData> {
+            Ok(
+                rmcp::model::ReadResourceResult::new(vec![rmcp::model::ResourceContents::text(
+                    format!("read:{}", request.uri),
+                    request.uri,
+                )])
+                .into(),
+            )
         }
     }
 
@@ -2510,6 +2530,10 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
+    #[expect(
+        deprecated,
+        reason = "MCPMate intentionally verifies pre-2026 resource subscriptions"
+    )]
     async fn resource_subscription_handler_reuses_visibility_and_canonical_routing() {
         let (_temp_dir, pool, mut server, server_id, profile_id) = create_subscription_test_server().await;
         let hosted_session = "hosted-subscription";
@@ -2618,6 +2642,10 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
+    #[expect(
+        deprecated,
+        reason = "MCPMate intentionally verifies pre-2026 resource subscriptions"
+    )]
     async fn resource_update_drops_subscription_after_surface_contraction() {
         let (_temp_dir, pool, server, server_id, profile_id) = create_subscription_test_server().await;
         let session_id = "contracted-subscription";
@@ -2835,6 +2863,10 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
+    #[expect(
+        deprecated,
+        reason = "MCPMate intentionally verifies pre-2026 resource subscriptions"
+    )]
     async fn unify_resource_subscription_accepts_only_selected_template_routes() {
         let (_temp_dir, _pool, server, server_id, _profile_id) = create_subscription_test_server().await;
         let session_id = "unify-subscription";
@@ -3188,30 +3220,31 @@ mod tests {
     }
 
     #[test]
-    fn resolve_effective_protocol_version_uses_negotiated_fallback() {
-        let negotiated_version = rmcp::model::ProtocolVersion::V_2025_03_26.to_string();
+    fn resolve_effective_protocol_version_accepts_every_supported_negotiated_version() {
+        for protocol_version in protocol::SUPPORTED_DOWNSTREAM_PROTOCOL_VERSION_VALUES {
+            let negotiated_version = protocol_version.to_string();
 
-        let resolved = ProxyServer::resolve_effective_protocol_version(None, Some(negotiated_version.clone()))
-            .expect("negotiated protocol version should be accepted");
+            let resolved = ProxyServer::resolve_effective_protocol_version(None, Some(negotiated_version.clone()))
+                .expect("supported negotiated protocol version should be accepted");
 
-        assert_eq!(resolved.as_deref(), Some(negotiated_version.as_str()));
+            assert_eq!(resolved.as_deref(), Some(negotiated_version.as_str()));
+        }
     }
 
     #[test]
     fn resolve_effective_protocol_version_rejects_unsupported_header() {
         let negotiated_version = rmcp::model::ProtocolVersion::V_2025_03_26.to_string();
 
-        let error =
-            ProxyServer::resolve_effective_protocol_version(Some(protocol::V_2024_11_05), Some(negotiated_version))
-                .expect_err("unsupported explicit header should fail");
+        let error = ProxyServer::resolve_effective_protocol_version(Some("2026-07-28"), Some(negotiated_version))
+            .expect_err("unsupported explicit header should fail");
 
+        assert_eq!(error.code, rmcp::model::ErrorCode::UNSUPPORTED_PROTOCOL_VERSION);
         assert_eq!(
-            error.message,
-            format!(
-                "Unsupported {}: {}",
-                protocol::MCP_PROTOCOL_VERSION_HEADER,
-                protocol::V_2024_11_05
-            )
+            error.data,
+            Some(serde_json::json!({
+                "requested": "2026-07-28",
+                "supported": protocol::SUPPORTED_DOWNSTREAM_PROTOCOL_VERSION_VALUES,
+            }))
         );
     }
 
@@ -3221,6 +3254,64 @@ mod tests {
             .expect("missing protocol version should not error before enforcement");
 
         assert_eq!(resolved, None);
+    }
+
+    #[tokio::test]
+    async fn proxy_server_exposes_only_supported_compatibility_lifecycle() {
+        let (_temp_dir, _pool, server) = create_mode_resolution_test_server().await;
+        let (context, client_service, server_service) =
+            subscription_request_context("protocol-client", "protocol-session").await;
+
+        assert_eq!(
+            server.supported_protocol_versions().as_ref(),
+            &[
+                rmcp::model::ProtocolVersion::V_2025_11_25,
+                rmcp::model::ProtocolVersion::V_2025_06_18,
+                rmcp::model::ProtocolVersion::V_2025_03_26,
+                rmcp::model::ProtocolVersion::V_2024_11_05,
+            ]
+        );
+        let error = server
+            .discover(context)
+            .await
+            .expect_err("compatibility mode must not expose server/discover");
+        assert_eq!(error.code, rmcp::model::ErrorCode::METHOD_NOT_FOUND);
+
+        client_service.cancel().await.expect("cancel context client");
+        server_service.cancel().await.expect("cancel context server");
+    }
+
+    #[tokio::test]
+    async fn proxy_initialize_rejects_2026_07_28_before_context_side_effects() {
+        let (_temp_dir, pool, server) = create_mode_resolution_test_server().await;
+        let (context, client_service, server_service) =
+            subscription_request_context("protocol-client", "protocol-session").await;
+        let request = InitializeRequestParams::new(
+            rmcp::model::ClientCapabilities::default(),
+            rmcp::model::Implementation::new("protocol-client", "1.0.0"),
+        )
+        .with_protocol_version(rmcp::model::ProtocolVersion::V_2026_07_28);
+
+        let error = rmcp::ServerHandler::initialize(&server, request, context)
+            .await
+            .expect_err("2026-07-28 must be rejected before client context publication");
+
+        assert_eq!(error.code, rmcp::model::ErrorCode::UNSUPPORTED_PROTOCOL_VERSION);
+        assert!(
+            !server
+                .client_context_resolver
+                .session_bindings
+                .contains_key("protocol-session")
+        );
+        assert!(!server.downstream_clients.contains_key("protocol-session"));
+        let observed_client_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM client WHERE identifier = ?")
+            .bind("protocol-client")
+            .fetch_one(&pool)
+            .await
+            .expect("count observed clients");
+        assert_eq!(observed_client_count, 0);
+        client_service.cancel().await.expect("cancel context client");
+        server_service.cancel().await.expect("cancel context server");
     }
 
     #[tokio::test]

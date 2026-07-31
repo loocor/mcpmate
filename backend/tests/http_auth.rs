@@ -63,7 +63,7 @@ async fn streamable_http_carries_bearer_on_init_sse_delete() -> anyhow::Result<(
         || Ok(DummyServer),
         Default::default(),
         rmcp::transport::streamable_http_server::StreamableHttpServerConfig::default()
-            .with_stateful_mode(true)
+            .with_legacy_session_mode(true)
             .with_sse_keep_alive(None)
             .with_sse_retry(Some(Duration::from_secs(3)))
             .with_json_response(false)

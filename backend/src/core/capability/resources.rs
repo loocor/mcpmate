@@ -584,7 +584,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use rmcp::model::{ListResourcesResult, ServerCapabilities, ServerInfo};
+    use rmcp::model::{ListResourcesResult, ReadResourceResponse, ServerCapabilities, ServerInfo};
     use rmcp::{ServerHandler, ServiceExt};
 
     #[derive(Clone, Default)]
@@ -614,12 +614,9 @@ mod tests {
             &self,
             request: ReadResourceRequestParams,
             _context: rmcp::service::RequestContext<rmcp::RoleServer>,
-        ) -> std::result::Result<ReadResourceResult, rmcp::ErrorData> {
+        ) -> std::result::Result<ReadResourceResponse, rmcp::ErrorData> {
             self.read_calls.fetch_add(1, Ordering::SeqCst);
-            Ok(ReadResourceResult::new(vec![rmcp::model::ResourceContents::text(
-                "ok",
-                request.uri,
-            )]))
+            Ok(ReadResourceResult::new(vec![rmcp::model::ResourceContents::text("ok", request.uri)]).into())
         }
     }
 
