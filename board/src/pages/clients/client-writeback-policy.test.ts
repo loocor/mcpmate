@@ -28,8 +28,10 @@ describe("client writeback policy", () => {
     expect(
       resolveClientWritebackDecision({
         mode: "create",
+        configFileChoice: "with_config_file",
         selectedStrategy: "deep_merge",
         discoveryStrategy: "deep_merge",
+        supportedTransportsChanged: false,
         baseline: {
           inheritedStrategy: "replace",
           effectiveStrategy: "replace",
@@ -38,27 +40,87 @@ describe("client writeback policy", () => {
     ).toEqual({
       update: { merge_strategy_override: "deep_merge" },
       effectiveStrategyChanged: false,
+      shouldReapplyClientConfig: false,
     });
+  });
+
+  for (const mode of ["create", "edit"] as const) {
+    test(`skips writeback and re-apply in ${mode} mode without a config file`, () => {
+      expect(
+        resolveClientWritebackDecision({
+          mode,
+          configFileChoice: "without_config_file",
+          selectedStrategy: "deep_merge",
+          baseline: null,
+          discoveryStrategy: mode === "create" ? "deep_merge" : null,
+          supportedTransportsChanged: true,
+        }),
+      ).toEqual({
+        update: {},
+        effectiveStrategyChanged: false,
+        shouldReapplyClientConfig: false,
+      });
+    });
+  }
+
+  test("requires a writeback baseline for a client with a config file", () => {
+    expect(
+      resolveClientWritebackDecision({
+        mode: "create",
+        configFileChoice: "with_config_file",
+        selectedStrategy: "deep_merge",
+        baseline: null,
+        discoveryStrategy: "deep_merge",
+        supportedTransportsChanged: false,
+      }),
+    ).toBeNull();
   });
 
   test("preserves an unchanged client override", () => {
     expect(
       resolveClientWritebackDecision({
         mode: "edit",
+        configFileChoice: "with_config_file",
         selectedStrategy: "deep_merge",
+        supportedTransportsChanged: false,
         baseline: {
           inheritedStrategy: "replace",
           effectiveStrategy: "deep_merge",
         },
       }),
-    ).toEqual({ update: {}, effectiveStrategyChanged: false });
+    ).toEqual({
+      update: {},
+      effectiveStrategyChanged: false,
+      shouldReapplyClientConfig: false,
+    });
+  });
+
+  test("re-applies a config file when supported transports change", () => {
+    expect(
+      resolveClientWritebackDecision({
+        mode: "edit",
+        configFileChoice: "with_config_file",
+        selectedStrategy: "deep_merge",
+        supportedTransportsChanged: true,
+        baseline: {
+          inheritedStrategy: "replace",
+          effectiveStrategy: "deep_merge",
+        },
+      }),
+    ).toEqual({
+      update: {},
+      effectiveStrategyChanged: false,
+      shouldReapplyClientConfig: true,
+    });
   });
 
   test("clears an override when the selection returns to the inherited strategy", () => {
     expect(
       resolveClientWritebackDecision({
         mode: "edit",
+        configFileChoice: "with_config_file",
         selectedStrategy: "replace",
+        supportedTransportsChanged: false,
         baseline: {
           inheritedStrategy: "replace",
           effectiveStrategy: "deep_merge",
@@ -67,6 +129,7 @@ describe("client writeback policy", () => {
     ).toEqual({
       update: { clear_merge_strategy_override: true },
       effectiveStrategyChanged: true,
+      shouldReapplyClientConfig: true,
     });
   });
 
@@ -74,7 +137,9 @@ describe("client writeback policy", () => {
     expect(
       resolveClientWritebackDecision({
         mode: "edit",
+        configFileChoice: "with_config_file",
         selectedStrategy: "deep_merge",
+        supportedTransportsChanged: false,
         baseline: {
           inheritedStrategy: "replace",
           effectiveStrategy: "replace",
@@ -83,6 +148,7 @@ describe("client writeback policy", () => {
     ).toEqual({
       update: { merge_strategy_override: "deep_merge" },
       effectiveStrategyChanged: true,
+      shouldReapplyClientConfig: true,
     });
   });
 });

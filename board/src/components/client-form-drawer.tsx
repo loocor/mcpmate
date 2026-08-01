@@ -922,6 +922,7 @@ export function ClientFormDrawer({
 	const configFileParseContainerKeysText = form.watch("configFileParseContainerKeysText");
 	const supportedTransports = form.watch("supportedTransports");
 	const mergeStrategySelection = form.watch("mergeStrategySelection");
+	const writebackRequired = configFileChoice === "with_config_file";
 	const writebackChanged =
 		writebackBaseline !== null &&
 		mergeStrategySelection !== writebackBaseline.effectiveStrategy;
@@ -986,7 +987,7 @@ export function ClientFormDrawer({
 	const clientMergeDetailsQuery = useQuery({
 		queryKey: ["client-config", client?.identifier],
 		queryFn: () => clientsApi.configDetails(client?.identifier ?? "", false),
-		enabled: open && mode === "edit" && Boolean(client?.identifier),
+		enabled: open && mode === "edit" && writebackRequired && Boolean(client?.identifier),
 		staleTime: 60_000,
 		retry: false,
 	});
@@ -994,7 +995,7 @@ export function ClientFormDrawer({
 		mode === "edit"
 			? clientMergeDetailsQuery.isError
 			: systemSettingsQuery.isError && selectedAdminClient === null;
-	const writebackUnavailable = writebackBaseline === null;
+	const writebackUnavailable = writebackRequired && writebackBaseline === null;
 	const writebackHelpText = writebackLoadError
 		? t("detail.form.writeback.loadError", {
 				defaultValue: "Writeback behavior could not be loaded. Try again before saving.",
@@ -1608,21 +1609,22 @@ export function ClientFormDrawer({
 					}),
 				);
 			}
-			if (!writebackBaseline) {
+			const writebackDecision = resolveClientWritebackDecision({
+				mode,
+				configFileChoice: values.configFileChoice,
+				selectedStrategy: values.mergeStrategySelection,
+				baseline: writebackBaseline,
+				discoveryStrategy:
+					mode === "create" ? selectedAdminClient?.mergeStrategy : null,
+				supportedTransportsChanged,
+			});
+			if (!writebackDecision) {
 				throw new Error(
 					t("detail.form.writeback.loadError", {
 						defaultValue: "Writeback behavior could not be loaded. Try again before saving.",
 					}),
 				);
 			}
-			const writebackDecision = resolveClientWritebackDecision({
-				mode,
-				selectedStrategy: values.mergeStrategySelection,
-				baseline: writebackBaseline,
-				discoveryStrategy:
-					mode === "create" ? selectedAdminClient?.mergeStrategy : null,
-			});
-
 			await clientsApi.update({
 				identifier: savedIdentifier,
 				...writebackDecision.update,
@@ -1641,10 +1643,7 @@ export function ClientFormDrawer({
 				clear_transports: clearConfigFileOnSave,
 			});
 
-			if (
-				mode === "edit" &&
-				(supportedTransportsChanged || writebackDecision.effectiveStrategyChanged)
-			) {
+			if (writebackDecision.shouldReapplyClientConfig) {
 				const details = await clientsApi.configDetails(savedIdentifier, false);
 				const configMode = resolveClientConfigMode(
 					details?.config_mode ?? client?.config_mode,
