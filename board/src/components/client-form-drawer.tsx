@@ -1617,6 +1617,7 @@ export function ClientFormDrawer({
 				discoveryStrategy:
 					mode === "create" ? selectedAdminClient?.mergeStrategy : null,
 				supportedTransportsChanged,
+				transportEditorsChanged,
 			});
 			if (!writebackDecision) {
 				throw new Error(

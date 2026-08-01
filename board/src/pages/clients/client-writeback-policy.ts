@@ -20,6 +20,7 @@ export interface ClientWritebackDecisionInput {
   baseline: ClientWritebackBaseline | null;
   discoveryStrategy?: ClientMergeStrategy | null;
   supportedTransportsChanged: boolean;
+  transportEditorsChanged: boolean;
 }
 
 export type ClientWritebackUpdate =
@@ -40,6 +41,7 @@ export function resolveClientWritebackDecision({
   baseline,
   discoveryStrategy,
   supportedTransportsChanged,
+  transportEditorsChanged,
 }: ClientWritebackDecisionInput): ClientWritebackDecision | null {
   if (configFileChoice === "without_config_file") {
     return {
@@ -85,7 +87,9 @@ export function resolveClientWritebackDecision({
     ...decision,
     shouldReapplyClientConfig:
       mode === "edit" &&
-      (supportedTransportsChanged || decision.effectiveStrategyChanged),
+      (supportedTransportsChanged ||
+        transportEditorsChanged ||
+        decision.effectiveStrategyChanged),
   };
 }
 
