@@ -690,7 +690,7 @@ pub enum ContainerType {
 }
 
 /// Merge strategy
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum MergeStrategy {
     #[default]

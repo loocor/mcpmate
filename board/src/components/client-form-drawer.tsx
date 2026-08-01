@@ -29,15 +29,18 @@ import { mapDashboardSettingsToClientBackupPolicy } from "../lib/client-backup-p
 import { writeClipboardText } from "../lib/clipboard";
 import { readAdminDiscoveryPlatform } from "../lib/desktop-platform";
 import {
-	applyClientConfigWithResolvedSelection,
-	canApplyClientConfigWithState,
+	reapplyClientConfigAfterSettingsUpdate,
 	resolveClientConfigSyncErrorMessage,
-	resolveClientConfigMode,
 } from "../lib/client-config-sync";
 import { notifyError, notifyInfo, notifySuccess } from "../lib/notify";
 import { pickClientConfigFilePath, readAbsolutePathFromFile } from "../lib/pick-client-config-file";
 import { isTauriEnvironmentSync } from "../lib/platform";
 import { useAppStore } from "../lib/store";
+import {
+	resolveCreateClientWritebackBaseline,
+	resolveClientWritebackDecision,
+	type ClientWritebackBaseline,
+} from "../pages/clients/client-writeback-policy";
 import type {
 	ClientConfigFileParse,
 	ClientConfigFileParseInspectExistingReq,
@@ -673,6 +676,7 @@ function defaultValues(client?: ClientInfo | null): ClientRecordFormValues {
 		identifier,
 		displayName: client?.display_name ?? "",
 		configFileChoice,
+		mergeStrategySelection: "replace",
 		supportedTransports,
 		configPath: configFileChoice === "with_config_file" ? client?.config_path || "" : "",
 		configFileParseFormat: (effectiveParse?.format as ConfigParseFormatValue | undefined) ?? "json",
@@ -894,6 +898,7 @@ export function ClientFormDrawer({
 	const initialSupportedTransportsRef = useRef<SupportedTransportValue[]>(
 		defaultValues(client).supportedTransports,
 	);
+	const [writebackBaseline, setWritebackBaseline] = useState<ClientWritebackBaseline | null>(null);
 	const isTauriShell = useMemo(() => isTauriEnvironmentSync(), []);
 	const drawerContentRef = useRef<HTMLDivElement | null>(null);
 	const configPathFileInputRef = useRef<HTMLInputElement>(null);
@@ -915,6 +920,28 @@ export function ClientFormDrawer({
 	const configFileParseContainerType = form.watch("configFileParseContainerType");
 	const configFileParseContainerKeysText = form.watch("configFileParseContainerKeysText");
 	const supportedTransports = form.watch("supportedTransports");
+	const mergeStrategySelection = form.watch("mergeStrategySelection");
+	const writebackRequired = configFileChoice === "with_config_file";
+	const writebackChanged =
+		writebackBaseline !== null &&
+		mergeStrategySelection !== writebackBaseline.effectiveStrategy;
+	let writebackDescription: string;
+	if (mode === "create" || !writebackChanged) {
+		writebackDescription = t("detail.form.writeback.description", {
+			defaultValue:
+				"Choose how MCPMate writes MCP server entries into this client's configuration when applying or re-applying.",
+		});
+	} else if (mergeStrategySelection === "deep_merge") {
+		writebackDescription = t("detail.form.writeback.descriptions.deepMerge", {
+			defaultValue:
+				"If you were in replace mode, the config may contain only MCPMate. Switching to merge keeps newly added servers on future writes, but servers already managed by MCPMate are not restored.",
+		});
+	} else {
+		writebackDescription = t("detail.form.writeback.descriptions.replace", {
+			defaultValue:
+				"You were previously in merge mode, so the config may contain other MCP servers alongside MCPMate. Replace will replace them with MCPMate's rendered list.",
+		});
+	}
 	const parseFieldsDirty = Boolean(
 		form.formState.dirtyFields.configFileParseFormat ||
 		form.formState.dirtyFields.configFileParseContainerType ||
@@ -956,6 +983,23 @@ export function ClientFormDrawer({
 		staleTime: 60_000,
 		retry: false,
 	});
+	const clientMergeDetailsQuery = useQuery({
+		queryKey: ["client-config", client?.identifier],
+		queryFn: () => clientsApi.configDetails(client?.identifier ?? "", false),
+		enabled: open && mode === "edit" && writebackRequired && Boolean(client?.identifier),
+		staleTime: 60_000,
+		retry: false,
+	});
+	const writebackLoadError =
+		mode === "edit"
+			? clientMergeDetailsQuery.isError
+			: systemSettingsQuery.isError && selectedAdminClient === null;
+	const writebackUnavailable = writebackRequired && writebackBaseline === null;
+	const writebackHelpText = writebackLoadError
+		? t("detail.form.writeback.loadError", {
+				defaultValue: "Writeback behavior could not be loaded. Try again before saving.",
+			})
+		: writebackDescription;
 	const adminDiscoveryPlatform = adminDiscoveryPlatformQuery.data;
 	const adminCatalogQuery = useQuery({
 		queryKey: ["adminDiscoveryClients", "drawer", adminDiscoveryPlatform ?? "web", i18n.language],
@@ -974,6 +1018,23 @@ export function ClientFormDrawer({
 		() => adminCatalogQuery.data?.clients ?? [],
 		[adminCatalogQuery.data],
 	);
+	const matchingAdminClient = useMemo(() => {
+		if (mode !== "create") return null;
+		const currentIdentifier = normalizeClientIdentifier(identifier);
+		if (!currentIdentifier) return null;
+		return (
+			adminCatalogOptions.find(
+				(candidate) => normalizeClientIdentifier(candidate.identifier) === currentIdentifier,
+			) ?? null
+		);
+	}, [adminCatalogOptions, identifier, mode]);
+	const selectedAdminClientMatchesIdentifier =
+		selectedAdminClient !== null &&
+		normalizeClientIdentifier(selectedAdminClient.identifier) === normalizeClientIdentifier(identifier);
+	const createTemplateMergeStrategy =
+		(selectedAdminClientMatchesIdentifier ? selectedAdminClient?.mergeStrategy : null) ??
+		matchingAdminClient?.mergeStrategy ??
+		null;
 	const adminCatalogDiagnostics = adminCatalogQuery.data?.diagnostics ?? [];
 	const adminCatalogEmptyText = adminCatalogQuery.isError || adminDiscoveryPlatformQuery.isError
 		? t("detail.form.adminCatalog.loadError", { defaultValue: "Client presets are unavailable." })
@@ -1065,10 +1126,48 @@ export function ClientFormDrawer({
 		setTransportRuleEditors(transportRuleEditorsFromClient(client));
 		setSelectedTransportTab("");
 		initialSupportedTransportsRef.current = defaultValues(client).supportedTransports;
+		setWritebackBaseline(null);
 		setIsHydrating(true);
 		form.reset(defaultValues(client));
 		setIsHydrating(false);
 	}, [open, client, mode, form]);
+
+	useEffect(() => {
+		if (!open || mode !== "edit" || writebackBaseline !== null) return;
+		const details = clientMergeDetailsQuery.data;
+		if (!details) return;
+		const inheritedStrategy =
+			details.system_merge_strategy_override ?? details.template_merge_strategy;
+		setWritebackBaseline({
+			inheritedStrategy,
+			effectiveStrategy: details.effective_merge_strategy,
+		});
+		form.setValue(
+			"mergeStrategySelection",
+			details.merge_strategy_override ?? details.effective_merge_strategy,
+		);
+	}, [clientMergeDetailsQuery.data, form, mode, open, writebackBaseline]);
+
+	useEffect(() => {
+		if (!open || mode !== "create") return;
+		const baseline = resolveCreateClientWritebackBaseline({
+			systemSettingsLoaded: systemSettingsQuery.isSuccess,
+			systemOverride: systemSettingsQuery.data?.default_merge_strategy_override ?? null,
+			templateStrategy: createTemplateMergeStrategy,
+		});
+		setWritebackBaseline(baseline);
+		if (baseline && !form.formState.dirtyFields.mergeStrategySelection) {
+			form.setValue("mergeStrategySelection", baseline.effectiveStrategy);
+		}
+	}, [
+		createTemplateMergeStrategy,
+		form,
+		form.formState.dirtyFields.mergeStrategySelection,
+		mode,
+		open,
+		systemSettingsQuery.data,
+		systemSettingsQuery.isSuccess,
+	]);
 
 	useEffect(() => {
 		return () => {
@@ -1189,6 +1288,13 @@ export function ClientFormDrawer({
 		() => [
 			{ value: "with_config_file", label: t("detail.form.configFile.options.withConfigFile", { defaultValue: "Auto" }) },
 			{ value: "without_config_file", label: t("detail.form.configFile.options.withoutConfigFile", { defaultValue: "Manual" }) },
+		],
+		[t],
+	);
+	const writebackOptions: SegmentOption[] = useMemo(
+		() => [
+			{ value: "deep_merge", label: t("detail.form.writeback.options.deepMerge", { defaultValue: "Merge" }) },
+			{ value: "replace", label: t("detail.form.writeback.options.replace", { defaultValue: "Replace" }) },
 		],
 		[t],
 	);
@@ -1506,9 +1612,28 @@ export function ClientFormDrawer({
 					}),
 				);
 			}
-
+			const writebackDecision = resolveClientWritebackDecision({
+				mode,
+				configFileChoice: values.configFileChoice,
+				selectedStrategy: values.mergeStrategySelection,
+				baseline: writebackBaseline,
+				discoveryStrategy:
+					mode === "create" && selectedAdminClientMatchesIdentifier
+						? selectedAdminClient?.mergeStrategy
+						: null,
+				supportedTransportsChanged,
+				transportEditorsChanged,
+			});
+			if (!writebackDecision) {
+				throw new Error(
+					t("detail.form.writeback.loadError", {
+						defaultValue: "Writeback behavior could not be loaded. Try again before saving.",
+					}),
+				);
+			}
 			await clientsApi.update({
 				identifier: savedIdentifier,
+				...writebackDecision.update,
 				display_name: values.displayName || undefined,
 				config_file_state: values.configFileChoice,
 				config_path: hasWritableRules ? values.configPath?.trim() || undefined : undefined,
@@ -1524,41 +1649,26 @@ export function ClientFormDrawer({
 				clear_transports: clearConfigFileOnSave,
 			});
 
-			if (
-				mode === "edit" &&
-				!isSameSupportedTransports(
-					initialSupportedTransportsRef.current,
-					values.supportedTransports,
-				)
-			) {
+			if (writebackDecision.shouldReapplyClientConfig) {
 				const details = await clientsApi.configDetails(savedIdentifier, false);
-				const configMode = resolveClientConfigMode(
-					details?.config_mode ?? client?.config_mode,
-				);
-				if (
-					canApplyClientConfigWithState({
-						mode: configMode,
+				try {
+					await reapplyClientConfigAfterSettingsUpdate({
+						identifier: savedIdentifier,
+						configMode: details?.config_mode ?? client?.config_mode,
+						defaultMode: dashboardSettings.clientDefaultMode,
 						writableConfig: details?.writable_config,
 						approvalStatus: details?.approval_status,
-					}) &&
-					configMode
-				) {
-					try {
-						await applyClientConfigWithResolvedSelection({
-							identifier: savedIdentifier,
-							mode: configMode,
-							backupPolicy: mapDashboardSettingsToClientBackupPolicy(
-								dashboardSettings,
-							),
-						});
-					} catch (error) {
-						notifyError(
-							t("detail.notifications.applyFailed.title", {
-								defaultValue: "Apply failed",
-							}),
-							resolveClientConfigSyncErrorMessage(error, t),
-						);
-					}
+						backupPolicy: mapDashboardSettingsToClientBackupPolicy(
+							dashboardSettings,
+						),
+					});
+				} catch (error) {
+					notifyError(
+						t("detail.notifications.applyFailed.title", {
+							defaultValue: "Apply failed",
+						}),
+						resolveClientConfigSyncErrorMessage(error, t),
+					);
 				}
 			}
 
@@ -1893,6 +2003,24 @@ export function ClientFormDrawer({
 
 								{configFileChoice === "with_config_file" ? (
 									<>
+										<FormField control={form.control} name="mergeStrategySelection" render={({ field }) => (
+											<FormItem className="space-y-0">
+												<div className="flex items-start gap-4">
+													<FormLabel className={`${CLIENT_FORM_ROW_LABEL_CLASS} pt-2`}>
+														{t("detail.form.writeback.label", { defaultValue: "Writeback Behavior" })}
+													</FormLabel>
+													<div className="min-w-0 flex-1 space-y-2">
+														<FormControl>
+															<Segment value={field.value} onValueChange={field.onChange} options={writebackOptions} showDots={false} disabled={writebackUnavailable} />
+														</FormControl>
+														<FormDescription>
+															<span className={writebackLoadError ? "text-destructive" : undefined}>{writebackHelpText}</span>
+														</FormDescription>
+														<FormMessage />
+													</div>
+												</div>
+											</FormItem>
+										)} />
 										<FormField control={form.control} name="configPath" render={({ field }) => (
 											<FormItem className="space-y-0">
 												<div className="flex items-start gap-4">
@@ -2176,7 +2304,7 @@ export function ClientFormDrawer({
 							{mode === "edit" ? (
 								<Button type="button" variant="destructive" className="gap-2" onClick={() => { setDeleteError(null); setIsDeleteConfirmOpen(true); }} disabled={saveMutation.isPending || deleteMutation.isPending}><Trash2 className="h-4 w-4" />{t("detail.form.buttons.delete", { defaultValue: "Delete" })}</Button>
 							) : null}
-							<Button type="button" onClick={form.handleSubmit(() => saveMutation.mutate())} disabled={saveMutation.isPending || deleteMutation.isPending}>{mode === "create" ? t("detail.form.buttons.create", { defaultValue: "Create Record" }) : t("detail.form.buttons.save", { defaultValue: "Save Changes" })}</Button>
+							<Button type="button" onClick={form.handleSubmit(() => saveMutation.mutate())} disabled={saveMutation.isPending || deleteMutation.isPending || writebackUnavailable}>{mode === "create" ? t("detail.form.buttons.create", { defaultValue: "Create Record" }) : t("detail.form.buttons.save", { defaultValue: "Save Changes" })}</Button>
 						</div>
 					</div>
 				</DrawerFooter>

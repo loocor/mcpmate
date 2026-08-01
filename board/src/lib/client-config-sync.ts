@@ -1,7 +1,7 @@
 import type { TFunction } from "i18next";
 import { clientsApi } from "./api";
 import { mapDashboardSettingsToClientBackupPolicy } from "./client-backup-policy";
-import type { DashboardSettings } from "./store";
+import type { ClientDefaultMode, DashboardSettings } from "./store";
 import type {
 	ClientBackupPolicyPayload,
 	ClientCapabilityConfigData,
@@ -19,6 +19,13 @@ export function resolveClientConfigMode(
 		return value;
 	}
 	return null;
+}
+
+export function resolveClientConfigModeWithDefault(
+	value: string | null | undefined,
+	defaultMode: ClientDefaultMode,
+): ClientConfigMode | null {
+	return value == null ? defaultMode : resolveClientConfigMode(value);
 }
 
 export function buildClientApplySelectedConfig(
@@ -95,6 +102,39 @@ export async function applyClientConfigWithResolvedSelection(input: {
 		preview: false,
 		backup_policy: input.backupPolicy,
 	});
+}
+
+export async function reapplyClientConfigAfterSettingsUpdate(input: {
+	identifier: string;
+	configMode: string | null | undefined;
+	defaultMode: ClientDefaultMode;
+	writableConfig: boolean | null | undefined;
+	approvalStatus?: string | null;
+	backupPolicy?: ClientBackupPolicyPayload;
+}): Promise<boolean> {
+	const mode = resolveClientConfigModeWithDefault(
+		input.configMode,
+		input.defaultMode,
+	);
+	if (!mode) {
+		return false;
+	}
+	if (
+		!canApplyClientConfigWithState({
+			mode,
+			writableConfig: input.writableConfig,
+			approvalStatus: input.approvalStatus,
+		})
+	) {
+		return false;
+	}
+
+	await applyClientConfigWithResolvedSelection({
+		identifier: input.identifier,
+		mode,
+		backupPolicy: input.backupPolicy,
+	});
+	return true;
 }
 
 /**

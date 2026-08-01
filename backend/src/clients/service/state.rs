@@ -21,7 +21,7 @@ fn approval_status_for_first_contact_behavior(behavior: FirstContactBehavior) ->
 impl ClientConfigService {
     pub(super) async fn fetch_client_states(&self) -> ConfigResult<HashMap<String, ClientStateRow>> {
         let rows = sqlx::query_as::<_, ClientStateRow>(
-            "SELECT id, identifier, name, display_name, config_path, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, registration_origin, runtime_observed, template_identifier, selected_profile_ids, custom_profile_id, approval_status, attachment_state, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config, managed_source, transports, config_file_parse FROM client",
+            "SELECT id, identifier, name, display_name, config_path, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, registration_origin, runtime_observed, template_identifier, selected_profile_ids, custom_profile_id, approval_status, attachment_state, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, (SELECT merge_strategy FROM client_writeback_policy WHERE client_identifier = client.identifier) AS merge_strategy_override, keep_original_config, managed_source, transports, config_file_parse FROM client",
         )
         .fetch_all(&*self.db_pool)
         .await
@@ -67,7 +67,7 @@ impl ClientConfigService {
         identifier: &str,
     ) -> ConfigResult<Option<ClientStateRow>> {
         sqlx::query_as::<_, ClientStateRow>(
-            "SELECT id, identifier, name, display_name, config_path, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, registration_origin, runtime_observed, template_identifier, selected_profile_ids, custom_profile_id, approval_status, attachment_state, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, keep_original_config, managed_source, transports, config_file_parse FROM client WHERE identifier = ?",
+            "SELECT id, identifier, name, display_name, config_path, config_mode, transport, client_version, backup_policy, backup_limit, capability_source, governance_kind, connection_mode, registration_origin, runtime_observed, template_identifier, selected_profile_ids, custom_profile_id, approval_status, attachment_state, template_id, template_version, approval_metadata, config_format, protocol_revision, container_type, container_keys, storage_kind, storage_adapter, storage_path_strategy, merge_strategy, (SELECT merge_strategy FROM client_writeback_policy WHERE client_identifier = client.identifier) AS merge_strategy_override, keep_original_config, managed_source, transports, config_file_parse FROM client WHERE identifier = ?",
         )
         .bind(identifier)
         .fetch_optional(&*self.db_pool)
@@ -107,6 +107,12 @@ impl ClientConfigService {
             .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
 
         sqlx::query("DELETE FROM client_template_runtime WHERE identifier = ?")
+            .bind(identifier)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+
+        sqlx::query("DELETE FROM client_writeback_policy WHERE client_identifier = ?")
             .bind(identifier)
             .execute(&mut *transaction)
             .await
@@ -1078,6 +1084,8 @@ mod tests {
                     logo_url: None,
                     config_file_parse: None,
                     clear_config_file_parse: false,
+                    merge_strategy_override: None,
+                    clear_merge_strategy_override: false,
                     transports: None,
                     clear_transports: false,
                 },

@@ -39,6 +39,7 @@ export function createClientFormSchema(t: TFunction, mode: ClientFormMode = "cre
 				}),
 			}),
 			configFileChoice: z.enum(["with_config_file", "without_config_file"]),
+			mergeStrategySelection: z.enum(["deep_merge", "replace"]),
 			supportedTransports: z.array(z.enum(SUPPORTED_TRANSPORT_VALUES)),
 			configPath: z.string().optional(),
 			configFileParseFormat: z.enum(CONFIG_PARSE_FORMAT_VALUES),

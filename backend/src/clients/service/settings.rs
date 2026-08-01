@@ -96,6 +96,8 @@ pub struct ActiveClientSettingsUpdate {
     pub logo_url: Option<String>,
     pub config_file_parse: Option<ClientConfigFileParse>,
     pub clear_config_file_parse: bool,
+    pub merge_strategy_override: Option<crate::clients::models::MergeStrategy>,
+    pub clear_merge_strategy_override: bool,
     pub transports: Option<HashMap<String, FormatRule>>,
     pub clear_transports: bool,
 }
@@ -176,6 +178,48 @@ fn can_apply_first_initialize_observation(state: &ClientStateRow) -> ConfigResul
 }
 
 impl ClientConfigService {
+    pub async fn set_merge_strategy_override(
+        &self,
+        identifier: &str,
+        strategy: Option<crate::clients::models::MergeStrategy>,
+    ) -> ConfigResult<()> {
+        if self.fetch_state(identifier).await?.is_none() {
+            return Err(ConfigError::DataAccessError(format!("Client not found: {identifier}")));
+        }
+
+        match strategy {
+            Some(strategy) => {
+                let value = match strategy {
+                    crate::clients::models::MergeStrategy::Replace => "replace",
+                    crate::clients::models::MergeStrategy::DeepMerge => "deep_merge",
+                };
+                sqlx::query(
+                    r#"
+                    INSERT INTO client_writeback_policy (client_identifier, merge_strategy)
+                    VALUES (?, ?)
+                    ON CONFLICT(client_identifier) DO UPDATE SET
+                        merge_strategy = excluded.merge_strategy,
+                        updated_at = CURRENT_TIMESTAMP
+                    "#,
+                )
+                .bind(identifier)
+                .bind(value)
+                .execute(&*self.db_pool)
+                .await
+                .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+            }
+            None => {
+                sqlx::query("DELETE FROM client_writeback_policy WHERE client_identifier = ?")
+                    .bind(identifier)
+                    .execute(&*self.db_pool)
+                    .await
+                    .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn persist_handshake_observation(
         &self,
         identifier: &str,
@@ -410,6 +454,12 @@ impl ClientConfigService {
             "set_active_client_settings: entry"
         );
 
+        if update.clear_merge_strategy_override && update.merge_strategy_override.is_some() {
+            return Err(ConfigError::DataAccessError(
+                "merge strategy override cannot be set and cleared in the same request".to_string(),
+            ));
+        }
+
         if let Some(ref tr) = update.transport {
             if !VALID_TRANSPORTS.contains(&tr.as_str()) {
                 let err = format!(
@@ -540,6 +590,11 @@ impl ClientConfigService {
             self.clear_config_file_artifacts(identifier).await?;
         } else if clear_config_file_parse || update.config_file_parse.is_some() {
             self.update_config_file_parse(identifier, update.config_file_parse.as_ref(), clear_config_file_parse)
+                .await?;
+        }
+
+        if update.clear_merge_strategy_override || update.merge_strategy_override.is_some() {
+            self.set_merge_strategy_override(identifier, update.merge_strategy_override)
                 .await?;
         }
 

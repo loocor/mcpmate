@@ -153,7 +153,7 @@ export function AboutLicensesSection({ document }: AboutLicensesSectionProps) {
 					</p>
 				)}
 			</CardHeader>
-			<CardContent className="flex-1 p-4 pt-0">
+			<CardContent className="flex min-h-0 flex-1 flex-col p-4 pt-0">
 				{nonEmptySections.length === 0 ? (
 					<p className="text-sm text-slate-500 dark:text-slate-400">
 						{t("settings:about.noPackages", {
@@ -162,7 +162,7 @@ export function AboutLicensesSection({ document }: AboutLicensesSectionProps) {
 						})}
 					</p>
 				) : (
-					<div className="border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-900/50 h-[500px] overflow-hidden">
+					<div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900/50">
 						<ScrollArea className="h-full p-4">
 							<div className="space-y-4">
 								{nonEmptySections.map((section) => (

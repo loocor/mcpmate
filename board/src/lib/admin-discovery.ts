@@ -52,6 +52,7 @@ export interface AdminDiscoveryClientCandidate {
 	configFileParseFormat: string;
 	configFileParseContainerType: "standard" | "array";
 	configFileParseContainerKeysText: string;
+	mergeStrategy: "replace" | "deep_merge";
 	description: string;
 	homepageUrl: string;
 	docsUrl: string;
@@ -268,6 +269,12 @@ function adminConfigFileParse(file: Record<string, unknown>): {
 	};
 }
 
+function adminMergeStrategy(value: unknown): "replace" | "deep_merge" | null {
+	if (value == null) return "replace";
+	if (value === "replace" || value === "deep_merge") return value;
+	return null;
+}
+
 function isCanonicalTransportKey(value: string): boolean {
 	return (CANONICAL_TRANSPORT_KEYS as readonly string[]).includes(value);
 }
@@ -348,6 +355,9 @@ export function adminDiscoveryClientToCandidate(
 	const displayName =
 		firstCompactString(client.displayName, client.display_name, metadata.display_name) ?? identifier;
 	const fileRecord = recordValue(config.file);
+	const merge = recordValue(fileRecord.merge);
+	const mergeStrategy = adminMergeStrategy(merge?.strategy);
+	if (!mergeStrategy) return null;
 	const configPath = configPathFromDiscoveryClient(fileRecord, options?.platform);
 	const configKind = compactString(config.kind);
 	const hasConfigFileKind = configKind === "file";
@@ -377,6 +387,7 @@ export function adminDiscoveryClientToCandidate(
 		configFileParseFormat: file?.format ?? "json",
 		configFileParseContainerType: file?.containerType ?? "standard",
 		configFileParseContainerKeysText: file?.containerKeys.join(", ") ?? "",
+		mergeStrategy,
 		description: compactString(client.description) ?? compactString(metadata.description) ?? "",
 		homepageUrl: firstCompactString(links.homepage, client.homepageUrl, client.homepage_url, metadata.homepage_url) ?? "",
 		docsUrl: firstCompactString(links.docs, client.docsUrl, client.docs_url, metadata.docs_url) ?? "",
@@ -400,6 +411,8 @@ function resolvedAdminDiscoveryClientCandidate(raw: unknown): AdminDiscoveryClie
 	if (supportedTransports.some((transport) => !isCanonicalTransportKey(transport))) return null;
 	const transports = adminTransports({ transports: candidate.transports });
 	if (!transports) return null;
+	const mergeStrategy = adminMergeStrategy(candidate.mergeStrategy);
+	if (!mergeStrategy) return null;
 	return {
 		identifier,
 		displayName,
@@ -408,6 +421,7 @@ function resolvedAdminDiscoveryClientCandidate(raw: unknown): AdminDiscoveryClie
 		configFileParseFormat: compactString(candidate.configFileParseFormat) ?? "json",
 		configFileParseContainerType: candidate.configFileParseContainerType === "array" ? "array" : "standard",
 		configFileParseContainerKeysText: compactString(candidate.configFileParseContainerKeysText) ?? "",
+		mergeStrategy,
 		description: compactString(candidate.description) ?? "",
 		homepageUrl: compactString(candidate.homepageUrl) ?? "",
 		docsUrl: compactString(candidate.docsUrl) ?? "",
