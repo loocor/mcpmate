@@ -82,6 +82,27 @@ export function canApplyClientConfigWithState(input: {
 	);
 }
 
+export async function attachCreatedClientIfEligible(input: {
+	identifier: string;
+	created: boolean;
+}): Promise<boolean> {
+	if (!input.created) {
+		return false;
+	}
+
+	const details = await clientsApi.configDetails(input.identifier, false);
+	if (
+		details?.writable_config !== true ||
+		details.attachment_state !== "detached" ||
+		details.approval_status !== "approved"
+	) {
+		return false;
+	}
+
+	await clientsApi.attach(input.identifier);
+	return true;
+}
+
 export async function applyClientConfigWithResolvedSelection(input: {
 	identifier: string;
 	mode: ClientConfigMode;

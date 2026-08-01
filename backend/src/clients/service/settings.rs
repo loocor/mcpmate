@@ -111,6 +111,7 @@ fn config_file_state_to_connection_mode(state: ClientConfigFileState) -> &'stati
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveClientSettingsResult {
+    pub created: bool,
     pub display_name_source: &'static str,
     pub approval_status_source: &'static str,
     pub config_file_state_source: &'static str,
@@ -526,7 +527,8 @@ impl ClientConfigService {
             .map(|state| (state.approval_status().to_string(), "stored"))
             .unwrap_or_else(|| ("approved".to_string(), "default"));
 
-        self.ensure_active_state_row_with_name(identifier, &name, Some(&approval_status))
+        let (_, created) = self
+            .ensure_active_state_row_with_creation(identifier, &name, Some(&approval_status))
             .await?;
 
         self.update_client_names(identifier, &name).await?;
@@ -616,6 +618,7 @@ impl ClientConfigService {
 
         tracing::info!(client = %identifier, "set_active_client_settings: complete");
         Ok(ActiveClientSettingsResult {
+            created,
             display_name_source,
             approval_status_source,
             config_file_state_source,

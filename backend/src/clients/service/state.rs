@@ -682,11 +682,23 @@ impl ClientConfigService {
         name: &str,
         approval_status: Option<&str>,
     ) -> ConfigResult<ClientStateRow> {
+        self.ensure_active_state_row_with_creation(identifier, name, approval_status)
+            .await
+            .map(|(state, _created)| state)
+    }
+
+    pub(crate) async fn ensure_active_state_row_with_creation(
+        &self,
+        identifier: &str,
+        name: &str,
+        approval_status: Option<&str>,
+    ) -> ConfigResult<(ClientStateRow, bool)> {
         if let Some(existing) = self.fetch_state(identifier).await? {
             self.promote_existing_state(identifier, name, approval_status, existing)
                 .await
+                .map(|state| (state, false))
         } else {
-            self.create_state_row(
+            self.create_state_row_with_creation(
                 identifier,
                 name,
                 ClientGovernanceKind::Active,
@@ -795,6 +807,29 @@ impl ClientConfigService {
         registration_origin: ClientRegistrationOrigin,
         runtime_observed: bool,
     ) -> ConfigResult<ClientStateRow> {
+        self.create_state_row_with_creation(
+            identifier,
+            name,
+            governance_kind,
+            approval_status,
+            observed_config_path,
+            registration_origin,
+            runtime_observed,
+        )
+        .await
+        .map(|(state, _created)| state)
+    }
+
+    async fn create_state_row_with_creation(
+        &self,
+        identifier: &str,
+        name: &str,
+        governance_kind: ClientGovernanceKind,
+        approval_status: &str,
+        observed_config_path: Option<&str>,
+        registration_origin: ClientRegistrationOrigin,
+        runtime_observed: bool,
+    ) -> ConfigResult<(ClientStateRow, bool)> {
         let platform = crate::system::paths::PathService::get_current_platform();
         let template = self.template_source.get_template(identifier, platform).await?;
         let display_name = template
@@ -862,21 +897,26 @@ impl ClientConfigService {
         .execute(&*self.db_pool)
         .await;
 
-        if let Err(err) = insert_result {
-            if let sqlx::Error::Database(db_err) = &err {
-                if db_err.code().map(|code| code == "2067").unwrap_or(false) {
-                    tracing::warn!(client = %identifier, "Concurrent client state insert detected; reusing existing row");
+        let created = match insert_result {
+            Ok(result) => result.rows_affected() == 1,
+            Err(err) => {
+                if let sqlx::Error::Database(db_err) = &err {
+                    if db_err.code().map(|code| code == "2067").unwrap_or(false) {
+                        tracing::warn!(client = %identifier, "Concurrent client state insert detected; reusing existing row");
+                        false
+                    } else {
+                        return Err(ConfigError::DataAccessError(err.to_string()));
+                    }
                 } else {
                     return Err(ConfigError::DataAccessError(err.to_string()));
                 }
-            } else {
-                return Err(ConfigError::DataAccessError(err.to_string()));
             }
-        }
+        };
 
-        self.fetch_state(identifier).await?.ok_or_else(|| {
+        let state = self.fetch_state(identifier).await?.ok_or_else(|| {
             ConfigError::DataAccessError(format!("Failed to create management state for client {}", identifier))
-        })
+        })?;
+        Ok((state, created))
     }
 }
 
@@ -1101,6 +1141,40 @@ mod tests {
                 .is_some(),
             "creating an approved managed Consumer must publish its initial Surface"
         );
+    }
+
+    #[tokio::test]
+    async fn concurrent_state_inserts_report_exactly_one_creation() {
+        let (_temp_dir, service) = create_test_service().await;
+
+        let (first, second) = tokio::join!(
+            service.create_state_row_with_creation(
+                "concurrent.client",
+                "Concurrent Client",
+                ClientGovernanceKind::Active,
+                "approved",
+                None,
+                ClientRegistrationOrigin::Manual,
+                false,
+            ),
+            service.create_state_row_with_creation(
+                "concurrent.client",
+                "Concurrent Client",
+                ClientGovernanceKind::Active,
+                "approved",
+                None,
+                ClientRegistrationOrigin::Manual,
+                false,
+            ),
+        );
+
+        let created_count = [first, second]
+            .into_iter()
+            .map(|result| result.expect("concurrent state insert succeeds"))
+            .filter(|(_state, created)| *created)
+            .count();
+
+        assert_eq!(created_count, 1);
     }
 
     #[tokio::test]

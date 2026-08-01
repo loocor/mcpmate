@@ -1408,6 +1408,7 @@ export interface ClientSettingsSourceData {
 }
 
 export interface ClientSettingsUpdateData {
+  created: boolean;
   identifier: string;
   display_name: string;
   transport: string;

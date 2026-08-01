@@ -957,6 +957,7 @@ pub async fn update_settings(
     let transports = transports_data_from_state(&state);
 
     let data = crate::api::models::client::ClientSettingsUpdateData {
+        created: settings_result.created,
         identifier: request.identifier,
         display_name: state.display_name().to_string(),
         transport,
@@ -4121,6 +4122,7 @@ mod tests {
         .await
         .expect("manual update succeeds");
         assert!(manual_response.success);
+        assert!(manual_response.data.expect("manual response data").created);
 
         let manual_state = context
             .client_service
@@ -4145,6 +4147,7 @@ mod tests {
         .await
         .expect("local config update succeeds");
         assert!(local_response.success);
+        assert!(!local_response.data.expect("local response data").created);
 
         let local_state = context
             .client_service
