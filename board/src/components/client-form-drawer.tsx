@@ -29,10 +29,8 @@ import { mapDashboardSettingsToClientBackupPolicy } from "../lib/client-backup-p
 import { writeClipboardText } from "../lib/clipboard";
 import { readAdminDiscoveryPlatform } from "../lib/desktop-platform";
 import {
-	applyClientConfigWithResolvedSelection,
-	canApplyClientConfigWithState,
+	reapplyClientConfigAfterSettingsUpdate,
 	resolveClientConfigSyncErrorMessage,
-	resolveClientConfigMode,
 } from "../lib/client-config-sync";
 import { notifyError, notifyInfo, notifySuccess } from "../lib/notify";
 import { pickClientConfigFilePath, readAbsolutePathFromFile } from "../lib/pick-client-config-file";
@@ -1646,33 +1644,24 @@ export function ClientFormDrawer({
 
 			if (writebackDecision.shouldReapplyClientConfig) {
 				const details = await clientsApi.configDetails(savedIdentifier, false);
-				const configMode = resolveClientConfigMode(
-					details?.config_mode ?? client?.config_mode,
-				);
-				if (
-					canApplyClientConfigWithState({
-						mode: configMode,
+				try {
+					await reapplyClientConfigAfterSettingsUpdate({
+						identifier: savedIdentifier,
+						configMode: details?.config_mode ?? client?.config_mode,
+						defaultMode: dashboardSettings.clientDefaultMode,
 						writableConfig: details?.writable_config,
 						approvalStatus: details?.approval_status,
-					}) &&
-					configMode
-				) {
-					try {
-						await applyClientConfigWithResolvedSelection({
-							identifier: savedIdentifier,
-							mode: configMode,
-							backupPolicy: mapDashboardSettingsToClientBackupPolicy(
-								dashboardSettings,
-							),
-						});
-					} catch (error) {
-						notifyError(
-							t("detail.notifications.applyFailed.title", {
-								defaultValue: "Apply failed",
-							}),
-							resolveClientConfigSyncErrorMessage(error, t),
-						);
-					}
+						backupPolicy: mapDashboardSettingsToClientBackupPolicy(
+							dashboardSettings,
+						),
+					});
+				} catch (error) {
+					notifyError(
+						t("detail.notifications.applyFailed.title", {
+							defaultValue: "Apply failed",
+						}),
+						resolveClientConfigSyncErrorMessage(error, t),
+					);
 				}
 			}
 
