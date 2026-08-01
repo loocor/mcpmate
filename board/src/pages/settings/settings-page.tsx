@@ -1806,6 +1806,7 @@ export function SettingsPage() {
 		defaultTab: "general",
 		validTabs: settingsTabs,
 	});
+	const isAboutTab = activeTab === "about";
 
 	if (needsSettingsPassword) {
 		return (
@@ -1814,7 +1815,13 @@ export function SettingsPage() {
 	}
 
 	return (
-		<div className="space-y-4">
+		<div
+			className={
+				isAboutTab
+					? "flex h-full flex-col gap-4"
+					: "space-y-4"
+			}
+		>
 			<div className="flex items-center gap-2 min-w-0">
 				<p className="flex-1 min-w-0 truncate whitespace-nowrap text-base text-muted-foreground">
 					{t("settings:title", { defaultValue: "Settings" })}
@@ -1825,7 +1832,11 @@ export function SettingsPage() {
 				value={activeTab}
 				onValueChange={setActiveTab}
 				orientation="vertical"
-				className="flex items-start gap-4"
+				className={
+					isAboutTab
+						? "flex min-h-0 flex-1 items-stretch gap-4"
+						: "flex items-start gap-4"
+				}
 			>
 				<TabsList className="sticky top-4 flex w-14 shrink-0 flex-col gap-1 self-start rounded-lg p-1 md:w-56 md:p-2">
 					<TabsTrigger value="general" className={tabTriggerClass}>
@@ -1902,7 +1913,13 @@ export function SettingsPage() {
 					)}
 				</TabsList>
 
-				<div className="flex-1">
+				<div
+					className={
+						isAboutTab
+							? "flex min-h-0 flex-1"
+							: "flex-1"
+					}
+				>
 					<TabsContent value="general" className="mt-0 h-full">
 						<Card className="h-full">
 							<CardHeader>

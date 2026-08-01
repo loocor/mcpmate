@@ -195,6 +195,11 @@ export const clientsTranslations = {
           docs: "Docs",
           support: "Support",
         },
+        transport: {
+          selectorAria: "Transport selector",
+          tooltip:
+            "Quickly choose the runtime transport used to connect this client.",
+        },
         buttons: {
           edit: "Edit",
           refresh: "Refresh",
@@ -1040,6 +1045,10 @@ export const clientsTranslations = {
           docs: "文档",
           support: "支持",
         },
+        transport: {
+          selectorAria: "传输方式选择器",
+          tooltip: "快速选择连接该客户端时使用的运行时传输方式。",
+        },
         buttons: {
           edit: "编辑",
           refresh: "刷新",
@@ -1094,10 +1103,10 @@ export const clientsTranslations = {
           manual: {
             title: "操作提示",
             description:
-              "复制下列服务片段，粘贴到目标客户端的 MCP server 配置页。",
+              "复制下列服务片段，粘贴到目标客户端的 MCP 服务器配置页。",
             steps: {
               copy:
-                "点击复制配置信息片段，将其粘贴到目标客户端的 MCP server 配置页里。",
+                "点击复制配置信息片段，将其粘贴到目标客户端的 MCP 服务器配置页里。",
               connect:
                 "该片段会把 MCPMate 配置为 Streamable HTTP 服务，并在 URL 中携带当前客户端 ID。",
             },
@@ -1209,7 +1218,7 @@ export const clientsTranslations = {
             hideAdvanced: "隐藏详情",
             validationTitle: "文件关联检查",
             validationSuccess: "所选文件与当前解析规则匹配。",
-            validationHint: "选择一个配置文件后，MCPMate 会验证这些规则是否能定位到 MCP server 条目。",
+            validationHint: "选择一个配置文件后，MCPMate 会验证这些规则是否能定位到 MCP 服务器条目。",
             inspectAfterSaveHint:
               "保存更新后的配置路径后，MCPMate 才能检查该客户端目标。",
             detectedFormat: "检测到的格式",
@@ -1870,6 +1879,11 @@ export const clientsTranslations = {
           homepage: "ホームページ",
           docs: "ドキュメント",
           support: "サポート",
+        },
+        transport: {
+          selectorAria: "トランスポートセレクター",
+          tooltip:
+            "このクライアントの接続に使うランタイムトランスポートをすばやく選択します。",
         },
         buttons: {
           edit: "編集",

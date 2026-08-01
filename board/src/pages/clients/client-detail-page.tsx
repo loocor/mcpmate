@@ -77,6 +77,12 @@ import {
   TabsTrigger,
 } from "../../components/ui/tabs";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "../../components/ui/tooltip";
+import {
   auditApi,
   assertCompleteCapabilityBatch,
   assertCompleteServerImport,
@@ -2326,17 +2332,29 @@ export function ClientDetailPage() {
                                 }
                               }}
                             >
-                              <SelectTrigger
-                                className="h-8 border-0 shadow-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 focus:outline-none select-none bg-transparent px-3 min-w-[9rem]"
-                                aria-label={t(
-                                  "detail.overview.transport.selectorAria",
-                                  {
-                                    defaultValue: "Transport selector",
-                                  },
-                                )}
-                              >
-                                <SelectValue />
-                              </SelectTrigger>
+                              <TooltipProvider delayDuration={200}>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <SelectTrigger
+                                      className="h-8 w-auto border-0 shadow-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 focus:outline-none select-none bg-transparent px-3"
+                                      aria-label={t(
+                                        "detail.overview.transport.selectorAria",
+                                        {
+                                          defaultValue: "Transport selector",
+                                        },
+                                      )}
+                                    >
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" align="center" className="max-w-xs">
+                                    {t("detail.overview.transport.tooltip", {
+                                      defaultValue:
+                                        "Quickly choose the runtime transport used to connect this client.",
+                                    })}
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
                               <SelectContent align="end">
                                 <SelectItem value="auto">
                                   {t(
