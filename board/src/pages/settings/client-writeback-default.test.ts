@@ -33,16 +33,20 @@ describe("client writeback default", () => {
     });
   });
 
-  test("removes cached client writeback decisions after the default changes", () => {
+  test("removes cached client writeback decision inputs after the default changes", () => {
     const queryClient = new QueryClient();
     queryClient.setQueryData(["client-config", "cursor"], {
       effective_merge_strategy: "deep_merge",
+    });
+    queryClient.setQueryData(["systemSettings"], {
+      default_merge_strategy_override: "deep_merge",
     });
     queryClient.setQueryData(["clients"], [{ identifier: "cursor" }]);
 
     removeClientWritebackDecisionCache(queryClient);
 
     expect(queryClient.getQueryData(["client-config", "cursor"])).toBeUndefined();
+    expect(queryClient.getQueryData(["systemSettings"])).toBeUndefined();
     expect(queryClient.getQueryData(["clients"])).toEqual([{ identifier: "cursor" }]);
   });
 });

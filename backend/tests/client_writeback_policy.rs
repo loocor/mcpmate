@@ -1,5 +1,6 @@
 mod support;
 
+use mcpmate::clients::ConfigError;
 use mcpmate::clients::models::MergeStrategy;
 use mcpmate::clients::service::settings::ActiveClientSettingsUpdate;
 use support::client_writeback::{CLIENT_ID, ClientWritebackFixture};
@@ -81,6 +82,39 @@ async fn active_client_settings_persist_and_clear_the_override() {
             .expect("resolve template strategy"),
         MergeStrategy::Replace
     );
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn active_client_settings_reject_conflicting_override_operations() {
+    let fixture = ClientWritebackFixture::new().await;
+
+    let error = fixture
+        .service
+        .set_active_client_settings(
+            CLIENT_ID,
+            ActiveClientSettingsUpdate {
+                display_name: Some("Must Not Persist".to_string()),
+                merge_strategy_override: Some(MergeStrategy::DeepMerge),
+                clear_merge_strategy_override: true,
+                ..ActiveClientSettingsUpdate::default()
+            },
+        )
+        .await
+        .expect_err("conflicting override operations must be rejected");
+
+    let ConfigError::DataAccessError(message) = error else {
+        panic!("expected data access error, got {error}");
+    };
+    assert!(message.contains("merge strategy override"));
+    let state = fixture
+        .service
+        .fetch_state(CLIENT_ID)
+        .await
+        .expect("reload client state")
+        .expect("client state exists");
+    assert_eq!(state.display_name(), "Writeback Client");
+    assert_eq!(state.merge_strategy_override(), None);
 }
 
 #[tokio::test]

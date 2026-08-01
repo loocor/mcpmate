@@ -454,6 +454,12 @@ impl ClientConfigService {
             "set_active_client_settings: entry"
         );
 
+        if update.clear_merge_strategy_override && update.merge_strategy_override.is_some() {
+            return Err(ConfigError::DataAccessError(
+                "merge strategy override cannot be set and cleared in the same request".to_string(),
+            ));
+        }
+
         if let Some(ref tr) = update.transport {
             if !VALID_TRANSPORTS.contains(&tr.as_str()) {
                 let err = format!(

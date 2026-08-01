@@ -26,4 +26,5 @@ export function buildClientWritebackDefaultUpdate(
 
 export function removeClientWritebackDecisionCache(queryClient: QueryClient): void {
   queryClient.removeQueries({ queryKey: ["client-config"] });
+  queryClient.removeQueries({ queryKey: ["systemSettings"] });
 }
