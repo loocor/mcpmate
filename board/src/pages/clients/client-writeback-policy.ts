@@ -13,6 +13,25 @@ export interface ClientWritebackBaseline {
   effectiveStrategy: ClientMergeStrategy;
 }
 
+export function resolveCreateClientWritebackBaseline({
+  systemSettingsLoaded,
+  systemOverride,
+  templateStrategy,
+}: {
+  systemSettingsLoaded: boolean;
+  systemOverride: ClientMergeStrategy | null;
+  templateStrategy: ClientMergeStrategy | null;
+}): ClientWritebackBaseline | null {
+  if (!systemSettingsLoaded) return null;
+  const inheritedStrategy = systemOverride ?? templateStrategy;
+  if (!inheritedStrategy) return null;
+
+  return {
+    inheritedStrategy,
+    effectiveStrategy: inheritedStrategy,
+  };
+}
+
 export interface ClientWritebackDecisionInput {
   mode: "create" | "edit";
   configFileChoice: ClientConfigFileState;

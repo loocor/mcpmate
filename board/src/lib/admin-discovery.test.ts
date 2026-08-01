@@ -293,6 +293,27 @@ describe("admin discovery adapter", () => {
 		});
 	});
 
+	test("rejects writable Admin clients with an invalid merge strategy", () => {
+		const rawClient = {
+			identifier: "invalid-merge",
+			displayName: "Invalid Merge",
+			config: {
+				kind: "file",
+				file: {
+					format: "json",
+					paths: { macos: "~/.invalid/mcp.json" },
+					container: { type: "standard", keys: ["mcpServers"] },
+					merge: { strategy: "merge" },
+				},
+				transports: {
+					stdio: { command_field: "command" },
+				},
+			},
+		};
+
+		expect(adminDiscoveryClientToCandidate(rawClient, { platform: "macos" })).toBeNull();
+	});
+
 	test("skips Admin client candidates with invalid transport contracts", () => {
 		const baseClient = {
 			identifier: "bad-transport",

@@ -170,6 +170,12 @@ pub async fn get_settings(State(state): State<Arc<AppState>>) -> Result<Json<Sys
     ))))
 }
 
+fn validate_settings_update_request(request: &SystemSettingsUpdateReq) -> Result<(), ApiError> {
+    request
+        .validate_storage_boundary()
+        .map_err(|message| ApiError::BadRequest(message.to_string()))
+}
+
 pub async fn set_settings(
     State(state): State<Arc<AppState>>,
     Json(request): Json<SystemSettingsUpdateReq>,
@@ -178,9 +184,7 @@ pub async fn set_settings(
         .database
         .as_ref()
         .ok_or_else(|| ApiError::InternalError("Database not available".into()))?;
-    request
-        .validate_storage_boundary()
-        .map_err(|message| ApiError::BadRequest(message.to_string()))?;
+    validate_settings_update_request(&request)?;
 
     let mut settings = crate::system::settings::get_settings(&db.pool)
         .await
@@ -578,4 +582,27 @@ fn get_uptime_seconds() -> u64 {
 
     // Calculate uptime
     now.saturating_sub(start_time)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_settings_update_request;
+    use crate::api::models::system::SystemSettingsUpdateReq;
+    use axum::response::IntoResponse;
+    use hyper::StatusCode;
+
+    #[test]
+    fn conflicting_default_merge_strategy_update_returns_bad_request() {
+        let request = serde_json::from_value::<SystemSettingsUpdateReq>(serde_json::json!({
+            "default_merge_strategy_override": "deep_merge",
+            "clear_default_merge_strategy_override": true
+        }))
+        .expect("parse conflicting client defaults request");
+
+        let response = validate_settings_update_request(&request)
+            .expect_err("conflicting update must fail")
+            .into_response();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
 }

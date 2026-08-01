@@ -37,6 +37,7 @@ import { pickClientConfigFilePath, readAbsolutePathFromFile } from "../lib/pick-
 import { isTauriEnvironmentSync } from "../lib/platform";
 import { useAppStore } from "../lib/store";
 import {
+	resolveCreateClientWritebackBaseline,
 	resolveClientWritebackDecision,
 	type ClientWritebackBaseline,
 } from "../pages/clients/client-writeback-policy";
@@ -1017,6 +1018,23 @@ export function ClientFormDrawer({
 		() => adminCatalogQuery.data?.clients ?? [],
 		[adminCatalogQuery.data],
 	);
+	const matchingAdminClient = useMemo(() => {
+		if (mode !== "create") return null;
+		const currentIdentifier = normalizeClientIdentifier(identifier);
+		if (!currentIdentifier) return null;
+		return (
+			adminCatalogOptions.find(
+				(candidate) => normalizeClientIdentifier(candidate.identifier) === currentIdentifier,
+			) ?? null
+		);
+	}, [adminCatalogOptions, identifier, mode]);
+	const selectedAdminClientMatchesIdentifier =
+		selectedAdminClient !== null &&
+		normalizeClientIdentifier(selectedAdminClient.identifier) === normalizeClientIdentifier(identifier);
+	const createTemplateMergeStrategy =
+		(selectedAdminClientMatchesIdentifier ? selectedAdminClient?.mergeStrategy : null) ??
+		matchingAdminClient?.mergeStrategy ??
+		null;
 	const adminCatalogDiagnostics = adminCatalogQuery.data?.diagnostics ?? [];
 	const adminCatalogEmptyText = adminCatalogQuery.isError || adminDiscoveryPlatformQuery.isError
 		? t("detail.form.adminCatalog.loadError", { defaultValue: "Client presets are unavailable." })
@@ -1072,18 +1090,6 @@ export function ClientFormDrawer({
 				shouldDirty: true,
 				shouldValidate: true,
 			});
-			form.setValue("mergeStrategySelection", candidate.mergeStrategy, {
-				shouldDirty: true,
-				shouldValidate: true,
-			});
-			if (mode === "create") {
-				setWritebackBaseline((current) =>
-					current ?? {
-						inheritedStrategy: candidate.mergeStrategy,
-						effectiveStrategy: candidate.mergeStrategy,
-					},
-				);
-			}
 			form.setValue("description", candidate.description, { shouldDirty: true });
 			form.setValue("homepageUrl", candidate.homepageUrl, { shouldDirty: true });
 			form.setValue("docsUrl", candidate.docsUrl, { shouldDirty: true });
@@ -1127,41 +1133,40 @@ export function ClientFormDrawer({
 	}, [open, client, mode, form]);
 
 	useEffect(() => {
-		if (!open || writebackBaseline !== null) {
-			return;
-		}
-		if (mode === "edit") {
-			const details = clientMergeDetailsQuery.data;
-			if (!details) return;
-			const inheritedStrategy =
-				details.system_merge_strategy_override ?? details.template_merge_strategy;
-			setWritebackBaseline({
-				inheritedStrategy,
-				effectiveStrategy: details.effective_merge_strategy,
-			});
-			form.setValue(
-				"mergeStrategySelection",
-				details.merge_strategy_override ?? details.effective_merge_strategy,
-			);
-			return;
-		}
-
-		if (!systemSettingsQuery.isSuccess) return;
+		if (!open || mode !== "edit" || writebackBaseline !== null) return;
+		const details = clientMergeDetailsQuery.data;
+		if (!details) return;
 		const inheritedStrategy =
-			systemSettingsQuery.data.default_merge_strategy_override ?? "replace";
+			details.system_merge_strategy_override ?? details.template_merge_strategy;
 		setWritebackBaseline({
 			inheritedStrategy,
-			effectiveStrategy: inheritedStrategy,
+			effectiveStrategy: details.effective_merge_strategy,
 		});
-		form.setValue("mergeStrategySelection", inheritedStrategy);
+		form.setValue(
+			"mergeStrategySelection",
+			details.merge_strategy_override ?? details.effective_merge_strategy,
+		);
+	}, [clientMergeDetailsQuery.data, form, mode, open, writebackBaseline]);
+
+	useEffect(() => {
+		if (!open || mode !== "create") return;
+		const baseline = resolveCreateClientWritebackBaseline({
+			systemSettingsLoaded: systemSettingsQuery.isSuccess,
+			systemOverride: systemSettingsQuery.data?.default_merge_strategy_override ?? null,
+			templateStrategy: createTemplateMergeStrategy,
+		});
+		setWritebackBaseline(baseline);
+		if (baseline && !form.formState.dirtyFields.mergeStrategySelection) {
+			form.setValue("mergeStrategySelection", baseline.effectiveStrategy);
+		}
 	}, [
-		clientMergeDetailsQuery.data,
+		createTemplateMergeStrategy,
 		form,
+		form.formState.dirtyFields.mergeStrategySelection,
 		mode,
 		open,
 		systemSettingsQuery.data,
 		systemSettingsQuery.isSuccess,
-		writebackBaseline,
 	]);
 
 	useEffect(() => {
@@ -1613,7 +1618,9 @@ export function ClientFormDrawer({
 				selectedStrategy: values.mergeStrategySelection,
 				baseline: writebackBaseline,
 				discoveryStrategy:
-					mode === "create" ? selectedAdminClient?.mergeStrategy : null,
+					mode === "create" && selectedAdminClientMatchesIdentifier
+						? selectedAdminClient?.mergeStrategy
+						: null,
 				supportedTransportsChanged,
 				transportEditorsChanged,
 			});

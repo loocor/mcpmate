@@ -2,10 +2,48 @@ import { describe, expect, test } from "bun:test";
 
 import {
   hasPendingClientWritebackMutation,
+  resolveCreateClientWritebackBaseline,
   resolveClientWritebackDecision,
 } from "./client-writeback-policy";
 
 describe("client writeback policy", () => {
+  test("resolves create inheritance without inventing a template strategy", () => {
+    expect(
+      resolveCreateClientWritebackBaseline({
+        systemSettingsLoaded: true,
+        systemOverride: "replace",
+        templateStrategy: "deep_merge",
+      }),
+    ).toEqual({
+      inheritedStrategy: "replace",
+      effectiveStrategy: "replace",
+    });
+    expect(
+      resolveCreateClientWritebackBaseline({
+        systemSettingsLoaded: true,
+        systemOverride: null,
+        templateStrategy: "deep_merge",
+      }),
+    ).toEqual({
+      inheritedStrategy: "deep_merge",
+      effectiveStrategy: "deep_merge",
+    });
+    expect(
+      resolveCreateClientWritebackBaseline({
+        systemSettingsLoaded: true,
+        systemOverride: null,
+        templateStrategy: null,
+      }),
+    ).toBeNull();
+    expect(
+      resolveCreateClientWritebackBaseline({
+        systemSettingsLoaded: false,
+        systemOverride: null,
+        templateStrategy: "deep_merge",
+      }),
+    ).toBeNull();
+  });
+
   test("blocks overlapping writeback mutations", () => {
     expect(
       hasPendingClientWritebackMutation({

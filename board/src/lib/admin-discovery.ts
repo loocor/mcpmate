@@ -269,8 +269,10 @@ function adminConfigFileParse(file: Record<string, unknown>): {
 	};
 }
 
-function adminMergeStrategy(value: unknown): "replace" | "deep_merge" {
-	return value === "deep_merge" ? "deep_merge" : "replace";
+function adminMergeStrategy(value: unknown): "replace" | "deep_merge" | null {
+	if (value == null) return "replace";
+	if (value === "replace" || value === "deep_merge") return value;
+	return null;
 }
 
 function isCanonicalTransportKey(value: string): boolean {
@@ -355,6 +357,7 @@ export function adminDiscoveryClientToCandidate(
 	const fileRecord = recordValue(config.file);
 	const merge = recordValue(fileRecord.merge);
 	const mergeStrategy = adminMergeStrategy(merge?.strategy);
+	if (!mergeStrategy) return null;
 	const configPath = configPathFromDiscoveryClient(fileRecord, options?.platform);
 	const configKind = compactString(config.kind);
 	const hasConfigFileKind = configKind === "file";
@@ -409,6 +412,7 @@ function resolvedAdminDiscoveryClientCandidate(raw: unknown): AdminDiscoveryClie
 	const transports = adminTransports({ transports: candidate.transports });
 	if (!transports) return null;
 	const mergeStrategy = adminMergeStrategy(candidate.mergeStrategy);
+	if (!mergeStrategy) return null;
 	return {
 		identifier,
 		displayName,

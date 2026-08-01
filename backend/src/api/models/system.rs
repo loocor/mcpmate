@@ -227,6 +227,9 @@ impl SystemSettingsUpdateReq {
     }
 
     pub fn validate_storage_boundary(&self) -> Result<(), &'static str> {
+        if self.clear_default_merge_strategy_override && self.default_merge_strategy_override.is_some() {
+            return Err("default merge strategy override cannot be set and cleared in the same request");
+        }
         if self.has_file_settings_update() && self.has_client_defaults_update() {
             return Err("file-backed system settings and database-backed client defaults must be updated separately");
         }

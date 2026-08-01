@@ -4,7 +4,8 @@ use crate::clients::document::parse_config;
 use crate::clients::engine::RenderRequest;
 use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{
-    CONFIG_TRANSPORT_PRIORITY, ClientConfigFileParse, ConfigMode, ContainerType, FormatRule, TemplateFormat,
+    CONFIG_TRANSPORT_PRIORITY, ClientConfigFileParse, ConfigMode, ContainerType, FormatRule, MergeStrategy,
+    TemplateFormat,
 };
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -47,6 +48,15 @@ impl ClientConfigService {
         &self,
         options: ClientRenderOptions,
     ) -> ConfigResult<ClientRenderResult> {
+        let system_override = self.default_merge_strategy_override().await?;
+        self.execute_render_with_system_override(options, system_override).await
+    }
+
+    async fn execute_render_with_system_override(
+        &self,
+        options: ClientRenderOptions,
+        system_override: Option<MergeStrategy>,
+    ) -> ConfigResult<ClientRenderResult> {
         if !self.is_client_approved(&options.client_id).await? {
             return Err(ConfigError::ClientDisabled {
                 identifier: options.client_id.clone(),
@@ -67,7 +77,6 @@ impl ClientConfigService {
             .fetch_state(&options.client_id)
             .await?
             .ok_or_else(|| ConfigError::DataAccessError(format!("Client state not found: {}", options.client_id)))?;
-        let system_override = self.default_merge_strategy_override().await?;
         let render_definition = Self::build_render_definition_from_state(&state, system_override)?;
         let transports = (!render_definition.config_mapping.format_rules.is_empty())
             .then(|| render_definition.config_mapping.format_rules.clone());
@@ -158,7 +167,19 @@ impl ClientConfigService {
         &self,
         options: ClientRenderOptions,
     ) -> ConfigResult<ApplyOutcome> {
-        let result = self.execute_render(options.clone()).await?;
+        let system_override = self.default_merge_strategy_override().await?;
+        self.apply_or_preview_with_system_override(options, system_override)
+            .await
+    }
+
+    async fn apply_or_preview_with_system_override(
+        &self,
+        options: ClientRenderOptions,
+        system_override: Option<MergeStrategy>,
+    ) -> ConfigResult<ApplyOutcome> {
+        let result = self
+            .execute_render_with_system_override(options.clone(), system_override)
+            .await?;
         let mut outcome = ApplyOutcome {
             preview: Self::preview_from_execution(&result.execution),
             warnings: result.warnings.clone(),
@@ -173,10 +194,14 @@ impl ClientConfigService {
         &self,
         options: ClientRenderOptions,
     ) -> ConfigResult<ApplyOutcome> {
+        let system_override = self.default_merge_strategy_override().await?;
+
         // Always compute a preview via dry-run first for stable diff/preview fields.
         let mut preview_opts = options.clone();
         preview_opts.dry_run = true;
-        let preview_outcome = self.apply_or_preview(preview_opts).await?;
+        let preview_outcome = self
+            .apply_or_preview_with_system_override(preview_opts, system_override)
+            .await?;
 
         // Temporary: write-probe logging before actual apply
         // Helps diagnose which transports are being generated and whether 'args' exist
@@ -190,7 +215,9 @@ impl ClientConfigService {
         }
 
         // If not a preview: try to write
-        let exec = self.execute_render(options.clone()).await?;
+        let exec = self
+            .execute_render_with_system_override(options.clone(), system_override)
+            .await?;
         let mut out = preview_outcome;
         self.finalize_apply_outcome(&options.client_id, &exec.execution, &mut out)
             .await?;
