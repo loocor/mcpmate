@@ -100,6 +100,77 @@ pub(crate) enum StartupPublish {
 const MAX_STARTUP_ATTEMPTS: usize = 4;
 
 impl UpstreamConnectionPool {
+    /// Control-plane startup entry point for an enabled upstream.
+    ///
+    /// Database and secret materialization run without the shared pool lock.
+    /// The resulting server configuration is merged under a short lock before
+    /// transport startup delegates to the same production single-flight path
+    /// used by demand routing.
+    pub async fn enable_server_coordinated(
+        pool: &Arc<Mutex<Self>>,
+        server_id: &str,
+    ) -> Result<String> {
+        let (database, secret_store, lifecycle_generation) = {
+            let guard = pool.lock().await;
+            let database = guard
+                .database
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("Database connection not available"))?;
+            (
+                database,
+                guard.secret_store.clone(),
+                guard.server_lifecycle_generation(server_id),
+            )
+        };
+
+        crate::config::server::namespace_repair::ensure_canonical_namespace_before_exposure(&database.pool, server_id)
+            .await?;
+        let (_, server_config) =
+            crate::core::foundation::loader::load_server_config_strict(&database, server_id, secret_store).await?;
+
+        {
+            let mut guard = pool.lock().await;
+            if guard.server_lifecycle_generation(server_id) != lifecycle_generation {
+                anyhow::bail!("Enable for server '{server_id}' was superseded by a lifecycle change");
+            }
+            let mut config = (*guard.config).clone();
+            config.mcp_servers.insert(server_id.to_string(), server_config);
+            guard.set_config(Arc::new(config))?;
+        }
+
+        let selection = ConnectionSelection {
+            server_id: server_id.to_string(),
+            affinity_key: AffinityKey::Default,
+        };
+        let instance_id = Self::ensure_connected_coordinated(pool, &selection).await?;
+        tracing::info!(
+            server_id,
+            instance_id,
+            "Server enabled and started through runtime coordinator"
+        );
+        Ok(instance_id)
+    }
+
+    pub(crate) fn server_lifecycle_generation(
+        &self,
+        server_id: &str,
+    ) -> u64 {
+        self.server_lifecycle_generations.get(server_id).copied().unwrap_or(0)
+    }
+
+    pub(crate) fn invalidate_server_lifecycle(
+        &mut self,
+        server_id: &str,
+    ) {
+        let generation = self
+            .server_lifecycle_generations
+            .entry(server_id.to_string())
+            .or_default();
+        *generation = generation
+            .checked_add(1)
+            .expect("server lifecycle generation exhausted");
+    }
+
     /// Production startup entry point coordinating one attempt per connection
     /// identity while keeping transport startup outside the shared pool lock.
     pub async fn ensure_connected_coordinated(

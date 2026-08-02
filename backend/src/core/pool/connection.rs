@@ -310,6 +310,7 @@ pub struct UpstreamConnectionPool {
     /// In-flight production startup attempts keyed by production route identity.
     pub(crate) startup_attempts: HashMap<types::ProductionRouteKey, super::startup::StartupAttemptEntry>,
     pub(crate) next_startup_attempt: Arc<AtomicU64>,
+    pub(crate) server_lifecycle_generations: HashMap<String, u64>,
     /// Server configuration
     pub config: Arc<Config>,
     /// Map of server ID to map of instance ID to cancellation token
@@ -347,6 +348,7 @@ impl UpstreamConnectionPool {
             next_health_reconnect_epoch: self.next_health_reconnect_epoch.clone(),
             startup_attempts: HashMap::new(),
             next_startup_attempt: self.next_startup_attempt.clone(),
+            server_lifecycle_generations: HashMap::new(),
             config: self.config.clone(),
             cancellation_tokens: HashMap::new(),
             process_monitor: None,
@@ -390,6 +392,7 @@ impl UpstreamConnectionPool {
             next_health_reconnect_epoch: Arc::new(AtomicU64::new(1)),
             startup_attempts: HashMap::new(),
             next_startup_attempt: Arc::new(AtomicU64::new(1)),
+            server_lifecycle_generations: HashMap::new(),
             config,
             cancellation_tokens: HashMap::new(),
             process_monitor: Some(process_monitor),
@@ -2456,8 +2459,7 @@ mod tests {
     async fn invalidated_server_attempt_cannot_restore_backoff_after_oauth_completion() {
         let pool = Arc::new(tokio::sync::Mutex::new(empty_pool()));
         let lease =
-            UpstreamConnectionPool::reserve_validation_session(&pool, "oauth-complete", Duration::from_secs(60))
-                .await;
+            UpstreamConnectionPool::reserve_validation_session(&pool, "oauth-complete", Duration::from_secs(60)).await;
         let token = lease.token().clone();
         let cancellation = CancellationToken::new();
         let attempt = pool
@@ -2467,9 +2469,7 @@ mod tests {
             .expect("register pre-OAuth validation attempt");
 
         assert_eq!(
-            pool.lock()
-                .await
-                .invalidate_validation_attempts_for_server("server-1"),
+            pool.lock().await.invalidate_validation_attempts_for_server("server-1"),
             1
         );
         assert!(cancellation.is_cancelled());

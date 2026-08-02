@@ -1100,64 +1100,6 @@ impl UpstreamConnectionPool {
         }
     }
 
-    /// Update server status in the connection pool
-    ///
-    /// This is a unified interface for managing server status:
-    /// - If enabled=true: Loads latest config, creates connection, and connects
-    /// - If enabled=false: Disconnects all instances and removes from pool
-    pub async fn update_server_status(
-        &mut self,
-        server_id: &str,
-        enabled: bool,
-    ) -> Result<()> {
-        if enabled {
-            self.enable_server(server_id).await
-        } else {
-            self.disable_server(server_id).await
-        }
-    }
-
-    /// Enable and start a server.
-    ///
-    /// This is an admin/control-plane operation that creates a shared connection.
-    /// Production demand routing goes through the startup ownership coordinator.
-    pub async fn enable_server(
-        &mut self,
-        server_id: &str,
-    ) -> Result<()> {
-        let db = self
-            .database
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Database connection not available"))?;
-
-        crate::config::server::namespace_repair::ensure_canonical_namespace_before_exposure(&db.pool, server_id)
-            .await?;
-
-        let config = crate::core::foundation::loader::load_pool_base_config(db, self.secret_store.clone()).await?;
-
-        let Some(_server_config) = config.mcp_servers.get(server_id) else {
-            return Err(anyhow::anyhow!(
-                "Server '{}' not found in pool base configuration",
-                server_id
-            ));
-        };
-
-        self.set_config(Arc::new(config))?;
-
-        if !self.connections.contains_key(server_id) {
-            let connection = crate::core::pool::UpstreamConnection::new(server_id.to_string());
-            let instance_id = connection.id.clone();
-            let instances = self.connections.entry(server_id.to_string()).or_default();
-            instances.insert(instance_id.clone(), connection);
-        }
-
-        let instance_id = self.get_default_instance_id(server_id)?;
-        self.connect_internal(server_id, &instance_id).await?;
-
-        tracing::info!("Server '{}' enabled and started", server_id);
-        Ok(())
-    }
-
     /// Disable and stop a server
     pub async fn disable_server(
         &mut self,
@@ -1183,6 +1125,9 @@ impl UpstreamConnectionPool {
             );
             return Ok(());
         }
+
+        self.invalidate_server_lifecycle(server_id);
+        Arc::make_mut(&mut self.config).mcp_servers.remove(server_id);
 
         // Disconnect all instances
         self.disconnect_all_instances(server_id).await;

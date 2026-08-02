@@ -184,8 +184,17 @@ impl EventHandlers {
                 self.invalidate_profile_cache().await;
 
                 if let Some(connection_pool) = &self.connection_pool {
-                    let mut pool = connection_pool.lock().await;
-                    if let Err(e) = pool.update_server_status(&server_id, enabled).await {
+                    let result = if enabled {
+                        crate::core::pool::UpstreamConnectionPool::enable_server_coordinated(
+                            connection_pool,
+                            &server_id,
+                        )
+                        .await
+                        .map(|_| ())
+                    } else {
+                        connection_pool.lock().await.disable_server(&server_id).await
+                    };
+                    if let Err(e) = result {
                         error!(
                             "Failed to update server '{}' (ID: {}) status: {}",
                             server_name, server_id, e

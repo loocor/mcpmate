@@ -193,7 +193,7 @@ impl ServerSyncManager {
         // Stop removed servers
         for server_name in plan.servers_to_stop {
             tracing::info!("Stopping removed server: {}", server_name);
-            if let Err(e) = pool.update_server_status(&server_name, false).await {
+            if let Err(e) = pool.disable_server(&server_name).await {
                 tracing::warn!("Failed to stop removed server '{}': {}", server_name, e);
             }
         }
