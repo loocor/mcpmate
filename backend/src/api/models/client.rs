@@ -1001,6 +1001,8 @@ pub struct ClientSettingsUpdateReq {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Client settings update response body")]
 pub struct ClientSettingsUpdateData {
+    #[schemars(description = "Whether this update created a new client record")]
+    pub created: bool,
     pub identifier: String,
     pub display_name: String,
     pub transport: String,

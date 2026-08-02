@@ -3,7 +3,7 @@
 
 use super::PathMapper;
 use anyhow::{Context, Result};
-use chrono::Utc;
+use chrono::Local;
 use nanoid::nanoid;
 use std::ffi::OsStr;
 #[cfg(windows)]
@@ -22,6 +22,47 @@ pub struct PathService {
 }
 
 const MAX_BACKUPS_PER_FILE: usize = 5;
+
+fn format_backup_timestamp(timestamp: chrono::DateTime<chrono::FixedOffset>) -> String {
+    timestamp.format("%Y%m%d%H%M%S%z").to_string()
+}
+
+fn sort_backups_by_modified(backups: &mut [(std::time::SystemTime, PathBuf)]) {
+    backups.sort_by(|(left_time, left_path), (right_time, right_path)| {
+        left_time.cmp(right_time).then_with(|| left_path.cmp(right_path))
+    });
+}
+
+fn set_backup_modified_time(
+    path: &Path,
+    modified_at: std::time::SystemTime,
+) -> Result<()> {
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .context(format!("Failed to open backup file: {}", path.display()))?
+        .set_modified(modified_at)
+        .context(format!("Failed to set backup modified time: {}", path.display()))
+}
+
+fn create_backup_file(
+    source: &Path,
+    destination: &Path,
+    created_at: std::time::SystemTime,
+) -> Result<()> {
+    let staging = destination.with_extension(format!("pending.{}", nanoid!(8)));
+    let result = (|| {
+        std::fs::copy(source, &staging).context(format!("Failed to create backup file: {}", destination.display()))?;
+        set_backup_modified_time(&staging, created_at)?;
+        replace_existing_file(&staging, destination)
+            .context(format!("Failed to publish backup file: {}", destination.display()))
+    })();
+
+    if result.is_err() {
+        let _ = std::fs::remove_file(staging);
+    }
+    result
+}
 
 impl PathService {
     /// Create a new path service with system variables
@@ -149,7 +190,8 @@ impl PathService {
         let mut backup_path = None;
 
         if exists {
-            let timestamp = Utc::now().format("%Y%m%d%H%M%S").to_string();
+            let created_at = std::time::SystemTime::now();
+            let timestamp = format_backup_timestamp(chrono::DateTime::<Local>::from(created_at).fixed_offset());
             let (backup_dir, candidate, file_prefix) =
                 self.build_backup_destination(identifier, &target_buf, &timestamp)?;
 
@@ -157,9 +199,18 @@ impl PathService {
                 .await
                 .context(format!("Failed to create backup directory: {}", backup_dir.display()))?;
 
-            fs::copy(&target_buf, &candidate)
-                .await
-                .context(format!("Failed to create backup file: {}", candidate.display()))?;
+            let backup_source = target_buf.clone();
+            let backup_destination = candidate.clone();
+            let backup_result = tokio::task::spawn_blocking(move || {
+                create_backup_file(&backup_source, &backup_destination, created_at)
+            })
+            .await
+            .context("Backup creation task failed")
+            .and_then(|result| result);
+            if let Err(err) = backup_result {
+                let _ = fs::remove_file(&tmp_path).await;
+                return Err(err);
+            }
 
             let retention = max_backups.unwrap_or(MAX_BACKUPS_PER_FILE);
             if let Err(err) = self.prune_old_backups(&backup_dir, &file_prefix, retention).await {
@@ -203,15 +254,18 @@ impl PathService {
         let mut backup_path = None;
 
         if exists {
-            let timestamp = Utc::now().format("%Y%m%d%H%M%S").to_string();
+            let created_at = std::time::SystemTime::now();
+            let timestamp = format_backup_timestamp(chrono::DateTime::<Local>::from(created_at).fixed_offset());
             let (backup_dir, candidate, file_prefix) =
                 self.build_backup_destination(identifier, &target_buf, &timestamp)?;
 
             std::fs::create_dir_all(&backup_dir)
                 .context(format!("Failed to create backup directory: {}", backup_dir.display()))?;
 
-            std::fs::copy(&target_buf, &candidate)
-                .context(format!("Failed to create backup file: {}", candidate.display()))?;
+            if let Err(err) = create_backup_file(&target_buf, &candidate, created_at) {
+                let _ = std::fs::remove_file(&tmp_path);
+                return Err(err);
+            }
 
             let retention = max_backups.unwrap_or(MAX_BACKUPS_PER_FILE);
             if let Err(err) = self.prune_old_backups_sync(&backup_dir, &file_prefix, retention) {
@@ -370,7 +424,13 @@ impl PathService {
             if path.is_file() {
                 if let Some(name) = path.file_name().and_then(|os| os.to_str()) {
                     if name.starts_with(file_prefix) && name.ends_with(".bak") {
-                        backups.push(path);
+                        let modified = entry
+                            .metadata()
+                            .await
+                            .context(format!("Failed to read backup metadata: {}", path.display()))?
+                            .modified()
+                            .context(format!("Failed to read backup modified time: {}", path.display()))?;
+                        backups.push((modified, path));
                     }
                 }
             }
@@ -380,9 +440,9 @@ impl PathService {
             return Ok(());
         }
 
-        backups.sort();
+        sort_backups_by_modified(&mut backups);
         let remove_count = backups.len() - retention;
-        for path in backups.into_iter().take(remove_count) {
+        for (_, path) in backups.into_iter().take(remove_count) {
             if let Err(err) = fs::remove_file(&path).await {
                 tracing::warn!("Failed to remove old backup {}: {}", path.display(), err);
             }
@@ -404,7 +464,12 @@ impl PathService {
             if path.is_file() {
                 if let Some(name) = path.file_name().and_then(|os| os.to_str()) {
                     if name.starts_with(file_prefix) && name.ends_with(".bak") {
-                        backups.push(path);
+                        let modified = entry
+                            .metadata()
+                            .context(format!("Failed to read backup metadata: {}", path.display()))?
+                            .modified()
+                            .context(format!("Failed to read backup modified time: {}", path.display()))?;
+                        backups.push((modified, path));
                     }
                 }
             }
@@ -414,9 +479,9 @@ impl PathService {
             return Ok(());
         }
 
-        backups.sort();
+        sort_backups_by_modified(&mut backups);
         let remove_count = backups.len() - retention;
-        for path in backups.into_iter().take(remove_count) {
+        for (_, path) in backups.into_iter().take(remove_count) {
             if let Err(err) = std::fs::remove_file(&path) {
                 tracing::warn!("Failed to remove old backup {}: {}", path.display(), err);
             }
@@ -499,4 +564,154 @@ static PATH_SERVICE: std::sync::OnceLock<PathService> = std::sync::OnceLock::new
 /// Get the global path service instance
 pub fn get_path_service() -> &'static PathService {
     PATH_SERVICE.get_or_init(PathService::default)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use std::time::{Duration, SystemTime};
+
+    fn write_file_at(
+        path: &Path,
+        modified_at: SystemTime,
+    ) {
+        std::fs::write(path, "content").expect("write file");
+        File::options()
+            .write(true)
+            .open(path)
+            .expect("open file")
+            .set_modified(modified_at)
+            .expect("set file modified time");
+    }
+
+    fn make_read_only(path: &Path) -> std::fs::Permissions {
+        let original = std::fs::metadata(path).expect("file metadata").permissions();
+        let mut read_only = original.clone();
+        read_only.set_readonly(true);
+        std::fs::set_permissions(path, read_only).expect("make file read-only");
+        original
+    }
+
+    fn assert_backup_creation_time(
+        backup: &Path,
+        target_name: &str,
+    ) {
+        let name = backup.file_name().and_then(OsStr::to_str).expect("backup name");
+        let timestamp = name
+            .strip_prefix(&format!("{target_name}."))
+            .and_then(|value| value.strip_suffix(".bak"))
+            .expect("backup timestamp");
+        let modified_at = std::fs::metadata(backup)
+            .expect("backup metadata")
+            .modified()
+            .expect("backup modified time");
+        let modified_at = chrono::DateTime::<Local>::from(modified_at);
+
+        assert_eq!(timestamp, modified_at.format("%Y%m%d%H%M%S%z").to_string());
+    }
+
+    fn seed_backups() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let directory = tempfile::tempdir().expect("temp backup directory");
+        let older = directory.path().join("z.bak");
+        let newer = directory.path().join("a.bak");
+
+        for (path, modified_seconds) in [(&older, 1), (&newer, 2)] {
+            write_file_at(path, SystemTime::UNIX_EPOCH + Duration::from_secs(modified_seconds));
+        }
+
+        (directory, older, newer)
+    }
+
+    #[tokio::test]
+    async fn async_and_sync_backups_use_creation_time_for_name_and_metadata() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let service = PathService::default().with_backup_root(directory.path().join("backups"));
+        let async_target = directory.path().join("async.json");
+        let sync_target = directory.path().join("sync.json");
+        write_file_at(&async_target, SystemTime::UNIX_EPOCH);
+        write_file_at(&sync_target, SystemTime::UNIX_EPOCH);
+
+        let async_backup = service
+            .atomic_write_with_backup(&async_target, b"updated", Some(1), Some("test"))
+            .await
+            .expect("async write")
+            .expect("async backup");
+        let sync_backup = service
+            .atomic_write_with_backup_sync(&sync_target, b"updated", Some(1), Some("test"))
+            .expect("sync write")
+            .expect("sync backup");
+
+        assert_backup_creation_time(&async_backup, "async.json");
+        assert_backup_creation_time(&sync_backup, "sync.json");
+
+        let created_at = std::fs::metadata(&sync_backup)
+            .expect("sync backup metadata")
+            .modified()
+            .expect("sync backup modified time");
+        create_backup_file(&sync_target, &sync_backup, created_at).expect("replace same-second backup");
+        assert_eq!(
+            std::fs::read_to_string(sync_backup).expect("read replaced backup"),
+            "updated"
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_backup_timestamp_does_not_leave_discoverable_or_temporary_files() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let service = PathService::default().with_backup_root(directory.path().join("backups"));
+        let async_target = directory.path().join("async.json");
+        let sync_target = directory.path().join("sync.json");
+        write_file_at(&async_target, SystemTime::UNIX_EPOCH);
+        write_file_at(&sync_target, SystemTime::UNIX_EPOCH);
+        let async_permissions = make_read_only(&async_target);
+        let sync_permissions = make_read_only(&sync_target);
+
+        let async_result = service
+            .atomic_write_with_backup(&async_target, b"updated", Some(1), Some("test"))
+            .await;
+        let sync_result = service.atomic_write_with_backup_sync(&sync_target, b"updated", Some(1), Some("test"));
+        std::fs::set_permissions(&async_target, async_permissions).expect("restore async permissions");
+        std::fs::set_permissions(&sync_target, sync_permissions).expect("restore sync permissions");
+
+        assert!(async_result.is_err());
+        assert!(sync_result.is_err());
+        for target in [&async_target, &sync_target] {
+            assert!(
+                service
+                    .list_backups_for(Some("test"), target)
+                    .await
+                    .expect("list backups")
+                    .is_empty()
+            );
+        }
+        assert!(
+            std::fs::read_dir(directory.path())
+                .expect("read target directory")
+                .all(|entry| !entry
+                    .expect("target directory entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .contains(".tmp."))
+        );
+    }
+
+    #[tokio::test]
+    async fn async_and_sync_pruning_use_file_modified_time() {
+        let (async_directory, async_older, async_newer) = seed_backups();
+        let (sync_directory, sync_older, sync_newer) = seed_backups();
+
+        PathService::default()
+            .prune_old_backups(async_directory.path(), "", 1)
+            .await
+            .expect("prune async backups");
+        PathService::default()
+            .prune_old_backups_sync(sync_directory.path(), "", 1)
+            .expect("prune sync backups");
+
+        assert!(!async_older.exists());
+        assert!(async_newer.exists());
+        assert!(!sync_older.exists());
+        assert!(sync_newer.exists());
+    }
 }

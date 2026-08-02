@@ -27,6 +27,7 @@ const MAX_ADMIN_DISCOVERY_RANDOM = 12;
 const DEFAULT_ADMIN_DISCOVERY_BASE_URL = "https://public.mcp.umate.ai";
 const CANONICAL_TRANSPORT_KEYS = ["streamable_http", "sse", "stdio"] as const;
 const CONFIG_PARSE_FORMATS = ["json", "json5", "toml", "yaml"] as const;
+type ConfigParseFormat = (typeof CONFIG_PARSE_FORMATS)[number];
 
 export const ADMIN_DISCOVERY_BASE_URL = trimTrailingSlash(
 	(typeof import.meta !== "undefined" &&
@@ -49,7 +50,7 @@ export interface AdminDiscoveryClientCandidate {
 	displayName: string;
 	configFileChoice: ClientConfigFileState;
 	configPath: string;
-	configFileParseFormat: string;
+	configFileParseFormat: ConfigParseFormat;
 	configFileParseContainerType: "standard" | "array";
 	configFileParseContainerKeysText: string;
 	mergeStrategy: "replace" | "deep_merge";
@@ -251,12 +252,12 @@ function configPathFromDiscoveryClient(
 }
 
 function adminConfigFileParse(file: Record<string, unknown>): {
-	format: string;
+	format: ConfigParseFormat;
 	containerType: "standard" | "array";
 	containerKeys: string[];
 } | null {
-	const format = compactString(file.format) ?? "json";
-	if (!(CONFIG_PARSE_FORMATS as readonly string[]).includes(format)) return null;
+	const format = adminConfigParseFormat(file.format);
+	if (!format) return null;
 	const container = recordValue(file.container);
 	const containerType = compactString(container.type ?? file.containerType ?? file.container_type);
 	if (containerType && !["standard", "object_map", "array"].includes(containerType)) return null;
@@ -267,6 +268,11 @@ function adminConfigFileParse(file: Record<string, unknown>): {
 		containerType: containerType === "array" ? "array" : "standard",
 		containerKeys,
 	};
+}
+
+function adminConfigParseFormat(value: unknown): ConfigParseFormat | null {
+	const format = compactString(value) ?? "json";
+	return CONFIG_PARSE_FORMATS.find((candidate) => candidate === format) ?? null;
 }
 
 function adminMergeStrategy(value: unknown): "replace" | "deep_merge" | null {
@@ -413,12 +419,14 @@ function resolvedAdminDiscoveryClientCandidate(raw: unknown): AdminDiscoveryClie
 	if (!transports) return null;
 	const mergeStrategy = adminMergeStrategy(candidate.mergeStrategy);
 	if (!mergeStrategy) return null;
+	const configFileParseFormat = adminConfigParseFormat(candidate.configFileParseFormat);
+	if (!configFileParseFormat) return null;
 	return {
 		identifier,
 		displayName,
 		configFileChoice: candidate.configFileChoice,
 		configPath: compactString(candidate.configPath) ?? "",
-		configFileParseFormat: compactString(candidate.configFileParseFormat) ?? "json",
+		configFileParseFormat,
 		configFileParseContainerType: candidate.configFileParseContainerType === "array" ? "array" : "standard",
 		configFileParseContainerKeysText: compactString(candidate.configFileParseContainerKeysText) ?? "",
 		mergeStrategy,
@@ -437,7 +445,12 @@ export function adminDiscoveryClientToUpdatePayload(
 	raw: unknown,
 	options?: { configPath?: string; forceWithoutConfigFile?: boolean },
 ): AdminClientUpdatePayload {
-	const candidate = resolvedAdminDiscoveryClientCandidate(raw) ?? adminDiscoveryClientToCandidate(raw);
+	const resolvedCandidate = resolvedAdminDiscoveryClientCandidate(raw);
+	const isResolvedCandidateInput = "configFileChoice" in recordValue(raw);
+	if (isResolvedCandidateInput && !resolvedCandidate) {
+		throw new Error("Admin discovery client candidate is invalid.");
+	}
+	const candidate = resolvedCandidate ?? adminDiscoveryClientToCandidate(raw);
 	if (!candidate) {
 		throw new Error("Admin discovery client is missing a usable identifier.");
 	}

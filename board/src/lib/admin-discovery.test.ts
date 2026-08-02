@@ -689,6 +689,31 @@ describe("admin discovery adapter", () => {
 		});
 	});
 
+	test("rejects a resolved Admin client candidate with an invalid config format", () => {
+		expect(() =>
+			adminDiscoveryClientToUpdatePayload({
+				identifier: "invalid-format",
+				displayName: "Invalid Format",
+				configFileChoice: "with_config_file",
+				configPath: "~/.invalid/mcp.xml",
+				configFileParseFormat: "xml",
+				configFileParseContainerType: "standard",
+				configFileParseContainerKeysText: "mcpServers",
+				mergeStrategy: "replace",
+				description: "",
+				homepageUrl: "",
+				docsUrl: "",
+				supportUrl: "",
+				logoUrl: "",
+				tags: [],
+				supportedTransports: ["stdio"],
+				transports: {
+					stdio: { command_field: "command" },
+				},
+			}),
+		).toThrow("Admin discovery client candidate is invalid.");
+	});
+
 	test("maps Admin servers into onboarding import candidates", () => {
 		const candidate = adminDiscoveryServerToOnboardingCandidate({
 			id: "github",

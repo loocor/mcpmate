@@ -29,6 +29,7 @@ import { mapDashboardSettingsToClientBackupPolicy } from "../lib/client-backup-p
 import { writeClipboardText } from "../lib/clipboard";
 import { readAdminDiscoveryPlatform } from "../lib/desktop-platform";
 import {
+	attachCreatedClientIfEligible,
 	reapplyClientConfigAfterSettingsUpdate,
 	resolveClientConfigSyncErrorMessage,
 } from "../lib/client-config-sync";
@@ -1631,7 +1632,7 @@ export function ClientFormDrawer({
 					}),
 				);
 			}
-			await clientsApi.update({
+			const updateResponse = await clientsApi.update({
 				identifier: savedIdentifier,
 				...writebackDecision.update,
 				display_name: values.displayName || undefined,
@@ -1672,7 +1673,7 @@ export function ClientFormDrawer({
 				}
 			}
 
-			if (mode === "create") {
+			if (mode === "create" && updateResponse.data?.created === true) {
 				try {
 					await clientsApi.setBackupPolicy({
 						identifier: savedIdentifier,
@@ -1685,6 +1686,21 @@ export function ClientFormDrawer({
 							defaultValue:
 								"Client record was created, but applying initial backup policy failed. You can retry in Backup settings.",
 						}),
+					);
+					return savedIdentifier;
+				}
+
+				try {
+					await attachCreatedClientIfEligible({
+						identifier: savedIdentifier,
+						created: true,
+					});
+				} catch (error) {
+					notifyError(
+						t("detail.notifications.attachFailed.title", {
+							defaultValue: "Attach failed",
+						}),
+						resolveClientConfigSyncErrorMessage(error, t),
 					);
 				}
 			}

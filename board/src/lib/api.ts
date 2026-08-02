@@ -26,6 +26,7 @@ import type {
 	ClientConfigRestoreReq,
 	ClientConfigUpdateReq,
 	ClientConfigUpdateResp,
+	ClientSettingsUpdateResp,
 	ClientMergeStrategy,
 	ClientAttachResp,
 	ClientDeleteResp,
@@ -3089,9 +3090,7 @@ export const clientsApi = {
 		transports?: Record<string, TransportRuleData>;
 		clear_transports?: boolean;
 	}) => {
-		const resp = await fetchApi<
-			{ success: boolean } & ApiWrapper<Record<string, unknown>>
-		>(`/api/client/update`, {
+		const resp = await fetchApi<ClientSettingsUpdateResp>(`/api/client/update`, {
 			method: "POST",
 			body: JSON.stringify(payload),
 		});
