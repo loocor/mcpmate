@@ -79,7 +79,9 @@ pub struct ServerManageReq {
     #[schemars(description = "Whether to sync client configuration")]
     pub sync: bool,
 
-    #[schemars(description = "Exact capability catalog revision set displayed before management")]
+    #[schemars(
+        description = "Capability catalog revision set used by direct exposure actions; enable/disable derive current revisions in transaction"
+    )]
     pub source_revision_set: super::CatalogRevisionSet,
 }
 

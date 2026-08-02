@@ -76,13 +76,7 @@ pub async fn manage_server(
             };
 
             // Call the existing enable_server logic
-            let result = enable_server_core(
-                State(state.clone()),
-                id,
-                sync_query,
-                request.source_revision_set.clone(),
-            )
-            .await;
+            let result = enable_server_core(State(state.clone()), id, sync_query).await;
             emit_server_manage_audit(
                 &state,
                 &request_id,
@@ -104,13 +98,7 @@ pub async fn manage_server(
             };
 
             // Call the existing disable_server logic
-            let result = disable_server_core(
-                State(state.clone()),
-                id,
-                sync_query,
-                request.source_revision_set.clone(),
-            )
-            .await;
+            let result = disable_server_core(State(state.clone()), id, sync_query).await;
             emit_server_manage_audit(
                 &state,
                 &request_id,
@@ -269,7 +257,6 @@ async fn enable_server_core(
     State(state): State<Arc<AppState>>,
     id: String,
     query: std::collections::HashMap<String, String>,
-    source_revision_set: crate::api::models::CatalogRevisionSet,
 ) -> Result<Json<ServerOperationData>, ApiError> {
     // Get database reference and server info
     let db = common::get_database_from_state(&state)?;
@@ -279,7 +266,6 @@ async fn enable_server_core(
         &db.pool,
         &server_id,
         true,
-        source_revision_set.into_iter().collect(),
         "server_management",
     )
     .await
@@ -331,7 +317,6 @@ async fn disable_server_core(
     State(state): State<Arc<AppState>>,
     id: String,
     query: std::collections::HashMap<String, String>,
-    source_revision_set: crate::api::models::CatalogRevisionSet,
 ) -> Result<Json<ServerOperationData>, ApiError> {
     // Get database reference and server info
     let db = common::get_database_from_state(&state)?;
@@ -341,7 +326,6 @@ async fn disable_server_core(
         &db.pool,
         &server_id,
         false,
-        source_revision_set.into_iter().collect(),
         "server_management",
     )
     .await
