@@ -202,9 +202,7 @@ impl PreviewUpstreamFixture {
                     .load_capability_snapshot(server_id)
                     .await
                     .expect("load promoted owner catalog");
-                if snapshot.is_some_and(|snapshot| {
-                    snapshot.state == mcpmate_capability_store::SnapshotState::Ready
-                }) {
+                if snapshot.is_some_and(|snapshot| snapshot.state == mcpmate_capability_store::SnapshotState::Ready) {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
