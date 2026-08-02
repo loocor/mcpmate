@@ -3,17 +3,15 @@ use std::{sync::Arc, time::Duration};
 use mcpmate::{
     common::constants::protocol,
     config::{
-        database::Database,
-        initialization::run_initialization,
         models::Server,
         server::{upsert_server, upsert_server_args},
     },
     core::{foundation::types::ConnectionStatus, models::Config, pool::UpstreamConnectionPool},
 };
-use mcpmate_capability_store::DerivedCapabilityCache;
-use sqlx::sqlite::SqlitePoolOptions;
 use tempfile::TempDir;
 use tokio::sync::Mutex;
+
+use crate::runtime_database::open_database;
 
 const SLOW_STDIO_SERVER: &str = r#"
 import json
@@ -65,20 +63,7 @@ impl SlowUpstreamFixture {
         delay: Duration,
     ) -> Self {
         let temp_dir = TempDir::new().expect("create temp directory");
-        let database_path = temp_dir.path().join("runtime.db");
-        let database_pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("open test database");
-        run_initialization(&database_pool)
-            .await
-            .expect("initialize test database");
-        let database = Arc::new(Database {
-            pool: database_pool,
-            path: database_path,
-            capability_cache: Arc::new(DerivedCapabilityCache::default()),
-        });
+        let database = open_database(&temp_dir).await;
 
         let script = temp_dir.path().join("slow_runtime.py");
         std::fs::write(&script, SLOW_STDIO_SERVER).expect("write stdio fixture");

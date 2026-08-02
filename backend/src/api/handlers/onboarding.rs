@@ -54,17 +54,13 @@ fn candidate_fingerprint(config: &crate::api::models::server::ServersImportConfi
     let Ok(st) = ServerType::from_client_format(config.kind.trim()) else {
         return String::new();
     };
-    match st {
-        ServerType::Stdio => crate::config::server::fingerprint::fingerprint_for_stdio(
-            config.command.as_deref().unwrap_or_default(),
-            config.args.as_deref().unwrap_or(&[]),
-        ),
-        ServerType::Sse | ServerType::StreamableHttp => {
-            let base = crate::config::server::fingerprint::url_signature(config.url.as_deref().unwrap_or_default())
-                .fingerprint;
-            format!("{}|{}", base, st.client_format())
-        }
-    }
+    crate::config::server::fingerprint::server_dedup_fingerprint(
+        st,
+        config.command.as_deref(),
+        config.url.as_deref(),
+        config.args.as_deref().unwrap_or_default(),
+    )
+    .value
 }
 
 fn push_source(

@@ -310,6 +310,9 @@ pub struct UpstreamConnectionPool {
     /// In-flight production startup attempts keyed by production route identity.
     pub(crate) startup_attempts: HashMap<types::ProductionRouteKey, super::startup::StartupAttemptEntry>,
     pub(crate) next_startup_attempt: Arc<AtomicU64>,
+    pub(crate) preview_owners: HashMap<super::runtime::PreviewOwnerKey, super::runtime::PreviewOwnerEntry>,
+    pub(crate) preview_attempts: HashMap<super::runtime::PreviewOwnerKey, super::runtime::PreviewAttemptEntry>,
+    pub(crate) next_preview_attempt: Arc<AtomicU64>,
     pub(crate) server_lifecycle_generations: HashMap<String, u64>,
     /// Server configuration
     pub config: Arc<Config>,
@@ -330,6 +333,12 @@ pub struct UpstreamConnectionPool {
 }
 
 impl UpstreamConnectionPool {
+    pub(crate) fn runtime_worker(&self) -> Self {
+        let mut worker = self.clone();
+        worker.clear_preview_runtime_state();
+        worker
+    }
+
     fn validation_worker(&self) -> Self {
         Self {
             connections: HashMap::new(),
@@ -348,6 +357,9 @@ impl UpstreamConnectionPool {
             next_health_reconnect_epoch: self.next_health_reconnect_epoch.clone(),
             startup_attempts: HashMap::new(),
             next_startup_attempt: self.next_startup_attempt.clone(),
+            preview_owners: HashMap::new(),
+            preview_attempts: HashMap::new(),
+            next_preview_attempt: self.next_preview_attempt.clone(),
             server_lifecycle_generations: HashMap::new(),
             config: self.config.clone(),
             cancellation_tokens: HashMap::new(),
@@ -392,6 +404,9 @@ impl UpstreamConnectionPool {
             next_health_reconnect_epoch: Arc::new(AtomicU64::new(1)),
             startup_attempts: HashMap::new(),
             next_startup_attempt: Arc::new(AtomicU64::new(1)),
+            preview_owners: HashMap::new(),
+            preview_attempts: HashMap::new(),
+            next_preview_attempt: Arc::new(AtomicU64::new(1)),
             server_lifecycle_generations: HashMap::new(),
             config,
             cancellation_tokens: HashMap::new(),
@@ -537,9 +552,31 @@ impl UpstreamConnectionPool {
         kind: FailureKind,
         reason: Option<String>,
     ) -> Duration {
-        let backoff = self
-            .failure_state_mut(server_id)
-            .register_failure(Instant::now(), kind, reason.clone());
+        self.register_failure_internal(server_id, kind, reason, false)
+    }
+
+    pub fn register_claimed_recovery_failure(
+        &mut self,
+        server_id: &str,
+        kind: FailureKind,
+        reason: Option<String>,
+    ) -> Duration {
+        self.register_failure_internal(server_id, kind, reason, true)
+    }
+
+    fn register_failure_internal(
+        &mut self,
+        server_id: &str,
+        kind: FailureKind,
+        reason: Option<String>,
+        attempt_already_claimed: bool,
+    ) -> Duration {
+        let state = self.failure_state_mut(server_id);
+        let backoff = if attempt_already_claimed {
+            state.register_claimed_recovery_failure(Instant::now(), kind, reason.clone())
+        } else {
+            state.register_failure(Instant::now(), kind, reason.clone())
+        };
 
         tracing::warn!(
             server_id = server_id,
@@ -605,6 +642,22 @@ impl UpstreamConnectionPool {
         self.failure_states
             .get(server_id)
             .and_then(|state| state.remaining_backoff(now))
+    }
+
+    pub fn automatic_recovery_exhausted(
+        &self,
+        server_id: &str,
+    ) -> bool {
+        self.failure_states
+            .get(server_id)
+            .is_some_and(types::FailureState::automatic_recovery_exhausted)
+    }
+
+    pub fn claim_automatic_recovery_attempt(
+        &mut self,
+        server_id: &str,
+    ) -> bool {
+        self.failure_state_mut(server_id).claim_automatic_recovery_attempt()
     }
 
     /// Initialize the connection pool with all servers

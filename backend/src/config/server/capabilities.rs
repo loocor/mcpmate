@@ -548,63 +548,12 @@ pub async fn discover_from_config(
     Ok(snap)
 }
 
-/// Discover capabilities with optional custom HTTP client and timeouts (used by preview)
-pub async fn discover_from_config_preview(
-    server_name: &str,
-    server_config: &crate::core::models::MCPServerConfig,
-    server_type: crate::common::server::ServerType,
-    http_client: Option<reqwest::Client>,
+async fn preview_snapshot_from_service(
+    service: &crate::core::transport::ClientService,
+    tools: Vec<rmcp::model::Tool>,
+    capabilities: Option<rmcp::model::ServerCapabilities>,
     operation_timeout: Option<std::time::Duration>,
 ) -> Result<CapabilitySnapshot> {
-    use crate::core::transport::{
-        TransportType, connect_http_server_with_client_timeouts, stdio::connect_stdio_server_with_timeouts,
-    };
-    use tokio_util::sync::CancellationToken;
-
-    let timeout_policy = crate::core::transport::timeout_policy::McpTimeoutPolicy::for_server(
-        server_type,
-        server_config.command.as_deref(),
-        operation_timeout,
-    );
-    let (service, tools, capabilities, _pid) = match server_type {
-        crate::common::server::ServerType::Stdio => {
-            let command = server_config.command.as_deref().unwrap_or_default();
-            let result = connect_stdio_server_with_timeouts(
-                server_name,
-                server_config,
-                CancellationToken::new(),
-                None,
-                timeout_policy.startup,
-                timeout_policy.capability_operation,
-            )
-            .await;
-
-            if is_preview_package_runner(command) {
-                result.with_context(|| {
-                    format!(
-                        "Package runner preview startup failed for '{server_name}' after allowing up to {}s",
-                        timeout_policy.startup.as_secs()
-                    )
-                })?
-            } else {
-                result?
-            }
-        }
-        crate::common::server::ServerType::Sse | crate::common::server::ServerType::StreamableHttp => {
-            let client = http_client.unwrap_or_default();
-            let (service, tools, capabilities) = connect_http_server_with_client_timeouts(
-                server_name,
-                server_config,
-                client,
-                TransportType::StreamableHttp,
-                timeout_policy.startup,
-                timeout_policy.capability_operation,
-            )
-            .await?;
-            (service, tools, capabilities, None)
-        }
-    };
-
     let peer_info = service.peer_info();
     let initialize = crate::core::transport::client::legacy_initialize_result(peer_info.as_deref())?;
     let mut snap = CapabilitySnapshot {
@@ -616,26 +565,30 @@ pub async fn discover_from_config_preview(
         ..Default::default()
     };
     snap.set_tools(tools);
-    if capabilities.as_ref().and_then(|c| c.prompts.as_ref()).is_some() {
+    if capabilities.as_ref().and_then(|value| value.prompts.as_ref()).is_some() {
         let items = run_preview_operation(
             "prompts/list",
             operation_timeout,
-            discovery_helpers::collect_all_prompts(&service),
+            discovery_helpers::collect_all_prompts(service),
         )
         .await?;
         snap.set_prompts(items);
     }
-    if capabilities.as_ref().and_then(|c| c.resources.as_ref()).is_some() {
+    if capabilities
+        .as_ref()
+        .and_then(|value| value.resources.as_ref())
+        .is_some()
+    {
         let resources = run_preview_operation(
             "resources/list",
             operation_timeout,
-            discovery_helpers::collect_all_resources(&service),
+            discovery_helpers::collect_all_resources(service),
         )
         .await?;
         let templates = run_preview_operation(
             "resources/templates/list",
             operation_timeout,
-            discovery_helpers::collect_all_resource_templates(&service),
+            discovery_helpers::collect_all_resource_templates(service),
         )
         .await?;
         snap.set_resources(resources);
@@ -649,6 +602,120 @@ pub async fn discover_from_config_preview(
         }
     }
     Ok(snap)
+}
+
+pub(crate) async fn discover_from_preview_connection(
+    connection: &crate::core::pool::UpstreamConnection,
+    operation_timeout: Option<std::time::Duration>,
+) -> Result<CapabilitySnapshot> {
+    let service = connection
+        .service
+        .as_deref()
+        .context("Preview owner has no capability peer")?;
+    let tools = if connection
+        .capabilities
+        .as_ref()
+        .and_then(|capabilities| capabilities.tools.as_ref())
+        .is_some()
+    {
+        run_preview_operation(
+            "tools/list",
+            operation_timeout,
+            discovery_helpers::collect_all_tools(service),
+        )
+        .await?
+    } else {
+        Vec::new()
+    };
+    preview_snapshot_from_service(service, tools, connection.capabilities.clone(), operation_timeout).await
+}
+
+/// Connect and initialize a preview owner for short-term reuse.
+pub(crate) async fn connect_preview_owner(
+    server_name: &str,
+    server_config: &crate::core::models::MCPServerConfig,
+    server_type: crate::common::server::ServerType,
+    http_client: Option<reqwest::Client>,
+    operation_timeout: Option<std::time::Duration>,
+) -> Result<(
+    crate::core::pool::UpstreamConnection,
+    Option<tokio_util::sync::CancellationToken>,
+)> {
+    use crate::core::transport::{
+        TransportType, connect_http_server_with_client_timeouts, stdio::connect_stdio_server_with_timeouts,
+    };
+    use tokio_util::sync::CancellationToken;
+
+    let timeout_policy = crate::core::transport::timeout_policy::McpTimeoutPolicy::for_server(
+        server_type,
+        server_config.command.as_deref(),
+        operation_timeout,
+    );
+    let (service, tools, capabilities, pid, cancellation) = match server_type {
+        crate::common::server::ServerType::Stdio => {
+            let command = server_config.command.as_deref().unwrap_or_default();
+            let cancellation = CancellationToken::new();
+            let result = connect_stdio_server_with_timeouts(
+                server_name,
+                server_config,
+                cancellation.clone(),
+                None,
+                timeout_policy.startup,
+                timeout_policy.capability_operation,
+            )
+            .await;
+
+            if is_preview_package_runner(command) {
+                let (service, tools, capabilities, pid) = result.with_context(|| {
+                    format!(
+                        "Package runner preview startup failed for '{server_name}' after allowing up to {}s",
+                        timeout_policy.startup.as_secs()
+                    )
+                })?;
+                (service, tools, capabilities, pid, Some(cancellation))
+            } else {
+                let (service, tools, capabilities, pid) = result?;
+                (service, tools, capabilities, pid, Some(cancellation))
+            }
+        }
+        crate::common::server::ServerType::Sse | crate::common::server::ServerType::StreamableHttp => {
+            let client = http_client.unwrap_or_default();
+            let (service, tools, capabilities) = connect_http_server_with_client_timeouts(
+                server_name,
+                server_config,
+                client,
+                TransportType::StreamableHttp,
+                timeout_policy.startup,
+                timeout_policy.capability_operation,
+            )
+            .await?;
+            (service, tools, capabilities, None, None)
+        }
+    };
+
+    let mut connection = crate::core::pool::UpstreamConnection::new(server_name.to_string());
+    connection.process_id = pid;
+    connection.config_fingerprint = server_config.source_fingerprint.clone();
+    connection.runtime_fingerprint = Some(crate::config::server::fingerprint::materialized_runtime_fingerprint(
+        server_config,
+    )?);
+    connection.update_connected(service, tools, capabilities);
+    Ok((connection, cancellation))
+}
+
+/// Discover capabilities with optional custom HTTP client and timeouts (used by migration callers).
+pub async fn discover_from_config_preview(
+    server_name: &str,
+    server_config: &crate::core::models::MCPServerConfig,
+    server_type: crate::common::server::ServerType,
+    http_client: Option<reqwest::Client>,
+    operation_timeout: Option<std::time::Duration>,
+) -> Result<CapabilitySnapshot> {
+    let (connection, cancellation) =
+        connect_preview_owner(server_name, server_config, server_type, http_client, operation_timeout).await?;
+    let snapshot = discover_from_preview_connection(&connection, operation_timeout).await;
+    crate::core::pool::UpstreamConnectionPool::discard_startup_result(Some(connection), cancellation).await;
+    snapshot
 }
 
 /// Upsert an exact upstream prompt and its external identifier.
@@ -1292,8 +1359,19 @@ async fn config_fingerprint_in_transaction(
     .bind(server_id)
     .fetch_all(&mut **tx)
     .await?;
-    let value = serde_json::to_vec(&(server, args, env, headers))?;
-    Ok(format!("sha256:{:x}", Sha256::digest(value)))
+    let env = env.into_iter().collect::<HashMap<_, _>>();
+    let headers = headers.into_iter().collect::<HashMap<_, _>>();
+    Ok(super::fingerprint::runtime_config_fingerprint(
+        &super::fingerprint::RuntimeConfigFingerprintInput {
+            server_type: &server.0,
+            command: server.1.as_deref(),
+            url: server.2.as_deref(),
+            enabled: server.3,
+            args: &args,
+            env: &env,
+            headers: &headers,
+        },
+    )?)
 }
 
 pub async fn current_config_fingerprint(
@@ -1814,6 +1892,65 @@ mod tests {
             .await
             .expect("insert server");
         pool
+    }
+
+    #[tokio::test]
+    async fn runtime_config_fingerprint_matches_persisted_config() {
+        let pool = capability_store_pool().await;
+        sqlx::query("UPDATE server_config SET command = 'python3', enabled = 1 WHERE id = 'server-a'")
+            .execute(&pool)
+            .await
+            .expect("configure persisted server");
+        crate::config::server::args::upsert_server_args(
+            &pool,
+            "server-a",
+            &["server.py".to_string(), "--json".to_string()],
+        )
+        .await
+        .expect("insert persisted arguments");
+        crate::config::server::env::upsert_server_env(
+            &pool,
+            "server-a",
+            &HashMap::from([("A".to_string(), "1".to_string()), ("B".to_string(), "2".to_string())]),
+        )
+        .await
+        .expect("insert persisted environment variables");
+        crate::config::server::headers::upsert_server_headers(
+            &pool,
+            "server-a",
+            &HashMap::from([
+                ("X-Tenant".to_string(), "alpha".to_string()),
+                ("X-Mode".to_string(), "preview".to_string()),
+            ]),
+        )
+        .await
+        .expect("insert persisted headers");
+
+        let args = vec![(0, "server.py".to_string()), (1, "--json".to_string())];
+        let env = HashMap::from([("B".to_string(), "2".to_string()), ("A".to_string(), "1".to_string())]);
+        let headers = HashMap::from([
+            ("X-Tenant".to_string(), "alpha".to_string()),
+            ("X-Mode".to_string(), "preview".to_string()),
+        ]);
+        let draft = crate::config::server::fingerprint::runtime_config_fingerprint(
+            &crate::config::server::fingerprint::RuntimeConfigFingerprintInput {
+                server_type: "stdio",
+                command: Some("python3"),
+                url: None,
+                enabled: true,
+                args: &args,
+                env: &env,
+                headers: &headers,
+            },
+        )
+        .expect("fingerprint draft runtime config");
+        let persisted = current_config_fingerprint(&pool, "server-a")
+            .await
+            .expect("fingerprint persisted runtime config");
+
+        const EXPECTED: &str = "sha256:223c8439277bd5817b067918dd0eff2aab1ad692cc5399361ef82c41c48dd111";
+        assert_eq!(draft, EXPECTED);
+        assert_eq!(persisted, EXPECTED);
     }
 
     fn decode<T: DeserializeOwned>(value: Value) -> T {

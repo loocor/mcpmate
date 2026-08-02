@@ -632,11 +632,28 @@ mod tests {
         let handler = crate::core::transport::client::UpstreamClientHandler::new("direct-read-fixture".to_string());
         let service = handler.serve(client_transport).await.expect("connect fixture");
         let capabilities = service.peer_info().map(|info| info.capabilities.clone());
+        let server_config = crate::core::models::MCPServerConfig {
+            source_fingerprint: Some("direct-read-config".to_string()),
+            kind: crate::common::server::ServerType::Stdio,
+            command: Some("direct-read-fixture".to_string()),
+            args: None,
+            url: None,
+            env: None,
+            headers: None,
+        };
+        let runtime_fingerprint = crate::config::server::fingerprint::materialized_runtime_fingerprint(&server_config)
+            .expect("fingerprint direct-read fixture");
         let mut connection = UpstreamConnection::new("direct-read-fixture".to_string());
         let instance_id = connection.id.clone();
         connection.update_connected(service, Vec::new(), capabilities);
+        connection.config_fingerprint = server_config.source_fingerprint.clone();
+        connection.runtime_fingerprint = Some(runtime_fingerprint);
 
-        let mut pool = UpstreamConnectionPool::new(Arc::new(crate::core::models::Config::default()), None);
+        let mut config = crate::core::models::Config::default();
+        config
+            .mcp_servers
+            .insert("server-direct-read".to_string(), server_config);
+        let mut pool = UpstreamConnectionPool::new(Arc::new(config), None);
         pool.connections
             .entry("server-direct-read".to_string())
             .or_default()

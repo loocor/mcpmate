@@ -1,3 +1,5 @@
+#[path = "support/runtime_database.rs"]
+mod runtime_database;
 #[path = "support/upstream_runtime.rs"]
 mod upstream_runtime;
 

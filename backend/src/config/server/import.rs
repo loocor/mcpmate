@@ -185,25 +185,18 @@ fn prepare_import_candidate(cfg: &ServersImportConfig) -> Result<ImportCandidate
     let persisted_kind = server_type.client_format();
     validate_server_config(persisted_kind, &cfg.command, &cfg.url).map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
-    let mut url_signature: Option<fingerprint::UrlSignature> = None;
-    let fp = match server_type {
-        ServerType::Stdio => fingerprint::fingerprint_for_stdio(
-            cfg.command.as_deref().unwrap_or_default(),
-            cfg.args.as_deref().unwrap_or(&[]),
-        ),
-        ServerType::Sse | ServerType::StreamableHttp => {
-            let sig = fingerprint::url_signature(cfg.url.as_deref().unwrap_or_default());
-            let key = format!("{}|{}", sig.fingerprint, persisted_kind);
-            url_signature = Some(sig);
-            key
-        }
-    };
+    let dedup = fingerprint::server_dedup_fingerprint(
+        server_type,
+        cfg.command.as_deref(),
+        cfg.url.as_deref(),
+        cfg.args.as_deref().unwrap_or_default(),
+    );
 
     Ok(ImportCandidate {
         server_type,
         persisted_kind,
-        fingerprint: fp,
-        url_signature,
+        fingerprint: dedup.value,
+        url_signature: dedup.url_signature,
     })
 }
 
@@ -708,24 +701,23 @@ impl ExistingIndex {
         let servers = get_all_servers(db).await?;
         for s in servers {
             names.insert(s.name.clone());
-            if let Some(cmd) = s.command.as_ref() {
-                // load args
-                let args_list = if let Some(id) = s.id.as_ref() {
-                    args::get_server_args(db, id)
-                        .await
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|a| a.arg_value)
-                        .collect()
-                } else {
-                    Vec::new()
-                };
-                fps.insert(fingerprint::fingerprint_for_stdio(cmd, &args_list));
-            }
-            if let Some(url) = s.url.as_ref() {
-                let sig = fingerprint::url_signature(url);
-                let key = format!("{}|{}", sig.fingerprint, s.server_type.client_format());
-                fps.insert(key);
+            let args_list = match (s.server_type, s.id.as_ref()) {
+                (ServerType::Stdio, Some(id)) => args::get_server_args(db, id)
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|a| a.arg_value)
+                    .collect(),
+                _ => Vec::new(),
+            };
+            let dedup = fingerprint::server_dedup_fingerprint(
+                s.server_type,
+                s.command.as_deref(),
+                s.url.as_deref(),
+                &args_list,
+            );
+            fps.insert(dedup.value);
+            if let Some(sig) = dedup.url_signature {
                 url_bases.insert(sig.base.clone());
                 url_sigs.entry(sig.base.clone()).or_insert(sig);
             }

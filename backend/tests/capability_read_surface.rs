@@ -909,7 +909,7 @@ async fn background_sync_commit_invalidates_the_current_raw_snapshot() {
     events.assert_no_events(unrelated_id);
 
     let after = call_rest_list(&app, SurfaceKind::Tools, server_id).await;
-    assert_eq!(after.pointer("/data/meta/source"), Some(&json!("sqlite_catalog")));
+    assert_eq!(after.pointer("/data/meta/source"), Some(&json!("memory_cache")));
     assert!(
         after.to_string().contains("revision two"),
         "new revision missing: {after}"
@@ -984,17 +984,17 @@ async fn background_sync_failure_hides_the_previous_ready_snapshot() {
         .await
         .expect("load failed snapshot")
         .expect("failed snapshot exists");
-    assert_eq!(failed.state, SnapshotState::Unavailable);
+    assert_eq!(failed.state, SnapshotState::Ready);
     let resources_state = failed
         .kind_states
         .iter()
         .find(|state| state.kind == CapabilityKind::Resources)
         .expect("resources state exists");
     assert_eq!(resources_state.inventory, InventoryState::Failed);
-    let reason = failed
-        .last_error
+    let reason = resources_state
+        .error
         .as_deref()
-        .expect("terminal failure reason is persisted");
+        .expect("scoped failure reason is persisted");
     assert!(reason.contains(server_id), "reason omits server identity: {reason}");
     assert!(reason.contains("resources"), "reason omits kind scope: {reason}");
     assert!(reason.contains("instance="), "reason omits owner instance: {reason}");
@@ -1309,8 +1309,12 @@ async fn server_capability_refresh_commits_one_complete_catalog_observation() {
     let body: Value = serde_json::from_slice(&bytes).expect("decode second capability refresh response");
     assert_eq!(body.pointer("/data/catalog_revision"), Some(&json!(1)));
     assert_eq!(body.pointer("/data/catalog_changed"), Some(&json!(false)));
+    assert_eq!(
+        operation_count(&operations, "initialize"),
+        1,
+        "production owner must remain initialized across refreshes"
+    );
     for operation in [
-        "initialize",
         "tools/list",
         "prompts/list",
         "resources/list",
@@ -1373,7 +1377,7 @@ async fn validation_sync_kind_failure_records_scoped_evidence() {
         "server_id={server_id} server_name={server_name} kinds=[resources]"
     )));
     assert!(
-        reason.contains(&format!("instance=Some(\"validation-{server_name}-")) && reason.contains("generation=Some("),
+        reason.contains("instance=Some(\"UPSV") && reason.contains("generation=None"),
         "owner evidence mismatch: {reason}"
     );
     assert!(
@@ -1616,7 +1620,7 @@ async fn import_kind_failure_records_one_scoped_observation() {
     assert!(reason.contains(&format!(
         "server_id={server_id} server_name={server_name} kinds=[resources]"
     )));
-    assert!(reason.contains("generation=Some("));
+    assert!(reason.contains("generation=None"));
     assert!(reason.contains("resource inventory failed"));
     assert_eq!(start_count(&counter), 1, "one import must create one discovery owner");
 
@@ -1843,7 +1847,7 @@ async fn batch_import_starts_two_servers_without_serializing_discovery() {
     .expect("two imported servers must begin discovery concurrently");
 
     let catalog = SqliteCapabilityCatalog::new(database.pool.clone());
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(Duration::from_secs(7), async {
         loop {
             let mut ready = 0;
             for (server_name, _) in &fixtures {

@@ -2517,6 +2517,7 @@ mod tests {
                 instance_id: format!("{source:?}-{sequence}"),
                 connection_generation: None,
                 peer: self.peer.clone(),
+                startup_tools: None,
                 source,
                 cleanup: None,
             }
@@ -2719,6 +2720,7 @@ mod tests {
             instance_id: "owner-1".to_string(),
             connection_generation: None,
             peer,
+            startup_tools: None,
             source,
             cleanup: None,
         };

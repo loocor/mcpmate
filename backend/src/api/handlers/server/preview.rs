@@ -28,7 +28,17 @@ pub async fn preview_servers(
     // Process sequentially to avoid uncontrolled concurrency; can add a small semaphore later
     let mut items_out: Vec<ServerPreviewItemData> = Vec::with_capacity(req.servers.len());
     for item in req.servers {
-        items_out.push(preview_one(item, timeout, include_details, db_pool.as_ref(), secret_store.clone()).await);
+        items_out.push(
+            preview_one(
+                item,
+                timeout,
+                include_details,
+                db_pool.as_ref(),
+                secret_store.clone(),
+                state.connection_pool.clone(),
+            )
+            .await,
+        );
     }
 
     Ok(Json(ServerPreviewResp::success(ServerPreviewData { items: items_out })))
@@ -40,6 +50,7 @@ async fn preview_one(
     include_details: bool,
     db_pool: Option<&sqlx::SqlitePool>,
     secret_store: Option<Arc<LocalSecretStore>>,
+    connection_pool: Arc<tokio::sync::Mutex<crate::core::pool::UpstreamConnectionPool>>,
 ) -> ServerPreviewItemData {
     // Map kind -> ServerType
     let kind = match crate::common::server::ServerType::from_client_format(item.kind.as_str()) {
@@ -47,6 +58,11 @@ async fn preview_one(
         Err(_) => {
             return empty_with_error(item.name, format!("Invalid server kind: {}", item.kind));
         }
+    };
+
+    let config_fingerprint = match canonical_preview_fingerprint(&item, kind) {
+        Ok(fingerprint) => fingerprint,
+        Err(error) => return empty_with_error(item.name, error.to_string()),
     };
 
     let effective_headers = match resolve_preview_headers(
@@ -76,6 +92,10 @@ async fn preview_one(
         Ok(resolved) => resolved,
         Err(err) => return empty_with_error(item.name, err.to_string()),
     };
+    let runtime_fingerprint = match runtime_config_fingerprint(&cfg) {
+        Ok(fingerprint) => fingerprint,
+        Err(error) => return empty_with_error(item.name, error.to_string()),
+    };
 
     let mut client: Option<reqwest::Client> = None;
     if kind.is_http_transport() {
@@ -96,9 +116,17 @@ async fn preview_one(
     }
 
     // The shared Inspector timeout is a fresh deadline for each MCP operation.
-    let snap =
-        crate::config::server::capabilities::discover_from_config_preview(&item.name, &cfg, kind, client, timeout)
-            .await;
+    let subject =
+        crate::core::pool::UpstreamSubject::preview(item.name.clone(), config_fingerprint, runtime_fingerprint);
+    let snap = crate::core::pool::UpstreamConnectionPool::preview_capabilities_coordinated(
+        &connection_pool,
+        subject,
+        cfg,
+        kind,
+        client,
+        timeout,
+    )
+    .await;
 
     match snap {
         Ok(s) => {
@@ -114,6 +142,52 @@ async fn preview_one(
         }
         Err(e) => empty_with_error(item.name, e.to_string()),
     }
+}
+
+fn canonical_preview_fingerprint(
+    item: &ServerPreviewItemReq,
+    kind: crate::common::server::ServerType,
+) -> serde_json::Result<String> {
+    runtime_fingerprint_parts(
+        kind,
+        item.command.as_deref(),
+        item.url.as_deref(),
+        item.args.as_deref(),
+        item.env.as_ref(),
+        item.headers.as_ref(),
+    )
+}
+
+fn runtime_config_fingerprint(config: &MCPServerConfig) -> serde_json::Result<String> {
+    crate::config::server::fingerprint::materialized_runtime_fingerprint(config)
+}
+
+fn runtime_fingerprint_parts(
+    kind: crate::common::server::ServerType,
+    command: Option<&str>,
+    url: Option<&str>,
+    args: Option<&[String]>,
+    env: Option<&HashMap<String, String>>,
+    headers: Option<&HashMap<String, String>>,
+) -> serde_json::Result<String> {
+    let indexed_args = args
+        .unwrap_or_default()
+        .iter()
+        .enumerate()
+        .map(|(index, value)| (index as i64, value.clone()))
+        .collect::<Vec<_>>();
+    let empty = HashMap::new();
+    crate::config::server::fingerprint::runtime_config_fingerprint(
+        &crate::config::server::fingerprint::RuntimeConfigFingerprintInput {
+            server_type: kind.client_format(),
+            command,
+            url,
+            enabled: true,
+            args: &indexed_args,
+            env: env.unwrap_or(&empty),
+            headers: headers.unwrap_or(&empty),
+        },
+    )
 }
 
 async fn resolve_preview_headers(
@@ -458,6 +532,47 @@ mod tests {
         .expect("insert http server");
     }
 
+    #[tokio::test]
+    async fn oauth_runtime_header_changes_materialization_not_owner_identity() {
+        let pool = setup_pool().await;
+        insert_http_server(&pool, "serv_preview_identity").await;
+        let item = ServerPreviewItemReq {
+            name: "server-serv_preview_identity".to_string(),
+            server_id: Some("serv_preview_identity".to_string()),
+            kind: "streamable_http".to_string(),
+            command: None,
+            url: Some("https://example.com/mcp".to_string()),
+            args: None,
+            env: None,
+            headers: None,
+        };
+
+        let preview_fingerprint =
+            canonical_preview_fingerprint(&item, crate::common::server::ServerType::StreamableHttp)
+                .expect("fingerprint preview identity");
+        let persisted_fingerprint =
+            crate::config::server::capabilities::current_config_fingerprint(&pool, "serv_preview_identity")
+                .await
+                .expect("fingerprint persisted identity");
+
+        assert_eq!(preview_fingerprint, persisted_fingerprint);
+
+        let effective_headers =
+            HashMap::from([("authorization".to_string(), "Bearer refreshed-at-runtime".to_string())]);
+        let effective_config = MCPServerConfig {
+            source_fingerprint: None,
+            kind: crate::common::server::ServerType::StreamableHttp,
+            command: None,
+            url: Some("https://example.com/mcp".to_string()),
+            args: None,
+            env: None,
+            headers: Some(effective_headers),
+        };
+        let runtime_fingerprint =
+            runtime_config_fingerprint(&effective_config).expect("fingerprint effective runtime config");
+        assert_ne!(preview_fingerprint, runtime_fingerprint);
+    }
+
     async fn store_expired_oauth_token(
         pool: &sqlx::SqlitePool,
         secret_store: &LocalSecretStore,
@@ -635,6 +750,10 @@ mod tests {
             false,
             Some(&pool),
             Some(secret_store),
+            Arc::new(tokio::sync::Mutex::new(crate::core::pool::UpstreamConnectionPool::new(
+                Arc::new(crate::core::models::Config::default()),
+                None,
+            ))),
         )
         .await;
 

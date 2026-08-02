@@ -698,6 +698,15 @@ pub(crate) async fn discover_owner(
             timeout_ms: None,
         });
     }
+    if ctx.capability == CapabilityType::Tools
+        && let Some(tools) = owner.startup_tools.as_ref()
+    {
+        return Ok(CapabilityDiscoveryObservation {
+            items: CapabilityItems::Tools(tools.clone()),
+            flags: CapSyncFlags::TOOLS,
+            kind_states: Vec::new(),
+        });
+    }
     let (items, flags, failure, kind_states) = fetch_runtime_items(
         ctx.capability,
         owner.peer.clone(),
@@ -779,6 +788,13 @@ pub(crate) async fn discover_all_kinds_owner(
                 CapabilityType::ResourceTemplates => CapSyncFlags::RESOURCE_TEMPLATES,
             };
             flags = flags.union(capability_flags);
+            continue;
+        }
+        if capability == CapabilityType::Tools
+            && let Some(startup_tools) = owner.startup_tools.as_ref()
+        {
+            tools = startup_tools.clone();
+            flags = flags.union(CapSyncFlags::TOOLS);
             continue;
         }
         let (items, capability_flags, failure, capability_states) = fetch_runtime_items(

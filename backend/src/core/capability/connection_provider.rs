@@ -30,6 +30,7 @@ pub(crate) struct CapabilityOwner {
     pub instance_id: String,
     pub connection_generation: Option<u64>,
     pub peer: Peer<RoleClient>,
+    pub startup_tools: Option<Vec<rmcp::model::Tool>>,
     pub source: OwnerSource,
     pub cleanup: Option<CapabilityOwnerCleanup>,
 }
@@ -247,6 +248,13 @@ impl PoolCapabilityConnectionProvider {
             CapabilityOwnerError::Backoff {
                 remaining_ms: backoff.remaining_ms,
             }
+        } else if let Some(backoff) = error
+            .chain()
+            .find_map(|source| source.downcast_ref::<crate::core::pool::ProductionConnectionBackoff>())
+        {
+            CapabilityOwnerError::Backoff {
+                remaining_ms: backoff.remaining_ms,
+            }
         } else {
             CapabilityOwnerError::Other {
                 reason: error.to_string(),
@@ -332,6 +340,7 @@ impl PoolCapabilityConnectionProvider {
             instance_id: connection.id.clone(),
             connection_generation: Some(reservation.generation()),
             peer: service.peer().clone(),
+            startup_tools: None,
             source,
             cleanup,
         })
@@ -440,7 +449,7 @@ impl CapabilityConnectionProvider for PoolCapabilityConnectionProvider {
         };
         let closed_or_owner = {
             let connection =
-                pool.get_instance(&ctx.server_id, &instance_id)
+                pool.get_instance_mut(&ctx.server_id, &instance_id)
                     .map_err(|error| CapabilityOwnerError::Stale {
                         reason: error.to_string(),
                     })?;
@@ -460,10 +469,17 @@ impl CapabilityConnectionProvider for PoolCapabilityConnectionProvider {
                         reason: format!("selected owner '{instance_id}' has no bound configuration fingerprint"),
                     });
                 };
-                Ok((service.peer().clone(), config_fingerprint))
+                let startup_tools = (connection.startup_tools_pending
+                    && ctx.operation_timeout
+                        >= crate::core::transport::timeout_policy::DEFAULT_CAPABILITY_OPERATION_TIMEOUT)
+                    .then(|| {
+                        connection.startup_tools_pending = false;
+                        connection.tools.clone()
+                    });
+                Ok((service.peer().clone(), config_fingerprint, startup_tools))
             }
         };
-        let (peer, config_fingerprint) = match closed_or_owner {
+        let (peer, config_fingerprint, startup_tools) = match closed_or_owner {
             Ok(owner) => owner,
             Err(reason) => {
                 pool.register_failure(
@@ -494,6 +510,7 @@ impl CapabilityConnectionProvider for PoolCapabilityConnectionProvider {
             instance_id,
             connection_generation: None,
             peer,
+            startup_tools,
             source: OwnerSource::Existing,
             cleanup: None,
         }))
@@ -503,6 +520,36 @@ impl CapabilityConnectionProvider for PoolCapabilityConnectionProvider {
         &self,
         ctx: &ListCtx,
     ) -> Result<CapabilityOwner, CapabilityOwnerError> {
+        if ctx.validation_session.is_none() {
+            let selection = ctx.connection_selection.clone().unwrap_or_else(|| ConnectionSelection {
+                server_id: ctx.server_id.clone(),
+                affinity_key: AffinityKey::Default,
+            });
+            if selection.server_id != ctx.server_id {
+                return Err(CapabilityOwnerError::Configuration {
+                    reason: format!(
+                        "connection selection targets server '{}' instead of '{}'",
+                        selection.server_id, ctx.server_id
+                    ),
+                });
+            }
+            let production_managed = self.pool.lock().await.config.mcp_servers.contains_key(&ctx.server_id);
+            if production_managed {
+                UpstreamConnectionPool::ensure_connected_coordinated(&self.pool, &selection)
+                    .await
+                    .map_err(Self::classify_acquisition_error)?;
+                return self
+                    .existing_owner(ctx)
+                    .await?
+                    .ok_or_else(|| CapabilityOwnerError::Missing {
+                        reason: format!(
+                            "production startup completed without an owner for server '{}'",
+                            ctx.server_id
+                        ),
+                    });
+            }
+        }
+
         let (session_id, owns_session) = Self::validation_session(ctx);
         self.create_fresh_owner(ctx, &session_id, owns_session).await
     }
@@ -874,6 +921,51 @@ mod tests {
             ));
             assert_eq!(error.retry_disposition(), DiscoveryRetryDisposition::DoNotRetry);
         }
+    }
+
+    #[tokio::test]
+    async fn production_backoff_remains_typed_for_management_discovery() {
+        let database = test_database().await;
+        sqlx::query(
+            "INSERT INTO server_config (id, name, server_type, command) VALUES ('server-1', 'backoff_fixture', 'stdio', 'missing-command')",
+        )
+        .execute(&database.pool)
+        .await
+        .expect("insert backoff fixture");
+        let fingerprint = crate::config::server::capabilities::current_config_fingerprint(&database.pool, "server-1")
+            .await
+            .expect("load backoff fixture fingerprint");
+        let mut raw_pool = empty_pool();
+        raw_pool.database = Some(database.clone());
+        raw_pool.config = Arc::new(Config {
+            mcp_servers: HashMap::from([(
+                "server-1".to_string(),
+                crate::core::models::MCPServerConfig {
+                    source_fingerprint: Some(fingerprint),
+                    kind: crate::common::server::ServerType::Stdio,
+                    command: Some("missing-command".to_string()),
+                    args: None,
+                    url: None,
+                    env: None,
+                    headers: None,
+                },
+            )]),
+            pagination: None,
+        });
+        raw_pool.register_failure(
+            "server-1",
+            crate::core::pool::FailureKind::Connect,
+            Some("test backoff".to_string()),
+        );
+        let provider = PoolCapabilityConnectionProvider::new(Arc::new(Mutex::new(raw_pool)), database);
+
+        let error = match provider.fresh_owner(&list_ctx(None, None)).await {
+            Err(error) => error,
+            Ok(_) => panic!("production backoff must reject acquisition"),
+        };
+
+        assert!(matches!(error, CapabilityOwnerError::Backoff { .. }));
+        assert_eq!(error.retry_disposition(), DiscoveryRetryDisposition::DoNotRetry);
     }
 
     #[test]

@@ -48,6 +48,7 @@ pub(crate) enum StartupAttemptOutcome {
 #[derive(Debug, Clone)]
 pub(crate) struct StartupAttemptEntry {
     pub(crate) attempt_id: u64,
+    pub(crate) runtime_fingerprint: String,
     pub(crate) outcome_tx: watch::Sender<Option<StartupAttemptOutcome>>,
 }
 
@@ -58,6 +59,7 @@ pub(crate) struct StartupAttempt {
     instance_id: String,
     created_at: std::time::Instant,
     config_fingerprint: Option<String>,
+    runtime_fingerprint: String,
     attempt_id: u64,
     worker: UpstreamConnectionPool,
 }
@@ -99,7 +101,76 @@ pub(crate) enum StartupPublish {
 /// route/configuration changes during startup.
 const MAX_STARTUP_ATTEMPTS: usize = 4;
 
+#[derive(Clone, Debug, thiserror::Error)]
+#[error("production owner acquisition deferred by backoff for server '{server_id}' for {remaining_ms} ms")]
+pub(crate) struct ProductionConnectionBackoff {
+    pub(crate) server_id: String,
+    pub(crate) remaining_ms: u128,
+}
+
 impl UpstreamConnectionPool {
+    async fn promote_matching_preview_owner(
+        pool: &Arc<Mutex<Self>>,
+        selection: &ConnectionSelection,
+    ) -> Result<Option<String>> {
+        if !matches!(selection.affinity_key, AffinityKey::Default) {
+            return Ok(None);
+        }
+        let candidate = {
+            let guard = pool.lock().await;
+            let Some(config) = guard.config.mcp_servers.get(&selection.server_id) else {
+                return Ok(None);
+            };
+            let Some(config_fingerprint) = config.source_fingerprint.clone() else {
+                return Ok(None);
+            };
+            let runtime_config = guard.runtime_server_config(&selection.server_id)?;
+            let runtime_fingerprint =
+                crate::config::server::fingerprint::materialized_runtime_fingerprint(&runtime_config)?;
+            if let Some(instance_id) = guard.select_ready_instance_id(selection)?
+                && guard
+                    .get_instance(&selection.server_id, &instance_id)
+                    .is_ok_and(|connection| {
+                        connection.config_fingerprint.as_deref() == Some(config_fingerprint.as_str())
+                            && connection.runtime_fingerprint.as_deref() == Some(runtime_fingerprint.as_str())
+                    })
+            {
+                return Ok(None);
+            }
+            if !guard.has_preview_candidate(&config_fingerprint) {
+                return Ok(None);
+            }
+            let timeout_policy = crate::core::transport::timeout_policy::McpTimeoutPolicy::for_server(
+                config.kind,
+                config.command.as_deref(),
+                None,
+            );
+            let database = guard
+                .database
+                .clone()
+                .context("Database connection is required to promote a preview owner")?;
+            (
+                database,
+                config_fingerprint,
+                runtime_fingerprint,
+                timeout_policy
+                    .startup
+                    .saturating_add(timeout_policy.capability_operation),
+            )
+        };
+        let (database, config_fingerprint, runtime_fingerprint, acquisition_timeout) = candidate;
+        let server = crate::config::server::get_server_by_id(&database.pool, &selection.server_id)
+            .await?
+            .with_context(|| {
+                format!(
+                    "Server '{}' disappeared before preview owner promotion",
+                    selection.server_id
+                )
+            })?;
+        let subject = crate::core::pool::UpstreamSubject::preview(server.name, config_fingerprint, runtime_fingerprint);
+        Self::promote_preview_owner_to_production(pool, &subject, selection, acquisition_timeout).await
+    }
+
     /// Control-plane startup entry point for an enabled upstream.
     ///
     /// Database and secret materialization run without the shared pool lock.
@@ -177,6 +248,11 @@ impl UpstreamConnectionPool {
         pool: &Arc<Mutex<Self>>,
         selection: &ConnectionSelection,
     ) -> Result<String> {
+        if let Some(instance_id) = Self::promote_matching_preview_owner(pool, selection).await? {
+            let database = pool.lock().await.database.clone();
+            Self::spawn_coordinated_capability_sync(database, pool.clone(), selection.server_id.clone());
+            return Ok(instance_id);
+        }
         let mut attempts = 0;
         loop {
             attempts += 1;
@@ -264,9 +340,23 @@ impl UpstreamConnectionPool {
         &mut self,
         selection: &ConnectionSelection,
     ) -> Result<StartupPrepare> {
+        let runtime_config = self.runtime_server_config(&selection.server_id)?;
+        let runtime_fingerprint =
+            crate::config::server::fingerprint::materialized_runtime_fingerprint(&runtime_config)?;
+        let config_fingerprint = self
+            .config
+            .mcp_servers
+            .get(&selection.server_id)
+            .and_then(|config| config.source_fingerprint.clone());
         if let Some(instance_id) = self.resolve_production_route(selection)
             && let Ok(Some(ready_id)) = self.select_ready_instance_id(selection)
             && ready_id == instance_id
+            && self
+                .get_instance(&selection.server_id, &instance_id)
+                .is_ok_and(|connection| {
+                    connection.config_fingerprint == config_fingerprint
+                        && connection.runtime_fingerprint.as_deref() == Some(runtime_fingerprint.as_str())
+                })
         {
             return Ok(StartupPrepare::Ready(instance_id));
         }
@@ -277,22 +367,21 @@ impl UpstreamConnectionPool {
                 wait_secs = remaining.as_secs_f32(),
                 "Connection attempt blocked due to active backoff"
             );
-            return Err(anyhow::anyhow!(
-                "Server '{}' is backing off for {:.1}s",
-                selection.server_id,
-                remaining.as_secs_f32()
-            ));
-        }
-        if !self.config.mcp_servers.contains_key(&selection.server_id) {
-            return Err(anyhow::anyhow!(
-                "Server '{}' not found in configuration",
-                selection.server_id
-            ));
+            return Err(ProductionConnectionBackoff {
+                server_id: selection.server_id.clone(),
+                remaining_ms: remaining.as_millis(),
+            }
+            .into());
         }
 
         let route_key = ProductionRouteKey::new(selection.server_id.clone(), selection.affinity_key.clone());
         if let Some(entry) = self.startup_attempts.get(&route_key) {
-            return Ok(StartupPrepare::Join(entry.outcome_tx.subscribe()));
+            if entry.runtime_fingerprint == runtime_fingerprint {
+                return Ok(StartupPrepare::Join(entry.outcome_tx.subscribe()));
+            }
+        }
+        if let Some(entry) = self.startup_attempts.remove(&route_key) {
+            let _ = entry.outcome_tx.send(Some(StartupAttemptOutcome::Superseded));
         }
 
         let instance_id = match self.resolve_production_route(selection) {
@@ -304,11 +393,6 @@ impl UpstreamConnectionPool {
             .get_instance(&selection.server_id, &instance_id)
             .expect("allocated production instance exists")
             .created_at;
-        let config_fingerprint = self
-            .config
-            .mcp_servers
-            .get(&selection.server_id)
-            .and_then(|config| config.source_fingerprint.clone());
         let attempt_id = self
             .next_startup_attempt
             .fetch_update(
@@ -321,15 +405,22 @@ impl UpstreamConnectionPool {
             .expect("allocated production instance exists")
             .update_initializing();
         let (outcome_tx, _) = watch::channel(None);
-        self.startup_attempts
-            .insert(route_key.clone(), StartupAttemptEntry { attempt_id, outcome_tx });
-        let worker = self.clone();
+        self.startup_attempts.insert(
+            route_key.clone(),
+            StartupAttemptEntry {
+                attempt_id,
+                runtime_fingerprint: runtime_fingerprint.clone(),
+                outcome_tx,
+            },
+        );
+        let worker = self.runtime_worker();
         Ok(StartupPrepare::Own(Box::new(StartupAttempt {
             route_key,
             server_id: selection.server_id.clone(),
             instance_id,
             created_at,
             config_fingerprint,
+            runtime_fingerprint,
             attempt_id,
             worker,
         })))
@@ -363,6 +454,7 @@ impl UpstreamConnectionPool {
         instance_id: &str,
         created_at: std::time::Instant,
         config_fingerprint: Option<&str>,
+        runtime_fingerprint: &str,
         attempt_id: u64,
         result: Result<()>,
         worker_connection: Option<UpstreamConnection>,
@@ -388,7 +480,11 @@ impl UpstreamConnectionPool {
             .get(server_id)
             .and_then(|config| config.source_fingerprint.as_deref())
             == config_fingerprint;
-        if !(route_owned && instance_owned && config_owned) {
+        let runtime_owned = self.runtime_server_config(server_id).is_ok_and(|config| {
+            crate::config::server::fingerprint::materialized_runtime_fingerprint(&config)
+                .is_ok_and(|fingerprint| fingerprint == runtime_fingerprint)
+        });
+        if !(route_owned && instance_owned && config_owned && runtime_owned) {
             if let Ok(connection) = self.get_instance_mut(server_id, instance_id)
                 && connection.created_at == created_at
                 && matches!(connection.status, ConnectionStatus::Initializing)
@@ -541,6 +637,7 @@ async fn run_startup_attempt(
             &attempt.instance_id,
             attempt.created_at,
             attempt.config_fingerprint.as_deref(),
+            &attempt.runtime_fingerprint,
             attempt.attempt_id,
             result,
             worker_connection,
@@ -555,7 +652,13 @@ async fn run_startup_attempt(
         } => {
             UpstreamConnectionPool::discard_startup_result(replaced_connection, replaced_token).await;
             let event_database = pool.lock().await.database.clone();
-            UpstreamConnectionPool::publish_startup_result(event_database, &attempt.server_id, true, None).await;
+            UpstreamConnectionPool::publish_startup_result(event_database.clone(), &attempt.server_id, true, None)
+                .await;
+            UpstreamConnectionPool::spawn_coordinated_capability_sync(
+                event_database,
+                pool.clone(),
+                attempt.server_id.clone(),
+            );
             StartupAttemptOutcome::Published(attempt.instance_id)
         }
         StartupPublish::Failed {
@@ -972,6 +1075,10 @@ for line in sys.stdin:
             route_key.clone(),
             StartupAttemptEntry {
                 attempt_id: 11,
+                runtime_fingerprint: crate::config::server::fingerprint::materialized_runtime_fingerprint(
+                    pool.config.mcp_servers.get("server-a").expect("server config"),
+                )
+                .expect("runtime fingerprint"),
                 outcome_tx,
             },
         );
@@ -982,6 +1089,10 @@ for line in sys.stdin:
             "instance-a",
             created_at,
             Some("v1"),
+            &crate::config::server::fingerprint::materialized_runtime_fingerprint(
+                pool.config.mcp_servers.get("server-a").expect("server config"),
+            )
+            .expect("runtime fingerprint"),
             11,
             Ok(()),
             Some(connection),

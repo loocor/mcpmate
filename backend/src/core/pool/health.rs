@@ -251,6 +251,14 @@ impl UpstreamConnectionPool {
                             continue;
                         }
 
+                        if pool_guard.automatic_recovery_exhausted(server_name) {
+                            tracing::debug!(
+                                server_id = %server_name,
+                                "Health reconnect skipped because automatic recovery is exhausted"
+                            );
+                            continue;
+                        }
+
                         // Respect pool-level backoff window
                         if let Some(remaining) = pool_guard.remaining_backoff(server_name) {
                             tracing::debug!(
@@ -374,6 +382,14 @@ impl UpstreamConnectionPool {
                 );
                 return Ok(());
             }
+            if !pool.claim_automatic_recovery_attempt(&intent.server_id) {
+                tracing::debug!(
+                    server_id = %intent.server_id,
+                    instance_id = %intent.instance_id,
+                    "Health reconnect skipped because automatic recovery is exhausted"
+                );
+                return Ok(());
+            }
 
             let config_fingerprint = pool
                 .config
@@ -383,7 +399,7 @@ impl UpstreamConnectionPool {
             let reconnect_epoch = pool.begin_health_reconnect(&intent.server_id, &intent.instance_id);
             pool.get_instance_mut(&intent.server_id, &intent.instance_id)?
                 .update_initializing();
-            let mut worker = pool.clone();
+            let mut worker = pool.runtime_worker();
             worker.database = None;
             (worker, reconnect_epoch, config_fingerprint)
         };
@@ -482,7 +498,7 @@ impl UpstreamConnectionPool {
             {
                 pool.clear_failure_state(&intent.server_id);
             } else {
-                pool.register_failure(
+                pool.register_claimed_recovery_failure(
                     &intent.server_id,
                     crate::core::pool::FailureKind::Connect,
                     Some(error.to_string()),
@@ -494,7 +510,10 @@ impl UpstreamConnectionPool {
         drop(pool);
 
         Self::discard_health_reconnect(replaced_connection, replaced_token).await;
-        Self::publish_startup_result(event_database, &intent.server_id, result.is_ok(), event_error).await;
+        Self::publish_startup_result(event_database.clone(), &intent.server_id, result.is_ok(), event_error).await;
+        if result.is_ok() {
+            Self::spawn_coordinated_capability_sync(event_database, connection_pool.clone(), intent.server_id.clone());
+        }
 
         result.map_err(|error| anyhow::anyhow!("Failed to trigger reconnect: {error}"))
     }
@@ -708,6 +727,55 @@ for line in sys.stdin:
         let candidates = UpstreamConnectionPool::collect_reconnection_candidates(&guard);
 
         assert!(candidates.is_empty());
+    }
+
+    #[tokio::test]
+    async fn candidate_collection_stops_after_three_recorded_failures() {
+        let pool = pool_with_connection(
+            ConnectionStatus::Error(crate::core::foundation::types::ErrorDetails {
+                message: "temporary failure".to_string(),
+                error_type: ErrorType::Temporary,
+                failure_count: 1,
+                first_failure_time: 1,
+                last_failure_time: 1,
+            }),
+            true,
+        );
+        let mut guard = pool.lock().await;
+        for _ in 0..2 {
+            guard.register_failure(
+                "server-a",
+                crate::core::pool::FailureKind::Connect,
+                Some("fixture failure".to_string()),
+            );
+        }
+        guard
+            .failure_states
+            .get_mut("server-a")
+            .expect("failure state")
+            .next_retry_at = None;
+
+        assert_eq!(
+            UpstreamConnectionPool::collect_reconnection_candidates(&guard).len(),
+            1,
+            "the third total attempt must remain eligible"
+        );
+
+        guard.register_failure(
+            "server-a",
+            crate::core::pool::FailureKind::Connect,
+            Some("fixture failure".to_string()),
+        );
+        guard
+            .failure_states
+            .get_mut("server-a")
+            .expect("failure state")
+            .next_retry_at = None;
+
+        assert!(
+            UpstreamConnectionPool::collect_reconnection_candidates(&guard).is_empty(),
+            "health must not schedule a fourth total attempt"
+        );
     }
 
     #[tokio::test]
@@ -961,6 +1029,47 @@ for line in sys.stdin:
         .await
         .expect("active backoff defers reconnect without failing the health cycle");
 
+        assert!(matches!(
+            pool.lock().await.get_instance("server-a", "instance-a").unwrap().status,
+            ConnectionStatus::Error(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn stale_health_intent_is_skipped_after_automatic_recovery_is_exhausted() {
+        let pool = pool_with_connection(
+            ConnectionStatus::Error(crate::core::foundation::types::ErrorDetails {
+                message: "temporary failure".to_string(),
+                error_type: ErrorType::Temporary,
+                failure_count: 1,
+                first_failure_time: 1,
+                last_failure_time: 1,
+            }),
+            true,
+        );
+        let intent = UpstreamConnectionPool::collect_reconnection_candidates(&pool.lock().await)
+            .into_iter()
+            .next()
+            .expect("temporary failure is initially eligible");
+        {
+            let mut guard = pool.lock().await;
+            for _ in 0..3 {
+                guard.register_failure(
+                    "server-a",
+                    crate::core::pool::FailureKind::Connect,
+                    Some("fixture failure".to_string()),
+                );
+            }
+            guard
+                .failure_states
+                .get_mut("server-a")
+                .expect("failure state")
+                .next_retry_at = None;
+        }
+
+        UpstreamConnectionPool::reconnect_single_instance(pool.clone(), intent)
+            .await
+            .expect("exhausted automatic recovery must skip a stale reconnect intent");
         assert!(matches!(
             pool.lock().await.get_instance("server-a", "instance-a").unwrap().status,
             ConnectionStatus::Error(_)
