@@ -1201,19 +1201,32 @@ impl UpstreamConnectionPool {
             return Ok(());
         }
 
+        self.disable_server_runtime(server_id).await;
+
+        tracing::info!("Server '{}' disabled in all active profile and stopped", server_id);
+        Ok(())
+    }
+
+    /// Remove every runtime owner for a globally disabled server.
+    pub(crate) async fn disable_server_globally(
+        &mut self,
+        server_id: &str,
+    ) -> (usize, usize) {
+        self.disable_server_runtime(server_id).await
+    }
+
+    async fn disable_server_runtime(
+        &mut self,
+        server_id: &str,
+    ) -> (usize, usize) {
         self.invalidate_server_lifecycle(server_id);
         Arc::make_mut(&mut self.config).mcp_servers.remove(server_id);
-
-        // Disconnect all instances
-        self.disconnect_all_instances(server_id).await;
-
+        let disconnected = self.disconnect_all_instances(server_id).await;
         self.connections.remove(server_id);
         self.cancellation_tokens.remove(server_id);
         self.remove_all_client_bound_connections_for_server(server_id);
         self.remove_all_production_routes_for_server(server_id);
-
-        tracing::info!("Server '{}' disabled in all active profile and stopped", server_id);
-        Ok(())
+        disconnected
     }
 
     /// Immediately remove a capability-collision challenger from every
@@ -1253,17 +1266,23 @@ impl UpstreamConnectionPool {
     async fn disconnect_all_instances(
         &mut self,
         server_id: &str,
-    ) {
+    ) -> (usize, usize) {
+        let mut success_count = 0;
+        let mut total_count = 0;
         if let Some(instances) = self.connections.get(server_id) {
             let instance_ids: Vec<String> = instances.keys().cloned().collect();
             for instance_id in instance_ids {
-                if let Err(e) = self.disconnect(server_id, &instance_id).await {
-                    tracing::warn!(
-                        "Failed to disconnect server '{}' instance '{}': {}",
-                        server_id,
-                        instance_id,
-                        e
-                    );
+                total_count += 1;
+                match self.disconnect(server_id, &instance_id).await {
+                    Ok(()) => success_count += 1,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to disconnect server '{}' instance '{}': {}",
+                            server_id,
+                            instance_id,
+                            e
+                        );
+                    }
                 }
             }
         }
@@ -1278,17 +1297,22 @@ impl UpstreamConnectionPool {
             if let Some(instances) = self.client_bound_connections.get(&(sid.clone(), bound_id.clone())) {
                 let instance_ids: Vec<String> = instances.keys().cloned().collect();
                 for instance_id in instance_ids {
-                    if let Err(e) = self.disconnect(&sid, &instance_id).await {
-                        tracing::warn!(
-                            "Failed to disconnect client-bound instance '{}' for server '{}' bound '{}': {}",
-                            instance_id,
-                            sid,
-                            bound_id,
-                            e
-                        );
+                    total_count += 1;
+                    match self.disconnect(&sid, &instance_id).await {
+                        Ok(()) => success_count += 1,
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to disconnect client-bound instance '{}' for server '{}' bound '{}': {}",
+                                instance_id,
+                                sid,
+                                bound_id,
+                                e
+                            );
+                        }
                     }
                 }
             }
         }
+        (success_count, total_count)
     }
 }

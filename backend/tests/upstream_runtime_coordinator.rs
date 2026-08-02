@@ -10,12 +10,35 @@ use std::{
     time::{Duration, Instant},
 };
 
-use mcpmate::core::{
-    capability::{AffinityKey, ConnectionSelection},
-    events::{Event, EventBus, EventHandlers},
-    pool::UpstreamConnectionPool,
+use axum::{body::Body, http::Request};
+use mcpmate::{
+    common::constants::timeouts::POOL_DISABLE_SEC,
+    core::{
+        capability::{AffinityKey, ConnectionSelection},
+        events::{Event, EventBus, EventHandlers},
+        pool::UpstreamConnectionPool,
+    },
 };
+use serde_json::json;
+use tower::ServiceExt as _;
 use upstream_runtime::{SlowUpstreamFixture, StartupBehavior};
+
+fn global_disable_request(server_id: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/mcp/servers/manage")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&json!({
+                "id": server_id,
+                "action": "disable",
+                "sync": false,
+                "source_revision_set": {}
+            }))
+            .expect("encode global disable request"),
+        ))
+        .expect("build global disable request")
+}
 
 #[tokio::test]
 async fn profile_enable_startup_keeps_runtime_snapshot_available() {
@@ -134,6 +157,51 @@ async fn disable_before_startup_registration_supersedes_enable() {
     assert!(!guard.connections.contains_key(fixture.server_id));
     drop(guard);
     assert_eq!(fixture.startup_count(), 0, "disabled upstream must not spawn a process");
+}
+
+#[tokio::test]
+async fn global_disable_api_removes_runtime_registration_without_instances() {
+    let fixture = SlowUpstreamFixture::new("server-global-disable", "global_disable_fixture", Duration::ZERO).await;
+    fixture.register_runtime_config_without_instance().await;
+
+    let response = fixture
+        .server_management_app()
+        .oneshot(global_disable_request(fixture.server_id))
+        .await
+        .expect("call global disable endpoint");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+    let pool = fixture.pool.lock().await;
+    assert!(!pool.config.mcp_servers.contains_key(fixture.server_id));
+    assert!(!pool.connections.contains_key(fixture.server_id));
+}
+
+#[tokio::test]
+async fn global_disable_waits_for_runtime_cleanup_when_the_pool_is_busy() {
+    let fixture = SlowUpstreamFixture::new("server-busy-disable", "busy_disable_fixture", Duration::ZERO).await;
+    fixture.register_runtime_config_without_instance().await;
+
+    let pool_guard = fixture.pool.lock().await;
+    let app = fixture.server_management_app();
+    let server_id = fixture.server_id;
+    let disable = tokio::spawn(async move { app.oneshot(global_disable_request(server_id)).await });
+
+    tokio::time::sleep(Duration::from_secs(POOL_DISABLE_SEC) + Duration::from_millis(200)).await;
+    assert!(
+        !disable.is_finished(),
+        "global disable must not report success before runtime cleanup can acquire the pool"
+    );
+
+    drop(pool_guard);
+    let response = disable
+        .await
+        .expect("global disable task must not panic")
+        .expect("call global disable endpoint");
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+    let pool = fixture.pool.lock().await;
+    assert!(!pool.config.mcp_servers.contains_key(fixture.server_id));
+    assert!(!pool.connections.contains_key(fixture.server_id));
 }
 
 #[tokio::test]

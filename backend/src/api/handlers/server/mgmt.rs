@@ -391,55 +391,9 @@ async fn handle_connection_pool_disable(
     state: &Arc<AppState>,
     server_id: &str,
 ) -> Result<Json<ServerOperationData>, ApiError> {
-    // Handle connection pool timeout (early return)
-    let pool_result = tokio::time::timeout(
-        std::time::Duration::from_secs(crate::common::constants::timeouts::POOL_DISABLE_SEC),
-        state.connection_pool.lock(),
-    )
-    .await;
+    let mut pool = state.connection_pool.lock().await;
 
-    let mut pool = match pool_result {
-        Ok(pool) => pool,
-        Err(_) => {
-            return create_operation_response(
-                "all".to_string(),
-                server_id.to_string(),
-                "Server disabled in configuration (connection pool unavailable)".to_string(),
-                "Disabled".to_string(),
-                "enable",
-            );
-        }
-    };
-
-    // Early return if server not in connection pool
-    if !pool.connections.contains_key(server_id) {
-        return create_operation_response(
-            "all".to_string(),
-            server_id.to_string(),
-            "Server already disabled (not in connection pool)".to_string(),
-            "Disabled".to_string(),
-            "enable",
-        );
-    }
-
-    // Early return if no instances
-    let instance_ids: Vec<String> = pool.connections.get(server_id).unwrap().keys().cloned().collect();
-    if instance_ids.is_empty() {
-        return create_operation_response(
-            "all".to_string(),
-            server_id.to_string(),
-            "Server already disabled (no instances)".to_string(),
-            "Disabled".to_string(),
-            "enable",
-        );
-    }
-
-    // Disconnect instances and clean up
-    let (success_count, total_count) = disconnect_server_instances(&mut pool, server_id, &instance_ids).await;
-
-    // Remove server from pool to enforce global disable
-    pool.connections.remove(server_id);
-    pool.cancellation_tokens.remove(server_id);
+    let (success_count, total_count) = pool.disable_server_globally(server_id).await;
 
     let status = if success_count == total_count {
         "Disabled"
@@ -454,38 +408,4 @@ async fn handle_connection_pool_disable(
         status.to_string(),
         "enable",
     )
-}
-
-/// Helper function to disconnect server instances
-#[inline]
-async fn disconnect_server_instances(
-    pool: &mut tokio::sync::MutexGuard<'_, crate::core::pool::UpstreamConnectionPool>,
-    server_id: &str,
-    instance_ids: &[String],
-) -> (usize, usize) {
-    let total_count = instance_ids.len();
-    let mut success_count = 0;
-
-    for instance_id in instance_ids {
-        match pool.disconnect(server_id, instance_id).await {
-            Ok(()) => {
-                success_count += 1;
-                tracing::info!(
-                    "Successfully disconnected server '{}' instance '{}'",
-                    server_id,
-                    instance_id
-                );
-            }
-            Err(e) => {
-                tracing::error!(
-                    "Failed to disconnect server '{}' instance '{}': {}",
-                    server_id,
-                    instance_id,
-                    e
-                );
-            }
-        }
-    }
-
-    (success_count, total_count)
 }

@@ -1,6 +1,8 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
+use axum::Router;
 use mcpmate::{
+    api::routes::{AppState, unavailable_secret_store_readiness},
     common::constants::protocol,
     config::{
         database::Database,
@@ -11,10 +13,13 @@ use mcpmate::{
         foundation::{load_server_config_strict, types::ConnectionStatus},
         models::Config,
         pool::UpstreamConnectionPool,
+        profile::ConfigApplicationStateManager,
     },
+    inspector::{calls::InspectorCallRegistry, sessions::InspectorSessionManager},
+    system::metrics::MetricsCollector,
 };
 use tempfile::TempDir;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::runtime_database::open_database;
 
@@ -197,6 +202,26 @@ impl SlowUpstreamFixture {
         pool.set_config(Arc::new(config))
             .expect("register runtime fixture config");
         pool.connections.remove(self.server_id);
+    }
+
+    pub fn server_management_app(&self) -> Router {
+        let state = Arc::new(AppState {
+            connection_pool: self.pool.clone(),
+            metrics_collector: Arc::new(MetricsCollector::new(Duration::from_secs(1))),
+            http_proxy: None,
+            profile_merge_service: None,
+            database: Some(self.database.clone()),
+            audit_database: None,
+            audit_service: None,
+            config_application_state: Arc::new(ConfigApplicationStateManager::new()),
+            client_service: None,
+            inspector_calls: Arc::new(InspectorCallRegistry::new()),
+            inspector_sessions: Arc::new(InspectorSessionManager::new()),
+            oauth_manager: RwLock::new(None),
+            secret_store: RwLock::new(None),
+            secret_store_readiness: RwLock::new(unavailable_secret_store_readiness("test_unavailable")),
+        });
+        Router::new().merge(mcpmate::api::routes::server::routes(state))
     }
 
     pub async fn wait_until_initializing(&self) {
