@@ -1687,6 +1687,7 @@ export function ClientFormDrawer({
 								"Client record was created, but applying initial backup policy failed. You can retry in Backup settings.",
 						}),
 					);
+					return savedIdentifier;
 				}
 
 				try {

@@ -447,7 +447,10 @@ export function adminDiscoveryClientToUpdatePayload(
 ): AdminClientUpdatePayload {
 	const resolvedCandidate = resolvedAdminDiscoveryClientCandidate(raw);
 	const isResolvedCandidateInput = "configFileChoice" in recordValue(raw);
-	const candidate = resolvedCandidate ?? (isResolvedCandidateInput ? null : adminDiscoveryClientToCandidate(raw));
+	if (isResolvedCandidateInput && !resolvedCandidate) {
+		throw new Error("Admin discovery client candidate is invalid.");
+	}
+	const candidate = resolvedCandidate ?? adminDiscoveryClientToCandidate(raw);
 	if (!candidate) {
 		throw new Error("Admin discovery client is missing a usable identifier.");
 	}

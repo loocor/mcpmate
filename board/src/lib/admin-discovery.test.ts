@@ -711,7 +711,7 @@ describe("admin discovery adapter", () => {
 					stdio: { command_field: "command" },
 				},
 			}),
-		).toThrow("Admin discovery client is missing a usable identifier.");
+		).toThrow("Admin discovery client candidate is invalid.");
 	});
 
 	test("maps Admin servers into onboarding import candidates", () => {
