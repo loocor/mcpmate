@@ -171,6 +171,22 @@ test("Clients paginate responsive grid results and reset after search", async ({
 	await expect(page.getByText("Client 07", { exact: true })).toHaveCount(0);
 });
 
+test("Clients keep the selected view button aligned with the catalog layout", async ({
+	page,
+}) => {
+	await page.goto("/clients?expanded=true");
+
+	const gridButton = page.locator("main button:has(svg.lucide-grid3x3)");
+	const listButton = page.locator("main button:has(svg.lucide-list)");
+
+	await expect(gridButton).toHaveCount(1);
+	await expect(listButton).toHaveCount(1);
+	await listButton.click();
+
+	await expect(listButton).toHaveClass(/bg-primary/);
+	await expect(gridButton).not.toHaveClass(/bg-primary/);
+});
+
 test("empty and zero-match catalogs normalize stale pages", async ({ page }) => {
 	serverFixtures = [];
 	await page.goto("/servers?view=grid&page=2");

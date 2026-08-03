@@ -5,7 +5,10 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { EntityListItem } from "../../components/entity-list-item";
 import { ListGridContainer } from "../../components/list-grid-container";
-import { Pagination } from "../../components/pagination";
+import {
+	catalogPaginationClassName,
+	Pagination,
+} from "../../components/pagination";
 import {
 	EmptyState,
 	FullHeightEmptyStateCard,
@@ -17,16 +20,14 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
 import { PageToolbar } from "../../components/ui/page-toolbar";
+import { PageToolbarSelect } from "../../components/ui/page-toolbar-select";
 import type { Entity } from "../../components/ui/page-toolbar";
 import type { SegmentOption } from "../../components/ui/segment";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "../../components/ui/select";
 import { clientsApi, surfaceReviewsApi } from "../../lib/api";
+import {
+	catalogPageSectionClassName,
+	catalogScrollShellClassName,
+} from "../../lib/catalog-layout";
 import {
 	CATALOG_PAGE_SIZE_OPTIONS,
 	useResponsiveCatalogPagination,
@@ -324,11 +325,10 @@ export function ClientsPage() {
 						governanceMutation.mutate({ identifier, approved: checked }),
 					disabled: governanceMutation.isPending || governanceStatus === "pending",
 				}}
-				className={`${governanceStatus === "pending" ? "opacity-75" : ""} ${attentionClasses.cardClassName} ${
-					reviewCount > 0
-						? "border-amber-400 bg-amber-50/50 dark:border-amber-700 dark:bg-amber-950/20"
-						: ""
-				}`.trim()}
+				className={`${governanceStatus === "pending" ? "opacity-75" : ""} ${attentionClasses.cardClassName} ${reviewCount > 0
+					? "border-amber-400 bg-amber-50/50 dark:border-amber-700 dark:bg-amber-950/20"
+					: ""
+					}`.trim()}
 				onClick={() => navigate(`/clients/${encodeURIComponent(identifier)}`)}
 			/>
 		);
@@ -546,6 +546,7 @@ export function ClientsPage() {
 			filteredClientsAsEntities,
 			i18n.language,
 			isClientCatalogDataReady,
+			storedDefaultView,
 			t,
 		],
 	);
@@ -588,23 +589,16 @@ export function ClientsPage() {
 	);
 
 	const filterNode = (
-		<div className="w-32">
-			<Select
-				value={filter}
-				onValueChange={(value) => setFilter(value as ClientPageFilter)}
-			>
-				<SelectTrigger className="h-9 w-full" aria-label={t("toolbar.filters.title", { defaultValue: "Filter" })}>
-					<SelectValue placeholder={t("toolbar.filters.title", { defaultValue: "Filter" })} />
-				</SelectTrigger>
-				<SelectContent align="end">
-					{filterOptions.map((opt) => (
-						<SelectItem key={opt.value as string} value={opt.value as string}>
-							{opt.label}
-						</SelectItem>
-					))}
-				</SelectContent>
-			</Select>
-		</div>
+		<PageToolbarSelect
+			value={filter}
+			onValueChange={(value) => setFilter(value as ClientPageFilter)}
+			options={filterOptions.map((opt) => ({
+				value: String(opt.value),
+				label: String(opt.label),
+			}))}
+			aria-label={t("toolbar.filters.title", { defaultValue: "Filter" })}
+			placeholder={t("toolbar.filters.title", { defaultValue: "Filter" })}
+		/>
 	);
 
 	// Toolbar actions
@@ -662,9 +656,10 @@ export function ClientsPage() {
 					})}
 				</div>
 			)}
-			<div className="flex min-h-0 flex-1 flex-col">
-				<div ref={catalogScrollRef} className="min-h-0 flex-1 overflow-y-auto pr-1">
+			<div className={catalogPageSectionClassName}>
+				<div ref={catalogScrollRef} className={catalogScrollShellClassName}>
 					<ListGridContainer
+						viewMode={view as "grid" | "list"}
 						loading={isLoading}
 						loadingSkeleton={loadingSkeleton}
 						emptyClassName="h-full"
@@ -711,7 +706,7 @@ export function ClientsPage() {
 					hasFirstPage={clientPagination.hasPreviousPage}
 					hasLastPage={clientPagination.hasNextPage}
 					pageSizeOptions={[...CATALOG_PAGE_SIZE_OPTIONS]}
-					className="shrink-0 pt-3 pb-1"
+					className={catalogPaginationClassName}
 				/>
 			</div>
 			<ClientFormDrawer

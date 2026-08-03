@@ -6,7 +6,10 @@ import { useNavigate } from "react-router-dom";
 
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { ListGridContainer } from "../../components/list-grid-container";
-import { Pagination } from "../../components/pagination";
+import {
+	catalogPaginationClassName,
+	Pagination,
+} from "../../components/pagination";
 import {
 	EmptyState,
 	FullHeightEmptyStateCard,
@@ -32,6 +35,10 @@ import {
 } from "../../components/ui/page-toolbar";
 import { useServerInstallPipeline } from "../../hooks/use-server-install-pipeline";
 import { serversApi } from "../../lib/api";
+import {
+	catalogPageSectionClassName,
+	catalogScrollShellClassName,
+} from "../../lib/catalog-layout";
 import {
 	CATALOG_PAGE_SIZE_OPTIONS,
 	useResponsiveCatalogPagination,
@@ -324,7 +331,7 @@ export function ServerListPage() {
 			if (
 				requestedEligibility !== undefined &&
 				requestedEligibility !==
-					currentServer?.unify_direct_exposure_eligible
+				currentServer?.unify_direct_exposure_eligible
 			) {
 				if (!currentServer?.source_revision_set) {
 					throw new Error(
@@ -751,9 +758,10 @@ export function ServerListPage() {
 			}
 			statsCards={<StatsCards cards={statsCards} />}
 		>
-			<div className="flex min-h-0 flex-1 flex-col">
-				<div ref={catalogScrollRef} className="min-h-0 flex-1 overflow-y-auto pr-1">
+			<div className={catalogPageSectionClassName}>
+				<div ref={catalogScrollRef} className={catalogScrollShellClassName}>
 					<ListGridContainer
+						viewMode={viewMode as "grid" | "list"}
 						loading={isLoading}
 						loadingSkeleton={loadingSkeleton}
 						emptyClassName="h-full"
@@ -804,7 +812,7 @@ export function ServerListPage() {
 					hasFirstPage={serverPagination.hasPreviousPage}
 					hasLastPage={serverPagination.hasNextPage}
 					pageSizeOptions={[...CATALOG_PAGE_SIZE_OPTIONS]}
-					className="shrink-0 pt-3 pb-1"
+					className={catalogPaginationClassName}
 				/>
 			</div>
 
