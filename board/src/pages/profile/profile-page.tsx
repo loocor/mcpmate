@@ -12,12 +12,16 @@ import {
 	Settings,
 	Wrench,
 } from "lucide-react";
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { EntityListItem } from "../../components/entity-list-item";
 import { ListGridContainer } from "../../components/list-grid-container";
+import {
+	Pagination,
+	catalogPaginationClassName,
+} from "../../components/pagination";
 import { EmptyState, PageLayout } from "../../components/page-layout";
 import { ProfileFormDrawer } from "../../components/profile-form-drawer";
 import { StatsCards } from "../../components/stats-cards";
@@ -29,14 +33,12 @@ import {
 	CardFooter,
 	CardHeader,
 } from "../../components/ui/card";
-import { PageToolbar } from "../../components/ui/page-toolbar";
 import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "../../components/ui/select";
+	PageToolbar,
+	type PageToolbarCallbacks,
+	type PageToolbarConfig,
+} from "../../components/ui/page-toolbar";
+import { PageToolbarSelect } from "../../components/ui/page-toolbar-select";
 import { ProfileSuitGridCard } from "./components/profile-suit-grid-card";
 import {
 	configSuitsApi,
@@ -44,8 +46,17 @@ import {
 	serversApi,
 	surfaceReviewsApi,
 } from "../../lib/api";
+import {
+	catalogPageSectionClassName,
+	catalogScrollShellClassName,
+} from "../../lib/catalog-layout";
 import { DEFAULT_ANCHOR_ROLE } from "../../lib/default-profile";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
+import {
+	CATALOG_PAGE_SIZE_OPTIONS,
+	type CatalogViewMode,
+	useResponsiveCatalogPagination,
+} from "../../lib/hooks/use-responsive-catalog-pagination";
 import { useUrlFilter, useUrlView } from "../../lib/hooks/use-url-state";
 import { notifyError, notifySuccess } from "../../lib/notify";
 import { useAppStore } from "../../lib/store";
@@ -150,7 +161,7 @@ export function ProfilePage() {
 		defaultView: storedDefaultView,
 		validViews: ["grid", "list"],
 	});
-	const viewMode = view;
+	const viewMode = view as CatalogViewMode;
 	const { filter: reviewFilter, setFilter: setReviewFilter } = useUrlFilter({
 		paramName: "filter",
 		defaultValue: "all",
@@ -159,8 +170,8 @@ export function ProfilePage() {
 
 	const [expanded, setExpanded] = useState(false);
 
-	// 排序后的数据状态
 	const [sortedSuits, setSortedSuits] = React.useState<ConfigSuit[]>([]);
+	const [isCatalogDataReady, setIsCatalogDataReady] = useState(false);
 
 	const {
 		data: suitsResponse,
@@ -177,6 +188,7 @@ export function ProfilePage() {
 	const {
 		data: pendingReviewItems = [],
 		error: reviewItemsError,
+		isFetched: areReviewItemsFetched,
 	} = useQuery({
 		queryKey: ["surfaceReviews", "pending"],
 		queryFn: () => surfaceReviewsApi.list({ state: "pending" }),
@@ -196,11 +208,34 @@ export function ProfilePage() {
 	);
 	const activeSuits = suits.filter((suit) => suit.is_active);
 
-	React.useEffect(() => {
-		if (sortedSuits.length === 0) {
-			setSortedSuits(suits);
+	const reviewFilteredSuits = useMemo(() => {
+		if (reviewFilter !== "needs_review") {
+			return suits;
 		}
-	}, [suits, sortedSuits.length]);
+		return suits.filter(
+			(suit) => getProfileReviewCount(pendingReviewItems, suit.id) > 0,
+		);
+	}, [pendingReviewItems, reviewFilter, suits]);
+
+	const isProfileCatalogDataReady =
+		suitsResponse !== undefined &&
+		(reviewFilter !== "needs_review" || areReviewItemsFetched);
+
+	const arrangedSortedSuits = useMemo(
+		() => arrangeSuitsWithDefaultAnchor(sortedSuits),
+		[sortedSuits],
+	);
+
+	const profilePagination = useResponsiveCatalogPagination(
+		arrangedSortedSuits,
+		viewMode,
+		isCatalogDataReady,
+	);
+	const catalogScrollRef = useRef<HTMLDivElement | null>(null);
+
+	React.useEffect(() => {
+		catalogScrollRef.current?.scrollTo({ top: 0 });
+	}, [profilePagination.currentPage]);
 
 	// Get active suit IDs for query keys
 	const activeSuitIds = activeSuits.map((suit) => suit.id);
@@ -690,20 +725,6 @@ export function ProfilePage() {
 		);
 	};
 
-	// 使用排序后的数据，保持默认套件在前的顺序
-	const filteredAndSortedSuits = useMemo(
-		() => {
-			const arranged = arrangeSuitsWithDefaultAnchor(sortedSuits);
-			if (reviewFilter !== "needs_review") {
-				return arranged;
-			}
-			return arranged.filter(
-				(suit) => getProfileReviewCount(pendingReviewItems, suit.id) > 0,
-			);
-		},
-		[pendingReviewItems, reviewFilter, sortedSuits],
-	);
-
 	// Prepare stats cards data
 	const statsCards = [
 		{
@@ -809,9 +830,11 @@ export function ProfilePage() {
 				);
 			});
 
-	// 工具栏配置
-	const toolbarConfig = {
-		data: suits,
+	type ProfileToolbarSuit = ConfigSuit & { [key: string]: unknown };
+
+	const toolbarConfig = useMemo((): PageToolbarConfig<ProfileToolbarSuit> => ({
+		data: reviewFilteredSuits as ProfileToolbarSuit[],
+		isDataReady: isProfileCatalogDataReady,
 		search: {
 			placeholder: t("profiles:searchPlaceholder", {
 				defaultValue: "Search profiles...",
@@ -857,7 +880,14 @@ export function ProfilePage() {
 		urlPersistence: {
 			enabled: true,
 		},
-	};
+	}),
+		[
+			isProfileCatalogDataReady,
+			reviewFilteredSuits,
+			storedDefaultView,
+			t,
+		],
+	);
 
 	// 工具栏状态
 	const toolbarState = {
@@ -865,11 +895,14 @@ export function ProfilePage() {
 	};
 
 	// 工具栏回调
-	const toolbarCallbacks = {
+	const toolbarCallbacks: PageToolbarCallbacks<ProfileToolbarSuit> = {
 		onViewModeChange: (mode: "grid" | "list") => {
 			setDashboardSetting("defaultView", mode);
 		},
-		onSortedDataChange: setSortedSuits,
+		onSortedDataChange: (sortedData) => {
+			setSortedSuits(sortedData as ConfigSuit[]);
+			setIsCatalogDataReady(true);
+		},
 		onExpandedChange: setExpanded,
 	};
 
@@ -901,28 +934,25 @@ export function ProfilePage() {
 		</div>
 	);
 	const filterNode = (
-		<div className="w-36">
-			<Select value={reviewFilter} onValueChange={setReviewFilter}>
-				<SelectTrigger
-					className="h-9 w-full"
-					aria-label={t("surfaceReview:filter.label", {
-						defaultValue: "Review filter",
-					})}
-				>
-					<SelectValue />
-				</SelectTrigger>
-				<SelectContent align="end">
-					<SelectItem value="all">
-						{t("surfaceReview:filter.all", { defaultValue: "All" })}
-					</SelectItem>
-					<SelectItem value="needs_review">
-						{t("surfaceReview:filter.needsReview", {
-							defaultValue: "Needs review",
-						})}
-					</SelectItem>
-				</SelectContent>
-			</Select>
-		</div>
+		<PageToolbarSelect
+			value={reviewFilter}
+			onValueChange={setReviewFilter}
+			options={[
+				{
+					value: "all",
+					label: t("surfaceReview:filter.all", { defaultValue: "All" }),
+				},
+				{
+					value: "needs_review",
+					label: t("surfaceReview:filter.needsReview", {
+						defaultValue: "Needs review",
+					}),
+				},
+			]}
+			aria-label={t("surfaceReview:filter.label", {
+				defaultValue: "Review filter",
+			})}
+		/>
 	);
 
 	// Prepare empty state
@@ -958,11 +988,12 @@ export function ProfilePage() {
 	return (
 		<PageLayout
 			title={t("profiles:title", { defaultValue: "Profiles" })}
+			className="flex h-full min-h-0 flex-col"
 			headerActions={
-				<PageToolbar
-					config={toolbarConfig as any}
+				<PageToolbar<ProfileToolbarSuit>
+					config={toolbarConfig}
 					state={toolbarState}
-					callbacks={toolbarCallbacks as any}
+					callbacks={toolbarCallbacks}
 					filters={filterNode}
 					actions={actions}
 				/>
@@ -987,17 +1018,43 @@ export function ProfilePage() {
 				</div>
 			)}
 
-			<ListGridContainer
-				loading={isLoadingSuits}
-				loadingSkeleton={loadingSkeleton}
-				emptyState={
-					filteredAndSortedSuits.length === 0 ? emptyState : undefined
-				}
-			>
-				{viewMode === "grid"
-					? filteredAndSortedSuits.map(renderSuitCard)
-					: filteredAndSortedSuits.map(renderSuitListItem)}
-			</ListGridContainer>
+			<div className={catalogPageSectionClassName}>
+				<div ref={catalogScrollRef} className={catalogScrollShellClassName}>
+					<ListGridContainer
+						viewMode={viewMode as "grid" | "list"}
+						loading={isLoadingSuits}
+						loadingSkeleton={loadingSkeleton}
+						emptyClassName="h-full"
+						emptyState={
+							arrangedSortedSuits.length === 0 ? emptyState : undefined
+						}
+					>
+						{viewMode === "grid"
+							? profilePagination.pageItems.map(renderSuitCard)
+							: profilePagination.pageItems.map(renderSuitListItem)}
+					</ListGridContainer>
+				</div>
+				<Pagination
+					currentPage={profilePagination.currentPage}
+					hasPreviousPage={profilePagination.hasPreviousPage}
+					hasNextPage={profilePagination.hasNextPage}
+					isLoading={isLoadingSuits || !isCatalogDataReady}
+					itemsPerPage={profilePagination.pageSize}
+					currentPageItemCount={profilePagination.pageItems.length}
+					totalItemCount={arrangedSortedSuits.length}
+					totalPages={profilePagination.totalPages}
+					onGoToPage={profilePagination.goToPage}
+					onItemsPerPageChange={profilePagination.onItemsPerPageChange}
+					onPreviousPage={profilePagination.goToPreviousPage}
+					onFirstPage={profilePagination.goToFirstPage}
+					onNextPage={profilePagination.goToNextPage}
+					onLastPage={profilePagination.goToLastPage}
+					hasFirstPage={profilePagination.hasPreviousPage}
+					hasLastPage={profilePagination.hasNextPage}
+					pageSizeOptions={[...CATALOG_PAGE_SIZE_OPTIONS]}
+					className={catalogPaginationClassName}
+				/>
+			</div>
 
 			{/* New Suit Drawer */}
 			<ProfileFormDrawer
