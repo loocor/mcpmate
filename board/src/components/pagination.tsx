@@ -97,9 +97,9 @@ interface PaginationProps {
 
 const ICON_BTN = "h-8 w-8 shrink-0";
 
-/** Pagination toolbar controls use border/hover only — no shadcn focus ring glow. */
+/** Keep keyboard focus visible without adding the default two-pixel glow. */
 const PAGINATION_CONTROL_FOCUS_CLASS =
-	"focus:outline-none focus-visible:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 focus-visible:ring-offset-0";
+	"focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1";
 
 const PER_PAGE_SELECT_TRIGGER_CLASS = cn(
 	"relative h-8 w-[4.25rem] shrink-0 justify-center px-2 text-xs",

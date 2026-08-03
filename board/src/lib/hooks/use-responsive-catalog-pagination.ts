@@ -119,8 +119,6 @@ export function useResponsiveCatalogPagination<T>(
 		.concat(`mode=${viewMode}`)
 		.join("&");
 	const previousResetSignature = useRef(resetSignature);
-	const previousPageSize = useRef(pageSize);
-	const previousResponsivePageSize = useRef(responsivePageSize);
 
 	useEffect(() => {
 		if (!isDataReady) {
@@ -131,14 +129,9 @@ export function useResponsiveCatalogPagination<T>(
 			return;
 		}
 
-		const shouldReset =
-			previousResetSignature.current !== resetSignature ||
-			previousPageSize.current !== pageSize ||
-			previousResponsivePageSize.current !== responsivePageSize;
+		const shouldReset = previousResetSignature.current !== resetSignature;
 
 		previousResetSignature.current = resetSignature;
-		previousPageSize.current = pageSize;
-		previousResponsivePageSize.current = responsivePageSize;
 
 		if (shouldReset) {
 			setRequestedPage(1);
@@ -152,10 +145,8 @@ export function useResponsiveCatalogPagination<T>(
 		currentPage,
 		hasInvalidPageParam,
 		isDataReady,
-		pageSize,
 		requestedPage,
 		resetSignature,
-		responsivePageSize,
 		setRequestedPage,
 	]);
 

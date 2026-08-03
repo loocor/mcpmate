@@ -25,6 +25,8 @@ test("renders the page indicator in compact current slash total form", () => {
 	expect(markup).toContain('aria-hidden="true">2</span>');
 	expect(markup).toContain('class="sr-only">of 2</span>');
 	expect(markup).not.toContain(">Page</span>");
+	expect(markup).toContain("focus-visible:ring-1");
+	expect(markup).not.toContain("focus-visible:ring-0");
 });
 
 test("preserves the localized page context when total pages are unknown", () => {

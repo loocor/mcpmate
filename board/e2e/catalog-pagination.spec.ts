@@ -133,9 +133,9 @@ test("Servers paginate responsive grid results and reset after search", async ({
 		)
 		.toEqual({ innerWidth: 1280, matches: true });
 	await page.evaluate(() => window.dispatchEvent(new Event("resize")));
-	await expect(page).not.toHaveURL(/page=/);
-	await expect(page.getByText("Server 01", { exact: true })).toBeVisible();
-	await expect(page.getByText("Server 04", { exact: true })).toHaveCount(0);
+	await expect(page).toHaveURL(/page=2/);
+	await expect(page.getByText("Server 04", { exact: true })).toBeVisible();
+	await expect(page.getByText("Server 01", { exact: true })).toHaveCount(0);
 
 	await page.goto("/servers?view=list");
 	await expect(page.getByText("Server 01", { exact: true })).toBeVisible();

@@ -143,7 +143,6 @@ export function useMarketData(
 		(state) => state.dashboardSettings.marketBlacklist,
 	);
 	const prevFiltersRef = useRef({ search, sort });
-	const prevResponsivePageSizeRef = useRef(responsivePageSize);
 	const prevGridColumnCountRef = useRef(gridColumnCount);
 
 	const pagination = useCursorPagination({
@@ -315,27 +314,23 @@ export function useMarketData(
 
 	useEffect(() => {
 		const prevColumnCount = prevGridColumnCountRef.current;
-		const prevResponsive = prevResponsivePageSizeRef.current;
 		prevGridColumnCountRef.current = gridColumnCount;
-		prevResponsivePageSizeRef.current = responsivePageSize;
 
 		if (prevColumnCount === gridColumnCount) {
-			if (
-				selectedPageSize === null &&
-				prevResponsive !== responsivePageSize
-			) {
-				resetToFirstPage();
-			}
 			return;
 		}
 
-		const effectiveSize = selectedPageSize ?? responsivePageSize;
-		if (!pageSizeOptions.includes(effectiveSize)) {
-			const snapped = snapMarketPageSize(effectiveSize, gridColumnCount);
-			setSelectedPageSize(
-				snapped === responsivePageSize ? null : snapped,
-			);
+		if (selectedPageSize === null) {
+			resetToFirstPage();
+			return;
 		}
+
+		if (pageSizeOptions.includes(selectedPageSize)) {
+			return;
+		}
+
+		const snapped = snapMarketPageSize(selectedPageSize, gridColumnCount);
+		setSelectedPageSize(snapped === responsivePageSize ? null : snapped);
 		resetToFirstPage();
 	}, [
 		gridColumnCount,
