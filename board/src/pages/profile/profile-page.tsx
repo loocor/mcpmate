@@ -144,7 +144,7 @@ function formatSuitDisplayName(
 }
 
 export function ProfilePage() {
-	const { t } = useTranslation();
+	const { t, i18n } = useTranslation();
 	usePageTranslations("profiles");
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
@@ -171,7 +171,7 @@ export function ProfilePage() {
 	const [expanded, setExpanded] = useState(false);
 
 	const [sortedSuits, setSortedSuits] = React.useState<ConfigSuit[]>([]);
-	const [isCatalogDataReady, setIsCatalogDataReady] = useState(false);
+	const [sortedSuitSource, setSortedSuitSource] = useState<ConfigSuit[] | null>(null);
 
 	const {
 		data: suitsResponse,
@@ -216,6 +216,7 @@ export function ProfilePage() {
 			(suit) => getProfileReviewCount(pendingReviewItems, suit.id) > 0,
 		);
 	}, [pendingReviewItems, reviewFilter, suits]);
+	const isCatalogDataReady = sortedSuitSource === reviewFilteredSuits;
 
 	const isProfileCatalogDataReady =
 		suitsResponse !== undefined &&
@@ -231,6 +232,8 @@ export function ProfilePage() {
 		viewMode,
 		isCatalogDataReady,
 	);
+	const isCatalogLoading =
+		isLoadingSuits || (suitsResponse !== undefined && !isCatalogDataReady);
 	const catalogScrollRef = useRef<HTMLDivElement | null>(null);
 
 	React.useEffect(() => {
@@ -883,6 +886,7 @@ export function ProfilePage() {
 	}),
 		[
 			isProfileCatalogDataReady,
+			i18n.language,
 			reviewFilteredSuits,
 			storedDefaultView,
 			t,
@@ -901,7 +905,7 @@ export function ProfilePage() {
 		},
 		onSortedDataChange: (sortedData) => {
 			setSortedSuits(sortedData as ConfigSuit[]);
-			setIsCatalogDataReady(true);
+			setSortedSuitSource(reviewFilteredSuits);
 		},
 		onExpandedChange: setExpanded,
 	};
@@ -1022,11 +1026,13 @@ export function ProfilePage() {
 				<div ref={catalogScrollRef} className={catalogScrollShellClassName}>
 					<ListGridContainer
 						viewMode={viewMode as "grid" | "list"}
-						loading={isLoadingSuits}
+						loading={isCatalogLoading}
 						loadingSkeleton={loadingSkeleton}
 						emptyClassName="h-full"
 						emptyState={
-							arrangedSortedSuits.length === 0 ? emptyState : undefined
+							!isCatalogLoading && arrangedSortedSuits.length === 0
+								? emptyState
+								: undefined
 						}
 					>
 						{viewMode === "grid"
@@ -1038,7 +1044,7 @@ export function ProfilePage() {
 					currentPage={profilePagination.currentPage}
 					hasPreviousPage={profilePagination.hasPreviousPage}
 					hasNextPage={profilePagination.hasNextPage}
-					isLoading={isLoadingSuits || !isCatalogDataReady}
+					isLoading={isCatalogLoading}
 					itemsPerPage={profilePagination.pageSize}
 					currentPageItemCount={profilePagination.pageItems.length}
 					totalItemCount={arrangedSortedSuits.length}

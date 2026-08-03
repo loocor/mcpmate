@@ -4,6 +4,17 @@ test("Server list failures use notification center without inline diagnostics", 
 	page,
 }) => {
 	let serverListRequests = 0;
+	const serverDiagnostics: string[] = [];
+	page.on("console", (message) => {
+		const text = message.text();
+		if (
+			text.includes("Fetching servers") ||
+			text.includes("Servers fetched") ||
+			text.includes("Error fetching servers")
+		) {
+			serverDiagnostics.push(text);
+		}
+	});
 	await page.addInitScript(() => {
 		window.localStorage.removeItem("mcp_notifications");
 	});
@@ -36,6 +47,7 @@ test("Server list failures use notification center without inline diagnostics", 
 
 	await page.goto("/servers");
 	await expect.poll(() => serverListRequests).toBeGreaterThan(1);
+	await expect.poll(() => serverDiagnostics.length).toBe(0);
 
 	await expect(page.getByRole("alert")).toHaveCount(0);
 	const notificationMenu = page.getByRole("menu", { name: "Notifications" });

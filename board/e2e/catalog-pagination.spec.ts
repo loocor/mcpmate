@@ -215,8 +215,25 @@ test("needs-review deep links wait for review data before clamping", async ({
 	await expect.poll(() => releaseReviewResponse !== null).toBe(true);
 	await expect(page).toHaveURL(/page=2/);
 	await expectPaginationControlsDisabled(page);
+	await expect(page.getByText("No clients found", { exact: true })).toHaveCount(0);
 	releaseReviewResponse?.();
 
 	await expect(page.getByText("Client 07", { exact: true })).toBeVisible();
 	await expect(page).toHaveURL(/page=2/);
+});
+
+test("needs-review transitions do not flash stale empty states", async ({ page }) => {
+	reviewFixtures = reviewItems;
+	holdReviewResponse = true;
+	await page.goto("/clients?view=grid&expanded=true");
+
+	await expect.poll(() => releaseReviewResponse !== null).toBe(true);
+	await expect(page.getByText("Client 01", { exact: true })).toBeVisible();
+	await page.getByRole("combobox", { name: "Filter", exact: true }).click();
+	await page.getByRole("option", { name: "Needs review", exact: true }).click();
+	await expect(page.getByText("No clients found", { exact: true })).toHaveCount(0);
+	await expect(page.getByText("Client 01", { exact: true })).toHaveCount(0);
+	releaseReviewResponse?.();
+
+	await expect(page.getByText("Client 01", { exact: true })).toBeVisible();
 });

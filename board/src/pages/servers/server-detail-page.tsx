@@ -30,6 +30,7 @@ import {
 import {
 	DETAIL_TAB_CONTENT_CLASS,
 	DETAIL_OVERVIEW_PINNED_SECTION_CLASS,
+	DETAIL_OVERVIEW_SCROLLABLE_LIST_CLASS,
 	DETAIL_OVERVIEW_STACK_CLASS,
 } from "../../components/detail-tab-content-class";
 import { AuditLogsPanel } from "../../components/audit-logs-panel";
@@ -993,7 +994,7 @@ export function ServerDetailPage() {
 												})}
 											</CardTitle>
 										</CardHeader>
-										<CardContent>
+										<CardContent className={DETAIL_OVERVIEW_SCROLLABLE_LIST_CLASS}>
 											{server.instances?.length ? (
 												<CapsuleStripeList>
 													{server.instances.map((i) => (

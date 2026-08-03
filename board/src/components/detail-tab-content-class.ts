@@ -11,3 +11,7 @@ export const DETAIL_OVERVIEW_STACK_CLASS =
 
 /** Sections above the fill-height logs card (metadata, stats, instance lists). */
 export const DETAIL_OVERVIEW_PINNED_SECTION_CLASS = "shrink-0";
+
+/** Allow unbounded overview lists to scroll without changing short-list height. */
+export const DETAIL_OVERVIEW_SCROLLABLE_LIST_CLASS =
+	"max-h-[min(16rem,35vh)] overflow-y-auto";

@@ -43,6 +43,7 @@ import { SurfaceReviewDialog } from "../../components/surface-review-dialog";
 import {
   DETAIL_TAB_CONTENT_CLASS,
   DETAIL_OVERVIEW_PINNED_SECTION_CLASS,
+  DETAIL_OVERVIEW_SCROLLABLE_LIST_CLASS,
   DETAIL_OVERVIEW_STACK_CLASS,
 } from "../../components/detail-tab-content-class";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
@@ -2411,7 +2412,7 @@ export function ClientDetailPage() {
                   </div>
                 </div>
               </CardHeader>
-              <CardContent>
+              <CardContent className={DETAIL_OVERVIEW_SCROLLABLE_LIST_CLASS}>
                 {loadingConfig ? (
                   <div className="space-y-2">
                     {[1, 2, 3].map((i) => (

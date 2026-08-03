@@ -202,12 +202,16 @@ export function ClientsPage() {
 	const [sortedClients, setSortedClients] = React.useState<ClientToolbarEntity[]>(
 		filteredClientsAsEntities,
 	);
-	const [isCatalogDataReady, setIsCatalogDataReady] = useState(false);
+	const [sortedClientSource, setSortedClientSource] =
+		useState<ClientToolbarEntity[] | null>(null);
+	const isCatalogDataReady = sortedClientSource === filteredClientsAsEntities;
 	const clientPagination = useResponsiveCatalogPagination(
 		sortedClients,
 		view as "grid" | "list",
 		isCatalogDataReady,
 	);
+	const isCatalogLoading =
+		isLoading || (clientData !== undefined && !isCatalogDataReady);
 	const catalogScrollRef = React.useRef<HTMLDivElement | null>(null);
 
 	React.useEffect(() => {
@@ -567,7 +571,7 @@ export function ClientsPage() {
 		},
 		onSortedDataChange: (sortedData: ClientToolbarEntity[]) => {
 			setSortedClients(sortedData);
-			setIsCatalogDataReady(true);
+			setSortedClientSource(filteredClientsAsEntities);
 		},
 		onExpandedChange: setExpanded,
 	};
@@ -660,10 +664,14 @@ export function ClientsPage() {
 				<div ref={catalogScrollRef} className={catalogScrollShellClassName}>
 					<ListGridContainer
 						viewMode={view as "grid" | "list"}
-						loading={isLoading}
+						loading={isCatalogLoading}
 						loadingSkeleton={loadingSkeleton}
 						emptyClassName="h-full"
-						emptyState={sortedClients.length === 0 ? emptyState : undefined}
+						emptyState={
+							!isCatalogLoading && sortedClients.length === 0
+								? emptyState
+								: undefined
+						}
 					>
 						{view === "grid"
 							? clientPagination.pageItems.map((client) => {
@@ -692,7 +700,7 @@ export function ClientsPage() {
 					currentPage={clientPagination.currentPage}
 					hasPreviousPage={clientPagination.hasPreviousPage}
 					hasNextPage={clientPagination.hasNextPage}
-					isLoading={isLoading || !isCatalogDataReady}
+					isLoading={isCatalogLoading}
 					itemsPerPage={clientPagination.pageSize}
 					currentPageItemCount={clientPagination.pageItems.length}
 					totalItemCount={sortedClients.length}

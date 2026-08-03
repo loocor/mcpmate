@@ -84,7 +84,8 @@ export function ServerListPage() {
 
 	// Sorted data state
 	const [sortedServers, setSortedServers] = React.useState<ServerSummary[]>([]);
-	const [isCatalogDataReady, setIsCatalogDataReady] = useState(false);
+	const [sortedServerSource, setSortedServerSource] =
+		useState<ServerSummary[] | null>(null);
 
 	const queryClient = useQueryClient();
 
@@ -214,17 +215,7 @@ export function ServerListPage() {
 		isError,
 	} = useQuery<ServerListResponse>({
 		queryKey: ["servers"],
-		queryFn: async () => {
-			try {
-				console.log("Fetching servers...");
-				const result = await serversApi.getAll();
-				console.log("Servers fetched:", result);
-				return result;
-			} catch (err) {
-				console.error("Error fetching servers:", err);
-				throw err;
-			}
-		},
+		queryFn: () => serversApi.getAll(),
 		refetchInterval: (query) => {
 			const servers = query.state.data?.servers ?? [];
 			return getServerListRefetchInterval(servers);
@@ -375,20 +366,14 @@ export function ServerListPage() {
 
 	// Handle update server
 	const handleUpdateServer = async (config: Partial<MCPServerConfig>) => {
-		if (editingServer) {
-			console.log("Updating server:", editingServer.id, "with config:", config);
-			try {
-				await updateServerMutation.mutateAsync({
-					serverId: editingServer.id,
-					config,
-				});
-				console.log("Server update successful");
-				setEditingServer(null);
-			} catch (error) {
-				console.error("Server update failed:", error);
-				throw error; // Re-throw to let the mutation handle it
-			}
+		if (!editingServer) {
+			return;
 		}
+		await updateServerMutation.mutateAsync({
+			serverId: editingServer.id,
+			config,
+		});
+		setEditingServer(null);
 	};
 
 	// Handle delete server
@@ -526,11 +511,16 @@ export function ServerListPage() {
 		[syncServerStateToClients, toggleServerAsync],
 	);
 
+	const serverSource = serverData?.servers ?? EMPTY_SERVERS;
+	const isCatalogDataReady =
+		serverData !== undefined && sortedServerSource === serverSource;
 	const serverPagination = useResponsiveCatalogPagination(
 		sortedServers,
 		viewMode as "grid" | "list",
 		isCatalogDataReady,
 	);
+	const isCatalogLoading =
+		isLoading || (serverData !== undefined && !isCatalogDataReady);
 	const catalogScrollRef = useRef<HTMLDivElement | null>(null);
 
 	React.useEffect(() => {
@@ -624,7 +614,7 @@ export function ServerListPage() {
 	// Toolbar config
 	type ToolbarServer = ServerSummary & { [key: string]: unknown };
 	const toolbarConfig: PageToolbarConfig<ToolbarServer> = {
-		data: (serverData?.servers ?? EMPTY_SERVERS) as ToolbarServer[],
+		data: serverSource as ToolbarServer[],
 		isDataReady: serverData !== undefined,
 		search: {
 			placeholder: t("toolbar.search.placeholder", {
@@ -685,7 +675,7 @@ export function ServerListPage() {
 		},
 		onSortedDataChange: (data) => {
 			setSortedServers(data as ServerSummary[]);
-			setIsCatalogDataReady(true);
+			setSortedServerSource(serverSource);
 		},
 		onExpandedChange: setExpanded,
 	};
@@ -762,11 +752,13 @@ export function ServerListPage() {
 				<div ref={catalogScrollRef} className={catalogScrollShellClassName}>
 					<ListGridContainer
 						viewMode={viewMode as "grid" | "list"}
-						loading={isLoading}
+						loading={isCatalogLoading}
 						loadingSkeleton={loadingSkeleton}
 						emptyClassName="h-full"
 						emptyState={
-							sortedServers.length === 0 ? emptyState : undefined
+							!isCatalogLoading && sortedServers.length === 0
+								? emptyState
+								: undefined
 						}
 					>
 						{viewMode === "grid"
@@ -798,7 +790,7 @@ export function ServerListPage() {
 					currentPage={serverPagination.currentPage}
 					hasPreviousPage={serverPagination.hasPreviousPage}
 					hasNextPage={serverPagination.hasNextPage}
-					isLoading={isLoading || !isCatalogDataReady}
+					isLoading={isCatalogLoading}
 					itemsPerPage={serverPagination.pageSize}
 					currentPageItemCount={serverPagination.pageItems.length}
 					totalItemCount={sortedServers.length}
