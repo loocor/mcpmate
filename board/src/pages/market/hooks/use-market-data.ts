@@ -7,17 +7,21 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useCursorPagination } from "../../../hooks/use-cursor-pagination";
+import { useCatalogGridColumnCount } from "../../../lib/hooks/use-responsive-catalog-pagination";
 import { useCatalogProvider } from "../../../lib/market";
 import { getOfficialMeta, getCanonicalRegistryServerId } from "../../../lib/registry";
 import { useAppStore } from "../../../lib/store";
 import type { RegistryServerEntry } from "../../../lib/types";
 import type { UseMarketDataReturn } from "../types";
 import {
-	type MarketPageSize,
 	buildMarketPaginationStorageKey,
+	getDefaultMarketPageSize,
+	getMarketPageSizeOptions,
 	parseMarketListPageParam,
 	parseMarketListPerPageParam,
+	readMarketListSelectedPageSize,
 	readStoredMarketPagination,
+	snapMarketPageSize,
 	writeStoredMarketPagination,
 } from "../market-list-pagination-storage";
 import {
@@ -108,10 +112,16 @@ export function useMarketData(
 	const queryClient = useQueryClient();
 	const [searchParams, setSearchParams] = useSearchParams();
 	const providerId = provider.meta.id;
+	const gridColumnCount = useCatalogGridColumnCount();
+	const responsivePageSize = getDefaultMarketPageSize(gridColumnCount);
+	const pageSizeOptions = getMarketPageSizeOptions(gridColumnCount);
 	const restoredPaginationRef = useRef<RestoredMarketPagination | null>(null);
 	if (restoredPaginationRef.current === null) {
 		const urlPage = parseMarketListPageParam(searchParams.get("page"));
-		const urlPerPage = parseMarketListPerPageParam(searchParams.get("perPage"));
+		const urlPerPage = parseMarketListPerPageParam(
+			searchParams.get("perPage"),
+			gridColumnCount,
+		);
 		const urlSearch = searchParams.get("q") ?? "";
 		restoredPaginationRef.current = restoreMarketPagination(
 			providerId,
@@ -121,9 +131,10 @@ export function useMarketData(
 		);
 	}
 
-	const [itemsPerPage, setItemsPerPage] = useState(() =>
-		parseMarketListPerPageParam(searchParams.get("perPage")),
+	const [selectedPageSize, setSelectedPageSize] = useState<number | null>(() =>
+		readMarketListSelectedPageSize(searchParams.get("perPage"), gridColumnCount),
 	);
+	const itemsPerPage = selectedPageSize ?? responsivePageSize;
 	const [isPaginationActionLoading, setIsPaginationActionLoading] = useState(false);
 	const [isRestoringPagination, setIsRestoringPagination] = useState(
 		() => restoredPaginationRef.current?.needsRebuild ?? false,
@@ -132,6 +143,8 @@ export function useMarketData(
 		(state) => state.dashboardSettings.marketBlacklist,
 	);
 	const prevFiltersRef = useRef({ search, sort });
+	const prevResponsivePageSizeRef = useRef(responsivePageSize);
+	const prevGridColumnCountRef = useRef(gridColumnCount);
 
 	const pagination = useCursorPagination({
 		limit: itemsPerPage,
@@ -301,6 +314,38 @@ export function useMarketData(
 	}, [search, sort, resetToFirstPage]);
 
 	useEffect(() => {
+		const prevColumnCount = prevGridColumnCountRef.current;
+		const prevResponsive = prevResponsivePageSizeRef.current;
+		prevGridColumnCountRef.current = gridColumnCount;
+		prevResponsivePageSizeRef.current = responsivePageSize;
+
+		if (prevColumnCount === gridColumnCount) {
+			if (
+				selectedPageSize === null &&
+				prevResponsive !== responsivePageSize
+			) {
+				resetToFirstPage();
+			}
+			return;
+		}
+
+		const effectiveSize = selectedPageSize ?? responsivePageSize;
+		if (!pageSizeOptions.includes(effectiveSize)) {
+			const snapped = snapMarketPageSize(effectiveSize, gridColumnCount);
+			setSelectedPageSize(
+				snapped === responsivePageSize ? null : snapped,
+			);
+		}
+		resetToFirstPage();
+	}, [
+		gridColumnCount,
+		pageSizeOptions,
+		resetToFirstPage,
+		responsivePageSize,
+		selectedPageSize,
+	]);
+
+	useEffect(() => {
 		if (isRestoringPagination) {
 			return;
 		}
@@ -312,7 +357,7 @@ export function useMarketData(
 				} else {
 					next.delete("page");
 				}
-				if (itemsPerPage !== 9) {
+				if (itemsPerPage !== responsivePageSize) {
 					next.set("perPage", String(itemsPerPage));
 				} else {
 					next.delete("perPage");
@@ -321,7 +366,13 @@ export function useMarketData(
 			},
 			{ replace: true },
 		);
-	}, [currentPage, itemsPerPage, isRestoringPagination, setSearchParams]);
+	}, [
+		currentPage,
+		itemsPerPage,
+		isRestoringPagination,
+		responsivePageSize,
+		setSearchParams,
+	]);
 
 	useEffect(() => {
 		if (isRestoringPagination) {
@@ -464,10 +515,12 @@ export function useMarketData(
 			if (nextItemsPerPage === itemsPerPage) {
 				return;
 			}
-			setItemsPerPage(nextItemsPerPage as MarketPageSize);
+			setSelectedPageSize(
+				nextItemsPerPage === responsivePageSize ? null : nextItemsPerPage,
+			);
 			resetToFirstPage();
 		},
-		[itemsPerPage, resetToFirstPage],
+		[itemsPerPage, resetToFirstPage, responsivePageSize],
 	);
 
 	const handleLastPage = useCallback(async () => {
@@ -567,6 +620,7 @@ export function useMarketData(
 			hasNextPage,
 			itemsPerPage,
 			totalPages,
+			pageSizeOptions,
 		},
 		onNextPage: handleNextPage,
 		onPreviousPage: handlePreviousPage,
