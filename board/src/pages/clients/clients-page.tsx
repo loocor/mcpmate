@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { EntityListItem } from "../../components/entity-list-item";
 import { ListGridContainer } from "../../components/list-grid-container";
+import { Pagination } from "../../components/pagination";
 import {
 	EmptyState,
 	FullHeightEmptyStateCard,
@@ -26,6 +27,10 @@ import {
 	SelectValue,
 } from "../../components/ui/select";
 import { clientsApi, surfaceReviewsApi } from "../../lib/api";
+import {
+	CATALOG_PAGE_SIZE_OPTIONS,
+	useResponsiveCatalogPagination,
+} from "../../lib/hooks/use-responsive-catalog-pagination";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { useUrlFilter, useUrlView } from "../../lib/hooks/use-url-state";
 import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
@@ -106,6 +111,7 @@ export function ClientsPage() {
 	const {
 		data: pendingReviewItems = [],
 		error: reviewItemsError,
+		isFetched: areReviewItemsFetched,
 	} = useQuery({
 		queryKey: ["surfaceReviews", "pending"],
 		queryFn: () => surfaceReviewsApi.list({ state: "pending" }),
@@ -195,6 +201,17 @@ export function ClientsPage() {
 	const [sortedClients, setSortedClients] = React.useState<ClientToolbarEntity[]>(
 		filteredClientsAsEntities,
 	);
+	const [isCatalogDataReady, setIsCatalogDataReady] = useState(false);
+	const clientPagination = useResponsiveCatalogPagination(
+		sortedClients,
+		view as "grid" | "list",
+		isCatalogDataReady,
+	);
+	const catalogScrollRef = React.useRef<HTMLDivElement | null>(null);
+
+	React.useEffect(() => {
+		catalogScrollRef.current?.scrollTo({ top: 0 });
+	}, [clientPagination.currentPage]);
 
 	const governanceMutation = useMutation({
 		mutationFn: async ({
@@ -459,11 +476,15 @@ export function ClientsPage() {
 
 	// Toolbar expansion state
 	const [expanded, setExpanded] = useState(false);
+	const isClientCatalogDataReady =
+		clientData !== undefined &&
+		(filter !== "needs_review" || areReviewItemsFetched);
 
 	// Toolbar configuration
 	const toolbarConfig = React.useMemo(
 		() => ({
 			data: filteredClientsAsEntities,
+			isDataReady: isClientCatalogDataReady,
 			search: {
 				placeholder: t("toolbar.search.placeholder", {
 					defaultValue: "Search clients...",
@@ -521,7 +542,12 @@ export function ClientsPage() {
 				enabled: true,
 			},
 		}),
-		[filteredClientsAsEntities, i18n.language, t],
+		[
+			filteredClientsAsEntities,
+			i18n.language,
+			isClientCatalogDataReady,
+			t,
+		],
 	);
 
 	// Toolbar state
@@ -538,7 +564,10 @@ export function ClientsPage() {
 		onViewModeChange: (mode: "grid" | "list") => {
 			setDashboardSetting("defaultView", mode);
 		},
-		onSortedDataChange: (sortedData: ClientToolbarEntity[]) => setSortedClients(sortedData),
+		onSortedDataChange: (sortedData: ClientToolbarEntity[]) => {
+			setSortedClients(sortedData);
+			setIsCatalogDataReady(true);
+		},
 		onExpandedChange: setExpanded,
 	};
 
@@ -633,35 +662,57 @@ export function ClientsPage() {
 					})}
 				</div>
 			)}
-			<div className="min-h-0 flex-1">
-				<ListGridContainer
-					loading={isLoading}
-					loadingSkeleton={loadingSkeleton}
-					emptyClassName="h-full"
-					emptyState={sortedClients.length === 0 ? emptyState : undefined}
-				>
-					{view === "grid"
-						? sortedClients.map((client) => {
-							const sourceClient = clientsByIdentifier.get(client.identifier);
-							return sourceClient ? (
-								<ClientCard
-									key={sourceClient.identifier}
-									client={sourceClient}
-									onNavigate={(identifier) => navigate(`/clients/${encodeURIComponent(identifier)}`)}
-									onGovernanceChange={(identifier, approved) => governanceMutation.mutate({ identifier, approved })}
-									isGovernancePending={governanceMutation.isPending}
-									reviewCount={getClientReviewCount(
-										pendingReviewItems,
-										sourceClient,
-									)}
-								/>
-							) : null;
-						})
-						: sortedClients.map((client) => {
-							const sourceClient = clientsByIdentifier.get(client.identifier);
-							return sourceClient ? renderClientListItem(sourceClient) : null;
-						})}
-				</ListGridContainer>
+			<div className="flex min-h-0 flex-1 flex-col">
+				<div ref={catalogScrollRef} className="min-h-0 flex-1 overflow-y-auto pr-1">
+					<ListGridContainer
+						loading={isLoading}
+						loadingSkeleton={loadingSkeleton}
+						emptyClassName="h-full"
+						emptyState={sortedClients.length === 0 ? emptyState : undefined}
+					>
+						{view === "grid"
+							? clientPagination.pageItems.map((client) => {
+								const sourceClient = clientsByIdentifier.get(client.identifier);
+								return sourceClient ? (
+									<ClientCard
+										key={sourceClient.identifier}
+										client={sourceClient}
+										onNavigate={(identifier) => navigate(`/clients/${encodeURIComponent(identifier)}`)}
+										onGovernanceChange={(identifier, approved) => governanceMutation.mutate({ identifier, approved })}
+										isGovernancePending={governanceMutation.isPending}
+										reviewCount={getClientReviewCount(
+											pendingReviewItems,
+											sourceClient,
+										)}
+									/>
+								) : null;
+							})
+							: clientPagination.pageItems.map((client) => {
+								const sourceClient = clientsByIdentifier.get(client.identifier);
+								return sourceClient ? renderClientListItem(sourceClient) : null;
+							})}
+					</ListGridContainer>
+				</div>
+				<Pagination
+					currentPage={clientPagination.currentPage}
+					hasPreviousPage={clientPagination.hasPreviousPage}
+					hasNextPage={clientPagination.hasNextPage}
+					isLoading={isLoading || !isCatalogDataReady}
+					itemsPerPage={clientPagination.pageSize}
+					currentPageItemCount={clientPagination.pageItems.length}
+					totalItemCount={sortedClients.length}
+					totalPages={clientPagination.totalPages}
+					onGoToPage={clientPagination.goToPage}
+					onItemsPerPageChange={clientPagination.onItemsPerPageChange}
+					onPreviousPage={clientPagination.goToPreviousPage}
+					onFirstPage={clientPagination.goToFirstPage}
+					onNextPage={clientPagination.goToNextPage}
+					onLastPage={clientPagination.goToLastPage}
+					hasFirstPage={clientPagination.hasPreviousPage}
+					hasLastPage={clientPagination.hasNextPage}
+					pageSizeOptions={[...CATALOG_PAGE_SIZE_OPTIONS]}
+					className="shrink-0 pt-3 pb-1"
+				/>
 			</div>
 			<ClientFormDrawer
 				open={isClientFormOpen}

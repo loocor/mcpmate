@@ -1,5 +1,5 @@
-import { Bug, Plug } from "lucide-react";
-import { memo, useCallback, useMemo, type MouseEvent } from "react";
+import { Plug } from "lucide-react";
+import { memo, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
 import { resolveServerOAuthReadiness } from "../../lib/oauth-readiness";
@@ -18,7 +18,6 @@ import { EntityListItem } from "../entity-list-item";
 import { ServerAuthBadge } from "../server-auth-badge";
 import { StatusBadge } from "../status-badge";
 import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 
 export type ServerCatalogStatsLabels = {
@@ -34,8 +33,6 @@ type ServerCatalogEntryBaseProps = {
 	onOpen: (serverId: string) => void;
 	onToggle: (serverId: string, enabled: boolean) => void;
 	isToggleDisabled: boolean;
-	enableServerDebug?: boolean;
-	onOpenDebug?: (serverId: string) => void;
 };
 
 export type ServerCatalogListEntryProps = ServerCatalogEntryBaseProps & {
@@ -94,8 +91,6 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 		onOpen,
 		onToggle,
 		isToggleDisabled,
-		enableServerDebug = false,
-		onOpenDebug,
 	} = props;
 	const displayName = getServerDisplayName(server);
 	const lifecycleLabels: CapabilityLifecycleLabels = {
@@ -126,14 +121,6 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 			onToggle(server.id, checked);
 		},
 		[onToggle, server.id],
-	);
-
-	const handleOpenDebug = useCallback(
-		(event: MouseEvent) => {
-			event.stopPropagation();
-			onOpenDebug?.(server.id);
-		},
-		[onOpenDebug, server.id],
 	);
 
 	function renderUnifyEligibilityTag() {
@@ -343,24 +330,6 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 					onChange: handleToggle,
 					disabled: isToggleDisabled,
 				}}
-				actionButtons={
-					enableServerDebug && onOpenDebug
-						? [
-							<Button
-								key="debug"
-								size="sm"
-								variant="outline"
-								className="p-2"
-								onClick={handleOpenDebug}
-								title={t("actions.debug.open", {
-									defaultValue: "Open inspect view",
-								})}
-							>
-								<Bug className="h-4 w-4" />
-							</Button>,
-						]
-						: []
-				}
 				onClick={handleOpen}
 			/>
 		);

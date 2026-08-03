@@ -93,6 +93,7 @@ import {
 } from "../../lib/api";
 import { resolveAutoAddTargetProfileId } from "../../lib/default-profile";
 import { buildClientServersImportRequest } from "../../lib/server-import-payload";
+import { invalidateServerCatalogAfterImport } from "../../lib/server-query-cache";
 import { mapDashboardSettingsToClientBackupPolicy } from "../../lib/client-backup-policy";
 import {
   applyClientConfigWithResolvedSelection,
@@ -1691,6 +1692,7 @@ export function ClientDetailPage() {
         );
       }
       const imported = res.imported_count ?? 0;
+      void invalidateServerCatalogAfterImport(qc, imported);
       if (imported > 0) {
         notifySuccess(
           t("detail.notifications.imported.title", {

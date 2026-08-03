@@ -6,6 +6,7 @@ import { useNavigate } from "react-router-dom";
 
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { ListGridContainer } from "../../components/list-grid-container";
+import { Pagination } from "../../components/pagination";
 import {
 	EmptyState,
 	FullHeightEmptyStateCard,
@@ -31,8 +32,12 @@ import {
 } from "../../components/ui/page-toolbar";
 import { useServerInstallPipeline } from "../../hooks/use-server-install-pipeline";
 import { serversApi } from "../../lib/api";
+import {
+	CATALOG_PAGE_SIZE_OPTIONS,
+	useResponsiveCatalogPagination,
+} from "../../lib/hooks/use-responsive-catalog-pagination";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
-import { useUrlSort, useUrlView } from "../../lib/hooks/use-url-state";
+import { useUrlView } from "../../lib/hooks/use-url-state";
 import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
 import type { ServerIngestPayload } from "../../lib/install-normalizer";
 import {
@@ -47,18 +52,9 @@ import type {
 	ServerListResponse,
 	ServerSummary,
 } from "../../lib/types";
+import { getServerListRefetchInterval } from "./server-list-polling";
 
-const TRANSITIONAL_SERVER_STATUSES = new Set([
-	"initializing",
-	"starting",
-	"connecting",
-	"busy",
-	"stopping",
-]);
-
-function isTransitionalServerStatus(status: string | undefined): boolean {
-	return TRANSITIONAL_SERVER_STATUSES.has(String(status || "").toLowerCase());
-}
+const EMPTY_SERVERS: ServerSummary[] = [];
 
 export function ServerListPage() {
 	usePageTranslations("servers");
@@ -81,6 +77,7 @@ export function ServerListPage() {
 
 	// Sorted data state
 	const [sortedServers, setSortedServers] = React.useState<ServerSummary[]>([]);
+	const [isCatalogDataReady, setIsCatalogDataReady] = useState(false);
 
 	const queryClient = useQueryClient();
 
@@ -100,24 +97,12 @@ export function ServerListPage() {
 		validViews: ["grid", "list"],
 	});
 	const viewMode = view;
-	const { sortState } = useUrlSort({
-		paramName: "sort",
-		defaultField: "name",
-		defaultDirection: "asc",
-		validFields: ["name", "enabled"],
-	});
 
 	const pendingServerDeepLinkImport = useAppStore(
 		(state) => state.pendingServerDeepLinkImport,
 	);
 	const setPendingServerDeepLinkImport = useAppStore(
 		(state) => state.setPendingServerDeepLinkImport,
-	);
-	const enableServerDebug = useAppStore(
-		(state) => state.dashboardSettings.enableServerDebug,
-	);
-	const openDebugInNewWindow = useAppStore(
-		(state) => state.dashboardSettings.openDebugInNewWindow,
 	);
 	const syncServerStateToClients = useAppStore(
 		(state) => state.dashboardSettings.syncServerStateToClients,
@@ -235,10 +220,7 @@ export function ServerListPage() {
 		},
 		refetchInterval: (query) => {
 			const servers = query.state.data?.servers ?? [];
-			const hasTransitionalServer = servers.some((server) =>
-				isTransitionalServerStatus(server.status),
-			);
-			return hasTransitionalServer ? 5000 : 30000;
+			return getServerListRefetchInterval(servers);
 		},
 		refetchIntervalInBackground: true,
 		retry: 1, // Reduce retry count to show errors more quickly
@@ -259,27 +241,6 @@ export function ServerListPage() {
 			error.message,
 		);
 	}, [error, i18n.language, isError, t]);
-
-	React.useEffect(() => {
-		if (sortedServers.length === 0 && serverData?.servers) {
-			const initialSorted = [...serverData.servers].sort((a, b) => {
-				const aValue = a[sortState.field as keyof ServerSummary];
-				const bValue = b[sortState.field as keyof ServerSummary];
-
-				let comparison = 0;
-				if (typeof aValue === "string" && typeof bValue === "string") {
-					comparison = aValue.localeCompare(bValue);
-				} else if (typeof aValue === "boolean" && typeof bValue === "boolean") {
-					comparison = Number(aValue) - Number(bValue);
-				} else {
-					comparison = String(aValue).localeCompare(String(bValue));
-				}
-
-				return sortState.direction === "desc" ? -comparison : comparison;
-			});
-			setSortedServers(initialSorted);
-		}
-	}, [serverData?.servers, sortedServers.length, sortState]);
 
 	// Enable/disable server
 	const toggleServerAsync = useCallback(
@@ -558,24 +519,16 @@ export function ServerListPage() {
 		[syncServerStateToClients, toggleServerAsync],
 	);
 
-	const handleCatalogDebugOpen = useCallback(
-		(serverId: string) => {
-			const url = `/servers/${encodeURIComponent(serverId)}?view=debug&channel=native`;
-			if (openDebugInNewWindow) {
-				if (typeof window !== "undefined") {
-					window.open(url, "_blank", "noopener,noreferrer");
-				}
-				return;
-			}
-			navigate(url);
-		},
-		[navigate, openDebugInNewWindow],
+	const serverPagination = useResponsiveCatalogPagination(
+		sortedServers,
+		viewMode as "grid" | "list",
+		isCatalogDataReady,
 	);
+	const catalogScrollRef = useRef<HTMLDivElement | null>(null);
 
-	// Use sorted data
-	const filteredAndSortedServers = useMemo(() => {
-		return sortedServers;
-	}, [sortedServers]);
+	React.useEffect(() => {
+		catalogScrollRef.current?.scrollTo({ top: 0 });
+	}, [serverPagination.currentPage]);
 	const hasNoServerRecords = serverData?.servers?.length === 0;
 
 	const statsCards = useMemo(() => {
@@ -664,7 +617,8 @@ export function ServerListPage() {
 	// Toolbar config
 	type ToolbarServer = ServerSummary & { [key: string]: unknown };
 	const toolbarConfig: PageToolbarConfig<ToolbarServer> = {
-		data: (serverData?.servers || []) as ToolbarServer[],
+		data: (serverData?.servers ?? EMPTY_SERVERS) as ToolbarServer[],
+		isDataReady: serverData !== undefined,
 		search: {
 			placeholder: t("toolbar.search.placeholder", {
 				defaultValue: "Search servers...",
@@ -722,7 +676,10 @@ export function ServerListPage() {
 		onViewModeChange: (mode: "grid" | "list") => {
 			setDashboardSetting("defaultView", mode);
 		},
-		onSortedDataChange: (data) => setSortedServers(data as ServerSummary[]),
+		onSortedDataChange: (data) => {
+			setSortedServers(data as ServerSummary[]);
+			setIsCatalogDataReady(true);
+		},
 		onExpandedChange: setExpanded,
 	};
 
@@ -794,41 +751,61 @@ export function ServerListPage() {
 			}
 			statsCards={<StatsCards cards={statsCards} />}
 		>
-			<div className="min-h-0 flex-1">
-				<ListGridContainer
-					loading={isLoading}
-					loadingSkeleton={loadingSkeleton}
-					emptyClassName="h-full"
-					emptyState={
-						filteredAndSortedServers.length === 0 ? emptyState : undefined
-					}
-				>
-					{viewMode === "grid"
-						? filteredAndSortedServers.map((server) => (
-							<ServerCatalogEntry
-								key={server.id}
-								variant="grid"
-								server={server}
-								statsLabels={catalogStatsLabels}
-								onOpen={handleCatalogOpen}
-								onToggle={handleCatalogGridToggle}
-								isToggleDisabled={!!pending[server.id]}
-							/>
-						))
-						: filteredAndSortedServers.map((server) => (
-							<ServerCatalogEntry
-								key={server.id}
-								variant="list"
-								server={server}
-								statsLabels={catalogStatsLabels}
-								onOpen={handleCatalogOpen}
-								onToggle={handleCatalogListToggle}
-								isToggleDisabled={isTogglePending}
-								enableServerDebug={enableServerDebug}
-								onOpenDebug={handleCatalogDebugOpen}
-							/>
-						))}
-				</ListGridContainer>
+			<div className="flex min-h-0 flex-1 flex-col">
+				<div ref={catalogScrollRef} className="min-h-0 flex-1 overflow-y-auto pr-1">
+					<ListGridContainer
+						loading={isLoading}
+						loadingSkeleton={loadingSkeleton}
+						emptyClassName="h-full"
+						emptyState={
+							sortedServers.length === 0 ? emptyState : undefined
+						}
+					>
+						{viewMode === "grid"
+							? serverPagination.pageItems.map((server) => (
+								<ServerCatalogEntry
+									key={server.id}
+									variant="grid"
+									server={server}
+									statsLabels={catalogStatsLabels}
+									onOpen={handleCatalogOpen}
+									onToggle={handleCatalogGridToggle}
+									isToggleDisabled={!!pending[server.id]}
+								/>
+							))
+							: serverPagination.pageItems.map((server) => (
+								<ServerCatalogEntry
+									key={server.id}
+									variant="list"
+									server={server}
+									statsLabels={catalogStatsLabels}
+									onOpen={handleCatalogOpen}
+									onToggle={handleCatalogListToggle}
+									isToggleDisabled={isTogglePending}
+								/>
+							))}
+					</ListGridContainer>
+				</div>
+				<Pagination
+					currentPage={serverPagination.currentPage}
+					hasPreviousPage={serverPagination.hasPreviousPage}
+					hasNextPage={serverPagination.hasNextPage}
+					isLoading={isLoading || !isCatalogDataReady}
+					itemsPerPage={serverPagination.pageSize}
+					currentPageItemCount={serverPagination.pageItems.length}
+					totalItemCount={sortedServers.length}
+					totalPages={serverPagination.totalPages}
+					onGoToPage={serverPagination.goToPage}
+					onItemsPerPageChange={serverPagination.onItemsPerPageChange}
+					onPreviousPage={serverPagination.goToPreviousPage}
+					onFirstPage={serverPagination.goToFirstPage}
+					onNextPage={serverPagination.goToNextPage}
+					onLastPage={serverPagination.goToLastPage}
+					hasFirstPage={serverPagination.hasPreviousPage}
+					hasLastPage={serverPagination.hasNextPage}
+					pageSizeOptions={[...CATALOG_PAGE_SIZE_OPTIONS]}
+					className="shrink-0 pt-3 pb-1"
+				/>
 			</div>
 
 			{/* Server install pipeline */}

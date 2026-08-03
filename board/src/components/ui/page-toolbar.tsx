@@ -45,6 +45,7 @@ export const toolbarSearchInputClassName =
 export interface PageToolbarConfig<T extends Entity = Entity> {
 	// 数据源
 	data?: T[];
+	isDataReady?: boolean;
 
 	// 搜索配置
 	search?: {
@@ -124,6 +125,7 @@ export function PageToolbar<T extends Entity = Entity>({
 }: PageToolbarProps<T>) {
 	const {
 		data = [],
+		isDataReady = true,
 		search: searchConfig,
 		viewMode: viewModeConfig,
 		sort: sortConfig,
@@ -258,23 +260,40 @@ export function PageToolbar<T extends Entity = Entity>({
 	}, [filteredData, sortState, sortConfig, getNestedValue]);
 
 	// 通知排序后的数据变化（避免无限循环）
-	const lastSortedRef = React.useRef<T[] | null>(null);
+	const lastSortedNotificationRef = React.useRef<{
+		items: T[];
+		data: T[];
+		search: string;
+		sortField: string;
+		sortDirection: SortState["direction"];
+	} | null>(null);
 	React.useEffect(() => {
-		if (!callbacks?.onSortedDataChange) return;
+		if (!isDataReady || !callbacks?.onSortedDataChange) return;
 
-		const previous = lastSortedRef.current;
-		const isSameAsPrevious =
+		const previous = lastSortedNotificationRef.current;
+		const hasSameItems =
 			previous !== null &&
-			previous.length === sortedData.length &&
-			previous.every((item, index) => item === sortedData[index]);
+			previous.items.length === sortedData.length &&
+			previous.items.every((item, index) => item === sortedData[index]);
+		const hasSameInput =
+			previous?.data === data &&
+			previous.search === search &&
+			previous.sortField === sortState.field &&
+			previous.sortDirection === sortState.direction;
 
-		if (isSameAsPrevious) {
+		if (hasSameItems && hasSameInput) {
 			return;
 		}
 
-		lastSortedRef.current = sortedData;
+		lastSortedNotificationRef.current = {
+			items: sortedData,
+			data,
+			search,
+			sortField: sortState.field,
+			sortDirection: sortState.direction,
+		};
 		callbacks.onSortedDataChange(sortedData);
-	}, [sortedData, callbacks]);
+	}, [callbacks, data, isDataReady, search, sortedData, sortState.direction, sortState.field]);
 
 	// 是否启用精简模式
 	const isCompact = compactConfig?.enabled !== false;
