@@ -31,13 +31,7 @@ import {
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { PageToolbar } from "../../components/ui/page-toolbar";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "../../components/ui/select";
+import { PageToolbarSelect } from "../../components/ui/page-toolbar-select";
 import type {
 	Entity,
 	PageToolbarCallbacks,
@@ -620,23 +614,16 @@ export function SecretsPage() {
 	]);
 
 	const filters = (
-		<Select
+		<PageToolbarSelect
 			value={lifecycleFilter}
 			onValueChange={(value) =>
 				setLifecycleFilter(value as SecretLifecycleFilter)
 			}
-		>
-			<SelectTrigger className="h-9 w-[178px]">
-				<SelectValue />
-			</SelectTrigger>
-			<SelectContent align="end">
-				{SECRET_LIFECYCLE_FILTERS.map((filter) => (
-					<SelectItem key={filter} value={filter}>
-						{lifecycleLabel(filter)}
-					</SelectItem>
-				))}
-			</SelectContent>
-		</Select>
+			options={SECRET_LIFECYCLE_FILTERS.map((filter) => ({
+				value: filter,
+				label: lifecycleLabel(filter),
+			}))}
+		/>
 	);
 
 	const toolbarConfig = useMemo<PageToolbarConfig<SecretToolbarEntity>>(
