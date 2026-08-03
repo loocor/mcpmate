@@ -319,11 +319,11 @@ export function Layout() {
 					}`}
 			>
 				{/* Viewport-height column: outlet fills space above footer; pages can use h-full + inner scroll */}
-				<div className="box-border flex h-full w-full min-w-0 flex-col overflow-hidden p-4">
+				<div className="box-border flex h-full w-full min-w-0 flex-col gap-4 overflow-hidden p-4">
 					<div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
 						<Outlet />
 					</div>
-					<footer className="mt-6 shrink-0 text-[11px] text-slate-500 border-t border-slate-200 dark:border-slate-700 pt-2 pb-1 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+					<footer className="shrink-0 text-[11px] text-slate-500 border-t border-slate-200 dark:border-slate-700 pt-2 pb-1 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
 						<div className="flex items-center gap-4 flex-wrap">
 							<a
 								className="hover:underline"
@@ -368,10 +368,10 @@ export function Layout() {
 									defaultValue: "Open MCPMate Discord community in a new tab",
 								})}
 							>
-									<MessagesSquare className="h-3.5 w-3.5 shrink-0 text-[#5865F2]" aria-hidden />
-									<span>{t("layout.discord", { defaultValue: "Discord" })}</span>
-								</a>
-							</div>
+								<MessagesSquare className="h-3.5 w-3.5 shrink-0 text-[#5865F2]" aria-hidden />
+								<span>{t("layout.discord", { defaultValue: "Discord" })}</span>
+							</a>
+						</div>
 					</footer>
 				</div>
 			</main>

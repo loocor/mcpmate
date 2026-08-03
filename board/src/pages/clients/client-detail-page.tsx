@@ -40,7 +40,11 @@ import {
 import { ClientFormDrawer } from "../../components/client-form-drawer";
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { SurfaceReviewDialog } from "../../components/surface-review-dialog";
-import { DETAIL_TAB_CONTENT_CLASS } from "../../components/detail-tab-content-class";
+import {
+  DETAIL_TAB_CONTENT_CLASS,
+  DETAIL_OVERVIEW_PINNED_SECTION_CLASS,
+  DETAIL_OVERVIEW_STACK_CLASS,
+} from "../../components/detail-tab-content-class";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
 
 import { Badge } from "../../components/ui/badge";
@@ -2027,12 +2031,9 @@ export function ClientDetailPage() {
           {renderOverviewActionButtons()}
         </div>
 
-        <TabsContent
-          value="overview"
-          className="mt-0 flex min-h-0 flex-1 flex-col overflow-y-auto data-[state=inactive]:hidden"
-        >
-          <div className="grid gap-4">
-            <Card>
+        <TabsContent value="overview" className={DETAIL_TAB_CONTENT_CLASS}>
+          <div className={DETAIL_OVERVIEW_STACK_CLASS}>
+            <Card className={DETAIL_OVERVIEW_PINNED_SECTION_CLASS}>
               {loadingConfig ? (
                 <CardContent className="text-sm">
                   <div className="animate-pulse h-16 bg-slate-200 dark:bg-slate-800 rounded" />
@@ -2387,7 +2388,7 @@ export function ClientDetailPage() {
                 </CardContent>
               )}
             </Card>
-            <Card>
+            <Card className={DETAIL_OVERVIEW_PINNED_SECTION_CLASS}>
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <CardTitle>
@@ -2440,6 +2441,7 @@ export function ClientDetailPage() {
             </Card>
             {showClientLiveLogs ? (
               <AuditLogsPanel
+                fillHeight
                 title={t("detail.logs.title", { defaultValue: "Logs" })}
                 description={t("detail.logs.description", {
                   defaultValue:

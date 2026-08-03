@@ -1,5 +1,6 @@
 import type { AuditEventRecord } from "../lib/types";
 import { useState } from "react";
+import { cn } from "../lib/utils";
 import { Pagination } from "./pagination";
 import { Button } from "./ui/button";
 import {
@@ -50,6 +51,8 @@ interface AuditLogsPanelProps {
 	collapseLabel: string;
 	defaultExpanded?: boolean;
 	collapsedPreviewRows?: number;
+	/** Grow to fill remaining vertical space in a flex column parent; table body scrolls internally. */
+	fillHeight?: boolean;
 }
 
 export function AuditLogsPanel({
@@ -83,13 +86,23 @@ export function AuditLogsPanel({
 	collapseLabel,
 	defaultExpanded = false,
 	collapsedPreviewRows = 5,
+	fillHeight = false,
 }: AuditLogsPanelProps) {
 	const [expanded, setExpanded] = useState(defaultExpanded);
 	const visibleRows = expanded ? rows : rows.slice(0, collapsedPreviewRows);
 
 	return (
-		<Card>
-			<CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+		<Card
+			className={cn(
+				fillHeight && "flex min-h-0 flex-1 flex-col overflow-hidden",
+			)}
+		>
+			<CardHeader
+				className={cn(
+					"flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between",
+					fillHeight && "shrink-0",
+				)}
+			>
 				<div>
 					<CardTitle>{title}</CardTitle>
 					<CardDescription>{description}</CardDescription>
@@ -121,13 +134,28 @@ export function AuditLogsPanel({
 					) : null}
 				</div>
 			</CardHeader>
-			<CardContent className="pt-0">
+			<CardContent
+				className={cn(
+					"pt-0",
+					fillHeight && "flex min-h-0 flex-1 flex-col overflow-hidden",
+				)}
+			>
 				{isLoading ? (
-					<div className="rounded border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+					<div
+						className={cn(
+							"rounded border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400",
+							fillHeight && "flex min-h-0 flex-1 items-center justify-center",
+						)}
+					>
 						{loadingLabel}
 					</div>
 				) : rows.length ? (
-					<div className="overflow-x-auto">
+					<div
+						className={cn(
+							"overflow-x-auto",
+							fillHeight && "min-h-0 flex-1 overflow-y-auto",
+						)}
+					>
 						<table className="w-full text-sm">
 							<thead>
 								<tr className="border-b text-left text-muted-foreground">
@@ -159,7 +187,12 @@ export function AuditLogsPanel({
 						</table>
 					</div>
 				) : (
-					<div className="rounded border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+					<div
+						className={cn(
+							"rounded border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400",
+							fillHeight && "flex min-h-0 flex-1 items-center justify-center",
+						)}
+					>
 						{emptyLabel}
 					</div>
 				)}
@@ -181,7 +214,7 @@ export function AuditLogsPanel({
 						onNextPage={onNextPage}
 						onLastPage={onLastPage}
 						pageSizeOptions={[10, 20, 50, 100]}
-						className="mt-4"
+						className={cn("mt-4", fillHeight && "shrink-0")}
 					/>
 				) : null}
 			</CardContent>

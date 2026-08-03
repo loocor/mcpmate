@@ -27,7 +27,11 @@ import {
 	type CapabilityPreviewFlatItem,
 	type CapabilityPreviewKind,
 } from "../../components/capability-preview-list";
-import { DETAIL_TAB_CONTENT_CLASS } from "../../components/detail-tab-content-class";
+import {
+	DETAIL_TAB_CONTENT_CLASS,
+	DETAIL_OVERVIEW_PINNED_SECTION_CLASS,
+	DETAIL_OVERVIEW_STACK_CLASS,
+} from "../../components/detail-tab-content-class";
 import { AuditLogsPanel } from "../../components/audit-logs-panel";
 import {
 	CapsuleStripeList,
@@ -762,351 +766,351 @@ export function ServerDetailPage() {
 			)}
 
 			{server && (
-				<Tabs
-					value={capabilityTab}
-					onValueChange={setCapabilityTab}
-					className="flex min-h-0 flex-1 flex-col gap-4"
-				>
-					<div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-						<ServerCapabilityTabsHeader server={server} />
-						<ButtonGroup className="ml-auto flex-shrink-0 flex-nowrap self-start">
-							<Button
-								size="sm"
-								variant="outline"
-								onClick={() => {
-									refreshCapabilitiesMutation.mutate();
-								}}
-								disabled={isOverviewRefreshing}
-								className={overviewActionButtonClass}
-							>
-								<RefreshCw
-									className={`h-4 w-4 ${isOverviewRefreshing ? "animate-spin" : ""}`}
-								/>
-								{t("detail.actions.refresh", {
-									defaultValue: "Refresh",
-								})}
-							</Button>
-							<Button
-								size="sm"
-								variant={server.namespace_issue ? "warning" : "outline"}
-								onClick={() => setIsEditOpen(true)}
-								className={overviewActionButtonClass}
-							>
-								{server.namespace_issue ? (
-									<Wrench className="h-4 w-4" />
-								) : (
-									<Edit3 className="h-4 w-4" />
-								)}
-								{server.namespace_issue
-									? t("detail.namespaceIssue.action")
-									: t("detail.actions.edit", {
-										defaultValue: "Edit",
-									})}
-							</Button>
-						</ButtonGroup>
-					</div>
-
-					<TabsContent
-						value="overview"
-						className="mt-0 flex min-h-0 flex-1 flex-col overflow-y-auto data-[state=inactive]:hidden"
+				<div className="flex min-h-0 min-w-0 flex-1 flex-col">
+					<Tabs
+						value={capabilityTab}
+						onValueChange={setCapabilityTab}
+						className="flex min-h-0 flex-1 flex-col gap-4"
 					>
-						{isLoading ? (
-							<Card>
-								<CardContent className="p-4">
-									<div className="h-24 bg-slate-200 dark:bg-slate-800 animate-pulse rounded" />
-								</CardContent>
-							</Card>
-						) : (
-							<div className="grid gap-4">
-								<Card>
-									<CardContent className="p-4">
-										<div className="flex flex-col gap-4">
-											<div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-												<div className="flex flex-wrap items-start gap-4">
-													<CachedAvatar
-														src={primaryIconSrc}
-														alt={primaryIconAlt}
-														fallback={serverDisplayName || "?"}
-														className="text-sm"
-													/>
-													<div
-														className={`min-w-0 flex-1 ${overviewMetadataGridClass}`}
-													>
-														<OverviewMetadataRow
-															label={t("detail.overview.labels.upstreamName")}
-														>
-															{server.server_info?.name?.trim() || "—"}
-														</OverviewMetadataRow>
-														<OverviewMetadataRow
-															label={t("detail.overview.labels.namespace")}
-														>
-															{server.namespace_issue ? (
-																<Button
-																	type="button"
-																	variant="ghost"
-																	onClick={() => setIsEditOpen(true)}
-																	className="h-auto p-0 font-normal text-inherit hover:bg-transparent hover:text-inherit"
-																>
-																	{server.name}
-																	<AlertTriangle
-																		className="ml-2 h-4 w-4 text-destructive"
-																		aria-label={t("detail.namespaceIssue.iconLabel")}
-																	/>
-																</Button>
-															) : (
-																server.name
-															)}
-														</OverviewMetadataRow>
-														<OverviewMetadataRow
-															label={t("detail.overview.labels.type", {
-																defaultValue: "Type",
-															})}
-														>
-															{server.server_type}
-														</OverviewMetadataRow>
-														{server.auth_mode || isRemoteHttpServer ? (
-															<OverviewMetadataRow
-																label={t("detail.overview.labels.auth", {
-																	defaultValue: "Auth",
-																})}
-															>
-																<ServerAuthBadge
-																	authMode={server.auth_mode}
-																	oauthStatus={authBadgeOAuthStatus}
-																	readiness={authReadiness}
-																	showOff={isRemoteHttpServer}
-																	onAction={handleAuthAction}
-																/>
-															</OverviewMetadataRow>
-														) : null}
-														{protocolVersion ? (
-															<OverviewMetadataRow
-																label={t("detail.overview.labels.protocol", {
-																	defaultValue: "Protocol",
-																})}
-															>
-																{protocolVersion}
-															</OverviewMetadataRow>
-														) : null}
-														{serverVersion ? (
-															<OverviewMetadataRow
-																label={t("detail.overview.labels.version", {
-																	defaultValue: "Version",
-																})}
-															>
-																{serverVersion}
-															</OverviewMetadataRow>
-														) : null}
-														{serverCategory ? (
-															<OverviewMetadataRow
-																label={t("detail.overview.labels.category", {
-																	defaultValue: "Category",
-																})}
-															>
-																<span className="text-slate-600 dark:text-slate-300">
-																	{serverCategory}
-																</span>
-															</OverviewMetadataRow>
-														) : null}
-														{serverScenario ? (
-															<OverviewMetadataRow
-																label={t("detail.overview.labels.scenario", {
-																	defaultValue: "Scenario",
-																})}
-															>
-																<span className="text-slate-600 dark:text-slate-300">
-																	{serverScenario}
-																</span>
-															</OverviewMetadataRow>
-														) : null}
-														{server.command ? (
-															<OverviewMetadataRow
-																label={t("detail.overview.labels.command", {
-																	defaultValue: "Command",
-																})}
-																multiline
-															>
-																<span className="break-all">
-																	{server.command}
-																</span>
-															</OverviewMetadataRow>
-														) : null}
-														<OverviewMetadataRow
-															label={t("detail.overview.labels.repository", {
-																defaultValue: "Repository",
-															})}
-														>
-															—
-														</OverviewMetadataRow>
-													</div>
-												</div>
-												<ButtonGroup className="ml-auto flex-shrink-0 flex-nowrap self-start">
-													<Button
-														size="sm"
-														variant="outline"
-														onClick={() => toggleServerM.mutate(!serverEnabled)}
-														disabled={toggleServerM.isPending}
-														className={overviewActionButtonClass}
-													>
-														{serverEnabled ? (
-															<>
-																<PowerOff className="h-4 w-4" />
-																{t("detail.actions.disable", {
-																	defaultValue: "Disable",
-																})}
-															</>
-														) : (
-															<>
-																<Power className="h-4 w-4" />
-																{t("detail.actions.enable", {
-																	defaultValue: "Enable",
-																})}
-															</>
-														)}
-													</Button>
-													<Button
-														size="sm"
-														variant="destructive"
-														onClick={() => setIsDeleteOpen(true)}
-														disabled={deleteServerM.isPending}
-														className={overviewActionButtonClass}
-													>
-														<Trash2 className="h-4 w-4" />
-														{t("detail.actions.delete", {
-															defaultValue: "Delete",
-														})}
-													</Button>
-												</ButtonGroup>
-											</div>
-										</div>
-									</CardContent>
-								</Card>
-
-								<Card>
-									<CardHeader>
-										<CardTitle>
-											{t("detail.instances.title", {
-												count: server.instances?.length || 0,
-												defaultValue: "Instances ({{count}})",
-											})}
-										</CardTitle>
-									</CardHeader>
-									<CardContent>
-										{server.instances?.length ? (
-											<CapsuleStripeList>
-												{server.instances.map((i) => (
-													<CapsuleStripeListItem
-														key={i.id}
-														interactive
-														onClick={() =>
-															navigate(
-																`/servers/${encodeURIComponent(serverId)}/instances/${encodeURIComponent(i.id)}`,
-															)
-														}
-													>
-														<div className="font-mono truncate">{i.id}</div>
-														<StatusBadge
-															status={i.status}
-															className="text-xs"
-														/>
-													</CapsuleStripeListItem>
-												))}
-											</CapsuleStripeList>
-										) : (
-											<div className="text-slate-500">
-												{t("detail.instances.empty", {
-													defaultValue: "No instances.",
-												})}
-											</div>
-										)}
-									</CardContent>
-								</Card>
-								{showServerLevelLogs ? (
-									<AuditLogsPanel
-										title={t("detail.logs.title", { defaultValue: "Logs" })}
-										description={t("detail.logs.description", {
-											defaultValue:
-												"Runtime and activity logs related to this server.",
-										})}
-										searchPlaceholder={t("detail.logs.searchPlaceholder", {
-											defaultValue: "Search logs...",
-										})}
-										refreshLabel={t("detail.logs.refresh", {
-											defaultValue: "Refresh Logs",
-										})}
-										loadingLabel={t("detail.logs.loading", {
-											defaultValue: "Loading logs...",
-										})}
-										emptyLabel={t("detail.logs.empty", {
-											defaultValue:
-												"No log entries recorded for this server yet.",
-										})}
-										headers={{
-											timestamp: t("detail.logs.headers.timestamp", {
-												defaultValue: "Timestamp",
-											}),
-											action: t("detail.logs.headers.action", {
-												defaultValue: "Action",
-											}),
-											category: t("detail.logs.headers.category", {
-												defaultValue: "Category",
-											}),
-											status: t("detail.logs.headers.status", {
-												defaultValue: "Status",
-											}),
-											target: t("detail.logs.headers.target", {
-												defaultValue: "Target",
-											}),
-										}}
-										searchValue={logFilter}
-										onSearchChange={setLogFilter}
-										onRefresh={() => void serverLogsQuery.refetch()}
-										rows={filteredServerLogs}
-										isLoading={serverLogsQuery.isLoading}
-										isFetching={serverLogsQuery.isFetching}
-										isPaginationActionLoading={isLogPaginationActionLoading}
-										currentPage={logCurrentPageIndex + 1}
-										hasPreviousPage={logCurrentPageIndex > 0}
-										hasNextPage={Boolean(serverLogsQuery.data?.next_cursor)}
-										itemsPerPage={logPageSize}
-										onItemsPerPageChange={setLogPageSize}
-										onPreviousPage={handleServerLogsPrevPage}
-										onFirstPage={handleServerLogsFirstPage}
-										onNextPage={handleServerLogsNextPage}
-										onLastPage={() => void handleServerLogsLastPage()}
-										expandLabel={t("detail.logs.expand", {
-											defaultValue: "Expand Logs",
-										})}
-										collapseLabel={t("detail.logs.collapse", {
-											defaultValue: "Collapse Logs",
-										})}
+						<div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+							<ServerCapabilityTabsHeader server={server} />
+							<ButtonGroup className="ml-auto flex-shrink-0 flex-nowrap self-start">
+								<Button
+									size="sm"
+									variant="outline"
+									onClick={() => {
+										refreshCapabilitiesMutation.mutate();
+									}}
+									disabled={isOverviewRefreshing}
+									className={overviewActionButtonClass}
+								>
+									<RefreshCw
+										className={`h-4 w-4 ${isOverviewRefreshing ? "animate-spin" : ""}`}
 									/>
-								) : null}
-							</div>
-						)}
-					</TabsContent>
+									{t("detail.actions.refresh", {
+										defaultValue: "Refresh",
+									})}
+								</Button>
+								<Button
+									size="sm"
+									variant={server.namespace_issue ? "warning" : "outline"}
+									onClick={() => setIsEditOpen(true)}
+									className={overviewActionButtonClass}
+								>
+									{server.namespace_issue ? (
+										<Wrench className="h-4 w-4" />
+									) : (
+										<Edit3 className="h-4 w-4" />
+									)}
+									{server.namespace_issue
+										? t("detail.namespaceIssue.action")
+										: t("detail.actions.edit", {
+											defaultValue: "Edit",
+										})}
+								</Button>
+							</ButtonGroup>
+						</div>
 
-					<TabsContent
-						value="capabilities"
-						className={DETAIL_TAB_CONTENT_CLASS}
-					>
-						<ServerCapabilitiesPanel
-							serverId={serverId}
-							server={server}
-							oauthStatus={authBadgeOAuthStatus}
-							authReadiness={authReadiness}
-							enabled={capabilityTab === "capabilities"}
-							enableInspect={enableServerDebug}
-							onAuthenticationAction={handleAuthAction}
-							onViewLogs={() =>
-								navigate(`/audit?server_id=${encodeURIComponent(serverId)}`)
-							}
-							onInspect={(kind, item, capabilityOptions) =>
-								handleInspect(kind, item, capabilityOptions)
-							}
-						/>
-					</TabsContent>
-				</Tabs>
+						<TabsContent value="overview" className={DETAIL_TAB_CONTENT_CLASS}>
+							{isLoading ? (
+								<Card className={DETAIL_OVERVIEW_PINNED_SECTION_CLASS}>
+									<CardContent className="p-4">
+										<div className="h-24 bg-slate-200 dark:bg-slate-800 animate-pulse rounded" />
+									</CardContent>
+								</Card>
+							) : (
+								<div className={DETAIL_OVERVIEW_STACK_CLASS}>
+									<Card className={DETAIL_OVERVIEW_PINNED_SECTION_CLASS}>
+										<CardContent className="p-4">
+											<div className="flex flex-col gap-4">
+												<div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+													<div className="flex flex-wrap items-start gap-4">
+														<CachedAvatar
+															src={primaryIconSrc}
+															alt={primaryIconAlt}
+															fallback={serverDisplayName || "?"}
+															className="text-sm"
+														/>
+														<div
+															className={`min-w-0 flex-1 ${overviewMetadataGridClass}`}
+														>
+															<OverviewMetadataRow
+																label={t("detail.overview.labels.upstreamName")}
+															>
+																{server.server_info?.name?.trim() || "—"}
+															</OverviewMetadataRow>
+															<OverviewMetadataRow
+																label={t("detail.overview.labels.namespace")}
+															>
+																{server.namespace_issue ? (
+																	<Button
+																		type="button"
+																		variant="ghost"
+																		onClick={() => setIsEditOpen(true)}
+																		className="h-auto p-0 font-normal text-inherit hover:bg-transparent hover:text-inherit"
+																	>
+																		{server.name}
+																		<AlertTriangle
+																			className="ml-2 h-4 w-4 text-destructive"
+																			aria-label={t("detail.namespaceIssue.iconLabel")}
+																		/>
+																	</Button>
+																) : (
+																	server.name
+																)}
+															</OverviewMetadataRow>
+															<OverviewMetadataRow
+																label={t("detail.overview.labels.type", {
+																	defaultValue: "Type",
+																})}
+															>
+																{server.server_type}
+															</OverviewMetadataRow>
+															{server.auth_mode || isRemoteHttpServer ? (
+																<OverviewMetadataRow
+																	label={t("detail.overview.labels.auth", {
+																		defaultValue: "Auth",
+																	})}
+																>
+																	<ServerAuthBadge
+																		authMode={server.auth_mode}
+																		oauthStatus={authBadgeOAuthStatus}
+																		readiness={authReadiness}
+																		showOff={isRemoteHttpServer}
+																		onAction={handleAuthAction}
+																	/>
+																</OverviewMetadataRow>
+															) : null}
+															{protocolVersion ? (
+																<OverviewMetadataRow
+																	label={t("detail.overview.labels.protocol", {
+																		defaultValue: "Protocol",
+																	})}
+																>
+																	{protocolVersion}
+																</OverviewMetadataRow>
+															) : null}
+															{serverVersion ? (
+																<OverviewMetadataRow
+																	label={t("detail.overview.labels.version", {
+																		defaultValue: "Version",
+																	})}
+																>
+																	{serverVersion}
+																</OverviewMetadataRow>
+															) : null}
+															{serverCategory ? (
+																<OverviewMetadataRow
+																	label={t("detail.overview.labels.category", {
+																		defaultValue: "Category",
+																	})}
+																>
+																	<span className="text-slate-600 dark:text-slate-300">
+																		{serverCategory}
+																	</span>
+																</OverviewMetadataRow>
+															) : null}
+															{serverScenario ? (
+																<OverviewMetadataRow
+																	label={t("detail.overview.labels.scenario", {
+																		defaultValue: "Scenario",
+																	})}
+																>
+																	<span className="text-slate-600 dark:text-slate-300">
+																		{serverScenario}
+																	</span>
+																</OverviewMetadataRow>
+															) : null}
+															{server.command ? (
+																<OverviewMetadataRow
+																	label={t("detail.overview.labels.command", {
+																		defaultValue: "Command",
+																	})}
+																	multiline
+																>
+																	<span className="break-all">
+																		{server.command}
+																	</span>
+																</OverviewMetadataRow>
+															) : null}
+															<OverviewMetadataRow
+																label={t("detail.overview.labels.repository", {
+																	defaultValue: "Repository",
+																})}
+															>
+																—
+															</OverviewMetadataRow>
+														</div>
+													</div>
+													<ButtonGroup className="ml-auto flex-shrink-0 flex-nowrap self-start">
+														<Button
+															size="sm"
+															variant="outline"
+															onClick={() => toggleServerM.mutate(!serverEnabled)}
+															disabled={toggleServerM.isPending}
+															className={overviewActionButtonClass}
+														>
+															{serverEnabled ? (
+																<>
+																	<PowerOff className="h-4 w-4" />
+																	{t("detail.actions.disable", {
+																		defaultValue: "Disable",
+																	})}
+																</>
+															) : (
+																<>
+																	<Power className="h-4 w-4" />
+																	{t("detail.actions.enable", {
+																		defaultValue: "Enable",
+																	})}
+																</>
+															)}
+														</Button>
+														<Button
+															size="sm"
+															variant="destructive"
+															onClick={() => setIsDeleteOpen(true)}
+															disabled={deleteServerM.isPending}
+															className={overviewActionButtonClass}
+														>
+															<Trash2 className="h-4 w-4" />
+															{t("detail.actions.delete", {
+																defaultValue: "Delete",
+															})}
+														</Button>
+													</ButtonGroup>
+												</div>
+											</div>
+										</CardContent>
+									</Card>
+
+									<Card className={DETAIL_OVERVIEW_PINNED_SECTION_CLASS}>
+										<CardHeader>
+											<CardTitle>
+												{t("detail.instances.title", {
+													count: server.instances?.length || 0,
+													defaultValue: "Instances ({{count}})",
+												})}
+											</CardTitle>
+										</CardHeader>
+										<CardContent>
+											{server.instances?.length ? (
+												<CapsuleStripeList>
+													{server.instances.map((i) => (
+														<CapsuleStripeListItem
+															key={i.id}
+															interactive
+															onClick={() =>
+																navigate(
+																	`/servers/${encodeURIComponent(serverId)}/instances/${encodeURIComponent(i.id)}`,
+																)
+															}
+														>
+															<div className="font-mono truncate">{i.id}</div>
+															<StatusBadge
+																status={i.status}
+																className="text-xs"
+															/>
+														</CapsuleStripeListItem>
+													))}
+												</CapsuleStripeList>
+											) : (
+												<div className="text-slate-500">
+													{t("detail.instances.empty", {
+														defaultValue: "No instances.",
+													})}
+												</div>
+											)}
+										</CardContent>
+									</Card>
+									{showServerLevelLogs ? (
+										<AuditLogsPanel
+											fillHeight
+											title={t("detail.logs.title", { defaultValue: "Logs" })}
+											description={t("detail.logs.description", {
+												defaultValue:
+													"Runtime and activity logs related to this server.",
+											})}
+											searchPlaceholder={t("detail.logs.searchPlaceholder", {
+												defaultValue: "Search logs...",
+											})}
+											refreshLabel={t("detail.logs.refresh", {
+												defaultValue: "Refresh Logs",
+											})}
+											loadingLabel={t("detail.logs.loading", {
+												defaultValue: "Loading logs...",
+											})}
+											emptyLabel={t("detail.logs.empty", {
+												defaultValue:
+													"No log entries recorded for this server yet.",
+											})}
+											headers={{
+												timestamp: t("detail.logs.headers.timestamp", {
+													defaultValue: "Timestamp",
+												}),
+												action: t("detail.logs.headers.action", {
+													defaultValue: "Action",
+												}),
+												category: t("detail.logs.headers.category", {
+													defaultValue: "Category",
+												}),
+												status: t("detail.logs.headers.status", {
+													defaultValue: "Status",
+												}),
+												target: t("detail.logs.headers.target", {
+													defaultValue: "Target",
+												}),
+											}}
+											searchValue={logFilter}
+											onSearchChange={setLogFilter}
+											onRefresh={() => void serverLogsQuery.refetch()}
+											rows={filteredServerLogs}
+											isLoading={serverLogsQuery.isLoading}
+											isFetching={serverLogsQuery.isFetching}
+											isPaginationActionLoading={isLogPaginationActionLoading}
+											currentPage={logCurrentPageIndex + 1}
+											hasPreviousPage={logCurrentPageIndex > 0}
+											hasNextPage={Boolean(serverLogsQuery.data?.next_cursor)}
+											itemsPerPage={logPageSize}
+											onItemsPerPageChange={setLogPageSize}
+											onPreviousPage={handleServerLogsPrevPage}
+											onFirstPage={handleServerLogsFirstPage}
+											onNextPage={handleServerLogsNextPage}
+											onLastPage={() => void handleServerLogsLastPage()}
+											expandLabel={t("detail.logs.expand", {
+												defaultValue: "Expand Logs",
+											})}
+											collapseLabel={t("detail.logs.collapse", {
+												defaultValue: "Collapse Logs",
+											})}
+										/>
+									) : null}
+								</div>
+							)}
+						</TabsContent>
+
+						<TabsContent
+							value="capabilities"
+							className={DETAIL_TAB_CONTENT_CLASS}
+						>
+							<ServerCapabilitiesPanel
+								serverId={serverId}
+								server={server}
+								oauthStatus={authBadgeOAuthStatus}
+								authReadiness={authReadiness}
+								enabled={capabilityTab === "capabilities"}
+								enableInspect={enableServerDebug}
+								onAuthenticationAction={handleAuthAction}
+								onViewLogs={() =>
+									navigate(`/audit?server_id=${encodeURIComponent(serverId)}`)
+								}
+								onInspect={(kind, item, capabilityOptions) =>
+									handleInspect(kind, item, capabilityOptions)
+								}
+							/>
+						</TabsContent>
+					</Tabs>
+				</div>
 			)}
 			<InspectorDrawer
 				open={!!inspector}
@@ -1453,22 +1457,22 @@ function resolveCapabilityAuthenticationNotice({
 			case "unauthorized":
 				return isOAuth
 					? {
-							title: t(
-								"detail.capabilityList.authentication.oauthRequired.title",
-								{ defaultValue: "OAuth authorization required" },
-							),
-							description: t(
-								"detail.capabilityList.authentication.oauthRequired.description",
-								{
-									defaultValue:
-										"Authorize this server before discovering its capabilities.",
-								},
-							),
-							action: t(
-								"detail.capabilityList.authentication.oauthRequired.action",
-								{ defaultValue: "Authorize" },
-							),
-						}
+						title: t(
+							"detail.capabilityList.authentication.oauthRequired.title",
+							{ defaultValue: "OAuth authorization required" },
+						),
+						description: t(
+							"detail.capabilityList.authentication.oauthRequired.description",
+							{
+								defaultValue:
+									"Authorize this server before discovering its capabilities.",
+							},
+						),
+						action: t(
+							"detail.capabilityList.authentication.oauthRequired.action",
+							{ defaultValue: "Authorize" },
+						),
+					}
 					: hasHeaderAuth
 						? {
 							title: t(
@@ -1488,22 +1492,22 @@ function resolveCapabilityAuthenticationNotice({
 							),
 						}
 						: {
-								title: t(
-									"detail.capabilityList.authentication.required.title",
-									{ defaultValue: "Authentication required" },
-								),
-								description: t(
-									"detail.capabilityList.authentication.required.description",
-									{
-										defaultValue:
-											"Configure authentication before discovering this server's capabilities.",
-									},
-								),
-								action: t(
-									"detail.capabilityList.authentication.required.action",
-									{ defaultValue: "Edit authentication" },
-								),
-							};
+							title: t(
+								"detail.capabilityList.authentication.required.title",
+								{ defaultValue: "Authentication required" },
+							),
+							description: t(
+								"detail.capabilityList.authentication.required.description",
+								{
+									defaultValue:
+										"Configure authentication before discovering this server's capabilities.",
+								},
+							),
+							action: t(
+								"detail.capabilityList.authentication.required.action",
+								{ defaultValue: "Edit authentication" },
+							),
+						};
 			case "forbidden":
 				return {
 					title: t(
