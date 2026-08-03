@@ -25,9 +25,6 @@ export const serversTranslations = {
 		},
 		actions: {
 			debug: {
-				title: "Inspect",
-				show: "Inspect",
-				hide: "Hide Inspect",
 				open: "Open inspect view",
 			},
 			refresh: {
@@ -114,16 +111,6 @@ export const serversTranslations = {
 		},
 		errors: {
 			loadFailed: "Failed to load servers",
-		},
-		debug: {
-			cardTitle: "Inspect Details",
-			close: "Close",
-			info: {
-				baseUrl: "API Base URL",
-				currentTime: "Current Time",
-				error: "Error",
-				data: "Servers Data",
-			},
 		},
 		entity: {
 			tags: {
@@ -1067,9 +1054,6 @@ export const serversTranslations = {
 		},
 		actions: {
 			debug: {
-				title: "检视",
-				show: "检视",
-				hide: "隐藏检视",
 				open: "打开检视视图",
 			},
 			refresh: {
@@ -1152,16 +1136,6 @@ export const serversTranslations = {
 		},
 		errors: {
 			loadFailed: "加载服务器失败",
-		},
-		debug: {
-			cardTitle: "检视详情",
-			close: "关闭",
-			info: {
-				baseUrl: "API 基础地址",
-				currentTime: "当前时间",
-				error: "错误",
-				data: "服务器数据",
-			},
 		},
 		entity: {
 			tags: {
@@ -2045,9 +2019,6 @@ export const serversTranslations = {
 		},
 		actions: {
 			debug: {
-				title: "検査",
-				show: "検査",
-				hide: "検査を隠す",
 				open: "検査ビューを開く",
 			},
 			refresh: {
@@ -2136,16 +2107,6 @@ export const serversTranslations = {
 		},
 		errors: {
 			loadFailed: "サーバーの読み込みに失敗しました",
-		},
-		debug: {
-			cardTitle: "検査情報",
-			close: "閉じる",
-			info: {
-				baseUrl: "API ベース URL",
-				currentTime: "現在時刻",
-				error: "エラー",
-				data: "サーバーデータ",
-			},
 		},
 		entity: {
 			tags: {

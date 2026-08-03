@@ -1,11 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, RefreshCw, Server } from "lucide-react";
+import { RefreshCw, Server } from "lucide-react";
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
 import { ConfirmDialog } from "../../components/confirm-dialog";
-import { ErrorDisplay } from "../../components/error-display";
 import { ListGridContainer } from "../../components/list-grid-container";
 import {
 	EmptyState,
@@ -22,7 +21,6 @@ import {
 	Card,
 	CardContent,
 	CardHeader,
-	CardTitle,
 } from "../../components/ui/card";
 // Dropdown removed in favor of a single combined add flow
 import {
@@ -66,11 +64,11 @@ export function ServerListPage() {
 	usePageTranslations("servers");
 	const { t, i18n } = useTranslation("servers");
 	const navigate = useNavigate();
-	const [debugInfo, setDebugInfo] = useState<string | null>(null);
 	const [manualOpen, setManualOpen] = useState(false);
 	const [pendingIngestPayload, setPendingIngestPayload] =
 		useState<ServerIngestPayload | null>(null);
 	const manualRef = useRef<ServerInstallManualFormHandle | null>(null);
+	const hasNotifiedServerListErrorRef = useRef(false);
 	const [editingServer, setEditingServer] = useState<ServerDetail | null>(null);
 	const [deletingServer, setDeletingServer] = useState<string | null>(null);
 	const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
@@ -226,17 +224,12 @@ export function ServerListPage() {
 		queryKey: ["servers"],
 		queryFn: async () => {
 			try {
-				// Append inspect information
 				console.log("Fetching servers...");
 				const result = await serversApi.getAll();
 				console.log("Servers fetched:", result);
 				return result;
 			} catch (err) {
 				console.error("Error fetching servers:", err);
-				// Capture error information for display
-				setDebugInfo(
-					err instanceof Error ? `${err.message}\n\n${err.stack}` : String(err),
-				);
 				throw err;
 			}
 		},
@@ -250,6 +243,22 @@ export function ServerListPage() {
 		refetchIntervalInBackground: true,
 		retry: 1, // Reduce retry count to show errors more quickly
 	});
+
+	React.useEffect(() => {
+		if (!isError || !error) {
+			hasNotifiedServerListErrorRef.current = false;
+			return;
+		}
+		if (hasNotifiedServerListErrorRef.current) {
+			return;
+		}
+
+		hasNotifiedServerListErrorRef.current = true;
+		notifyError(
+			t("errors.loadFailed", { defaultValue: "Failed to load servers" }),
+			error.message,
+		);
+	}, [error, i18n.language, isError, t]);
 
 	React.useEffect(() => {
 		if (sortedServers.length === 0 && serverData?.servers) {
@@ -563,21 +572,6 @@ export function ServerListPage() {
 		[navigate, openDebugInNewWindow],
 	);
 
-	// Add inspect button handler
-	const toggleDebugInfo = () => {
-		if (debugInfo) {
-			setDebugInfo(null);
-		} else {
-			const debugLines = [
-				`${t("debug.info.baseUrl", { defaultValue: "API Base URL" })}: ${window.location.origin}`,
-				`${t("debug.info.currentTime", { defaultValue: "Current Time" })}: ${new Date().toLocaleString()}`,
-				`${t("debug.info.error", { defaultValue: "Error" })}: ${error instanceof Error ? error.message : String(error)}`,
-				`${t("debug.info.data", { defaultValue: "Servers Data" })}: ${JSON.stringify(serverData, null, 2)}`,
-			];
-			setDebugInfo(debugLines.join("\n"));
-		}
-	};
-
 	// Use sorted data
 	const filteredAndSortedServers = useMemo(() => {
 		return sortedServers;
@@ -735,17 +729,6 @@ export function ServerListPage() {
 	// Action buttons
 	const actions = (
 		<div className="flex items-center gap-2">
-			{isError && enableServerDebug && (
-				<Button
-					onClick={toggleDebugInfo}
-					variant="outline"
-					size="sm"
-					className="h-9 w-9 p-0"
-					title={t("actions.debug.title", { defaultValue: "Inspect" })}
-				>
-					<AlertCircle className="h-4 w-4" />
-				</Button>
-			)}
 			<Button
 				onClick={() => refetch()}
 				disabled={isRefetching}
@@ -811,51 +794,6 @@ export function ServerListPage() {
 			}
 			statsCards={<StatsCards cards={statsCards} />}
 		>
-			{isError && enableServerDebug && (
-				<Button onClick={toggleDebugInfo} variant="outline" size="sm">
-					<AlertCircle className="mr-2 h-4 w-4" />
-					{debugInfo
-						? t("actions.debug.hide", { defaultValue: "Hide Inspect" })
-						: t("actions.debug.show", { defaultValue: "Inspect" })}
-				</Button>
-			)}
-
-			{/* Display error information */}
-			{isError && (
-				<ErrorDisplay
-					title={t("errors.loadFailed", {
-						defaultValue: "Failed to load servers",
-					})}
-					error={error as Error}
-					onRetry={() => refetch()}
-				/>
-			)}
-
-			{/* Display inspect information */}
-			{debugInfo && (
-				<Card className="overflow-hidden">
-					<CardHeader className="bg-slate-100 dark:bg-slate-800 p-4">
-						<CardTitle className="text-lg flex justify-between">
-							{t("debug.cardTitle", {
-								defaultValue: "Inspect Details",
-							})}
-							<Button
-								onClick={() => setDebugInfo(null)}
-								variant="ghost"
-								size="sm"
-							>
-								{t("debug.close", { defaultValue: "Close" })}
-							</Button>
-						</CardTitle>
-					</CardHeader>
-					<CardContent className="p-4">
-						<pre className="whitespace-pre-wrap text-xs overflow-auto max-h-96">
-							{debugInfo}
-						</pre>
-					</CardContent>
-				</Card>
-			)}
-
 			<div className="min-h-0 flex-1">
 				<ListGridContainer
 					loading={isLoading}
