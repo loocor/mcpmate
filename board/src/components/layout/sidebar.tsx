@@ -87,10 +87,7 @@ export function Sidebar() {
                 )}
               />
               <span className="shrink-0 whitespace-nowrap font-bold text-xl text-foreground">
-                {t("layout.brand", { defaultValue: "MCPMate" })}{" "}
-                <sup className="text-[9px] text-muted-foreground">
-                  {t("layout.alpha", { defaultValue: "Beta" })}
-                </sup>
+                {t("layout.brand", { defaultValue: "MCPMate" })}
               </span>
               <Button
                 variant="ghost"

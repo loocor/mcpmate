@@ -52,10 +52,11 @@ describe("clients translations", () => {
 		const values = {
 			identifier: "claude_desktop",
 			displayName: "Claude Desktop",
-			configFileChoice: "without_config_file",
+			configFileChoice: "without_config_file" as const,
+			mergeStrategySelection: "deep_merge" as const,
 			supportedTransports: [],
-			configFileParseFormat: "json",
-			configFileParseContainerType: "standard",
+			configFileParseFormat: "json" as const,
+			configFileParseContainerType: "standard" as const,
 		};
 
 		const createResult = createClientFormSchema(echoT, "create").safeParse(values);

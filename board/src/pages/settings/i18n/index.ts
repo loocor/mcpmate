@@ -425,7 +425,7 @@ export const settingsTranslations = {
     about: {
       title: "About MCPMate",
       description:
-        "Open-source acknowledgements for the MCPMate preview build.",
+        "Open-source acknowledgements for MCPMate.",
       lastUpdated: "Last updated: {{date}}",
       backendTitle: "Backend (Rust workspace)",
       desktopShellTitle: "Desktop Shell (Tauri)",
@@ -895,7 +895,7 @@ export const settingsTranslations = {
     },
     about: {
       title: "关于 MCPMate",
-      description: "MCPMate 预览版本的开源致谢信息。",
+      description: "MCPMate 的开源致谢。",
       lastUpdated: "最后更新：{{date}}",
       backendTitle: "后端 (Rust 工作区)",
       desktopShellTitle: "桌面外壳 (Tauri)",
@@ -1401,7 +1401,7 @@ export const settingsTranslations = {
     },
     about: {
       title: "MCPMate について",
-      description: "MCPMate プレビュービルドのオープンソース謝辞。",
+      description: "MCPMate のオープンソース謝辞。",
       lastUpdated: "最終更新：{{date}}",
       backendTitle: "バックエンド (Rust ワークスペース)",
       desktopShellTitle: "デスクトップシェル (Tauri)",
