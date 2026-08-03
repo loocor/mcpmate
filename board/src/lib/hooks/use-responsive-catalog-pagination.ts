@@ -45,7 +45,7 @@ export function paginateCatalogItems<T>(
 	return items.slice(start, start + pageSize);
 }
 
-function getGridColumnCount(): number {
+function getCatalogGridColumnCount(): number {
 	if (typeof window === "undefined") {
 		return 1;
 	}
@@ -56,6 +56,23 @@ function getGridColumnCount(): number {
 		return 2;
 	}
 	return 1;
+}
+
+/** Responsive grid column count for catalog and market card grids (`md:2`, `xl:3`). */
+export { getCatalogGridColumnCount };
+
+export function useCatalogGridColumnCount(): number {
+	const [gridColumnCount, setGridColumnCount] = useState(getCatalogGridColumnCount);
+
+	useEffect(() => {
+		const updateColumnCount = () =>
+			setGridColumnCount(getCatalogGridColumnCount());
+
+		window.addEventListener("resize", updateColumnCount);
+		return () => window.removeEventListener("resize", updateColumnCount);
+	}, []);
+
+	return gridColumnCount;
 }
 
 interface ResponsiveCatalogPagination<T> {
@@ -79,21 +96,14 @@ export function useResponsiveCatalogPagination<T>(
 	isDataReady = true,
 ): ResponsiveCatalogPagination<T> {
 	const [searchParams] = useSearchParams();
+	const gridColumnCount = useCatalogGridColumnCount();
 	const [requestedPage, setRequestedPage] = useUrlState({
 		paramName: "page",
 		defaultValue: 1,
 		validate: isValidPageParam,
 		deserialize: Number,
 	});
-	const [gridColumnCount, setGridColumnCount] = useState(getGridColumnCount);
 	const [selectedPageSize, setSelectedPageSize] = useState<number | null>(null);
-
-	useEffect(() => {
-		const updateColumnCount = () => setGridColumnCount(getGridColumnCount());
-
-		window.addEventListener("resize", updateColumnCount);
-		return () => window.removeEventListener("resize", updateColumnCount);
-	}, []);
 
 	const responsivePageSize = getCatalogPageSize(viewMode, gridColumnCount);
 	const pageSize = selectedPageSize ?? responsivePageSize;
