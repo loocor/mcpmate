@@ -19,7 +19,6 @@ use crate::{
         server::{ServerType, TransportType},
         sync::SyncHelper,
     },
-    core::capability::ConnectionSelection,
     core::{
         events,
         foundation::types::{
@@ -284,48 +283,8 @@ impl UpstreamConnectionPool {
         self.connect_internal(server_id, instance_id).await
     }
 
-    /// Ensure a server has at least one connected instance and return its instance_id.
-    ///
-    /// **Note**: This method uses `AffinityKey::Default` and bypasses affinity-aware routing.
-    /// For production routing, use `ensure_connected_with_selection()` with a proper
-    /// `ConnectionSelection` derived from `ClientContext::connection_selection()`.
-    pub async fn ensure_connected(
-        &mut self,
-        server_id: &str,
-    ) -> Result<String> {
-        let selection = ConnectionSelection {
-            server_id: server_id.to_string(),
-            affinity_key: crate::core::capability::AffinityKey::Default,
-        };
-        self.ensure_connected_with_selection(&selection).await
-    }
-
-    /// Ensure a connection exists for a production route using affinity-aware routing.
-    ///
-    /// This method implements the full production routing lifecycle:
-    /// 1. Check if a route already exists via `resolve_production_route`
-    /// 2. If exists and instance is ready, return the instance_id
-    /// 3. If not, allocate a new route via `allocate_production_route`
-    /// 4. Establish the connection via `connect_internal`
-    pub async fn ensure_connected_with_selection(
-        &mut self,
-        selection: &ConnectionSelection,
-    ) -> Result<String> {
-        if let Some(instance_id) = self.resolve_production_route(selection) {
-            if let Ok(Some(ready_id)) = self.select_ready_instance_id(selection) {
-                if ready_id == instance_id {
-                    return Ok(instance_id);
-                }
-            }
-        }
-
-        let instance_id = self.allocate_production_route(selection);
-        self.connect_internal(&selection.server_id, &instance_id).await?;
-        Ok(instance_id)
-    }
-
     /// Internal connection logic
-    async fn connect_internal(
+    pub(crate) async fn connect_internal(
         &mut self,
         server_id: &str,
         instance_id: &str,
@@ -360,6 +319,9 @@ impl UpstreamConnectionPool {
             .ok_or_else(|| anyhow::anyhow!("Server '{}' not found in configuration", server_id))?
             .clone();
         let config_fingerprint = server_config.source_fingerprint.clone();
+        let runtime_config = self.runtime_server_config(server_id)?;
+        let runtime_fingerprint =
+            crate::config::server::fingerprint::materialized_runtime_fingerprint(&runtime_config)?;
 
         // Update connection status to initializing
         {
@@ -369,8 +331,8 @@ impl UpstreamConnectionPool {
 
         // Connect based on server type using enum matching (strict type safety)
         let result = match server_config.kind {
-            ServerType::Stdio => self.connect_stdio(server_id, instance_id).await,
-            ServerType::Sse | ServerType::StreamableHttp => self.connect_http(server_id, instance_id).await,
+            ServerType::Stdio => self.connect_stdio(server_id, instance_id, true).await,
+            ServerType::Sse | ServerType::StreamableHttp => self.connect_http(server_id, instance_id, true).await,
         };
 
         // Handle connection result
@@ -384,6 +346,7 @@ impl UpstreamConnectionPool {
                 self.clear_failure_state(server_id);
                 if let Ok(conn) = self.get_instance_mut(server_id, instance_id) {
                     conn.config_fingerprint = config_fingerprint;
+                    conn.runtime_fingerprint = Some(runtime_fingerprint);
                     conn.reset_connection_attempts();
                 }
                 // Publish success event via unified outlet
@@ -439,15 +402,19 @@ impl UpstreamConnectionPool {
             .ok_or_else(|| anyhow::anyhow!("Server '{}' not found in configuration", server_id))?
             .clone();
         let config_fingerprint = server_config.source_fingerprint.clone();
+        let runtime_config = self.runtime_server_config(server_id)?;
+        let runtime_fingerprint =
+            crate::config::server::fingerprint::materialized_runtime_fingerprint(&runtime_config)?;
         let result = match server_config.kind {
-            ServerType::Stdio => self.connect_stdio(server_id, instance_id).await,
-            ServerType::Sse | ServerType::StreamableHttp => self.connect_http(server_id, instance_id).await,
+            ServerType::Stdio => self.connect_stdio(server_id, instance_id, false).await,
+            ServerType::Sse | ServerType::StreamableHttp => self.connect_http(server_id, instance_id, false).await,
         };
 
         match result {
             Ok(()) => {
                 let connection = self.get_instance_mut(server_id, instance_id)?;
                 connection.config_fingerprint = config_fingerprint;
+                connection.runtime_fingerprint = Some(runtime_fingerprint);
                 connection.reset_connection_attempts();
                 Ok(())
             }
@@ -467,11 +434,64 @@ impl UpstreamConnectionPool {
         }
     }
 
+    /// Connect the transport for a detached production startup worker.
+    ///
+    /// Unlike the health variant this retains the database reference so the
+    /// normal connection side effects (namespace repair, server meta updates)
+    /// still run. The worker never publishes startup events; the coordinator
+    /// publishes exactly once after conditional publication.
+    pub(crate) async fn connect_transport_for_startup(
+        &mut self,
+        server_id: &str,
+        instance_id: &str,
+    ) -> Result<()> {
+        let server_config = self
+            .config
+            .mcp_servers
+            .get(server_id)
+            .ok_or_else(|| anyhow::anyhow!("Server '{}' not found in configuration", server_id))?
+            .clone();
+        let config_fingerprint = server_config.source_fingerprint.clone();
+        let runtime_config = self.runtime_server_config(server_id)?;
+        let runtime_fingerprint =
+            crate::config::server::fingerprint::materialized_runtime_fingerprint(&runtime_config)?;
+        let result = match server_config.kind {
+            ServerType::Stdio => self.connect_stdio(server_id, instance_id, false).await,
+            ServerType::Sse | ServerType::StreamableHttp => self.connect_http(server_id, instance_id, false).await,
+        };
+
+        match result {
+            Ok(()) => {
+                let connection = self.get_instance_mut(server_id, instance_id)?;
+                connection.config_fingerprint = config_fingerprint;
+                connection.runtime_fingerprint = Some(runtime_fingerprint);
+                connection.reset_connection_attempts();
+                Ok(())
+            }
+            Err(error) => {
+                let requires_manual_intervention =
+                    crate::core::capability::connection_provider::PoolCapabilityConnectionProvider::authentication_failure_code(
+                        &error,
+                    )
+                    .is_some();
+                let connection = self.get_instance_mut(server_id, instance_id)?;
+                let message = format!("Connection failed: {error}");
+                if requires_manual_intervention {
+                    connection.update_permanent_error(message);
+                } else {
+                    connection.update_failed(message);
+                }
+                Err(error)
+            }
+        }
+    }
+
     /// Connect to stdio server
     async fn connect_stdio(
         &mut self,
         server_id: &str,
         instance_id: &str,
+        sync_capabilities: bool,
     ) -> Result<()> {
         let server_config = self.runtime_server_config(server_id)?;
 
@@ -500,8 +520,15 @@ impl UpstreamConnectionPool {
         .await?;
 
         // Update connection with service
-        self.update_connection(server_id, instance_id, service, tools, capabilities)
-            .await?;
+        self.update_connection_with_capability_sync(
+            server_id,
+            instance_id,
+            service,
+            tools,
+            capabilities,
+            sync_capabilities,
+        )
+        .await?;
 
         // Update process ID if available
         if let Some(pid) = process_id {
@@ -561,6 +588,7 @@ impl UpstreamConnectionPool {
         &mut self,
         server_id: &str,
         instance_id: &str,
+        sync_capabilities: bool,
     ) -> Result<()> {
         let server_config = self.runtime_server_config(server_id)?;
 
@@ -594,7 +622,7 @@ impl UpstreamConnectionPool {
             tracing::debug!("[HTTP CLIENT][no-reuse] server_id={} (HTTP)", server_id);
         }
 
-        self.connect_with_transport(server_id, instance_id, server_config, move |label, config| {
+        let connect = move |label: String, config: crate::core::models::MCPServerConfig| {
             let client_opt = client_opt.clone();
             async move {
                 // If server has default headers, use a per-server client with those headers
@@ -644,8 +672,10 @@ impl UpstreamConnectionPool {
                     connect_http_server(&label, &config, TransportType::StreamableHttp).await
                 }
             }
-        })
-        .await
+        };
+
+        self.connect_with_transport(server_id, instance_id, server_config, sync_capabilities, connect)
+            .await
     }
 
     async fn connect_with_transport<F, Fut>(
@@ -653,6 +683,7 @@ impl UpstreamConnectionPool {
         server_id: &str,
         instance_id: &str,
         server_config: crate::core::models::MCPServerConfig,
+        sync_capabilities: bool,
         connect_fn: F,
     ) -> Result<()>
     where
@@ -668,8 +699,15 @@ impl UpstreamConnectionPool {
         // Build a friendly label for transport-layer logging: "name (id)" or just id
         let label = crate::core::capability::resolver::label_by_id(server_id).await;
         let (service, tools, capabilities) = connect_fn(label, server_config).await?;
-        self.update_connection(server_id, instance_id, service, tools, capabilities)
-            .await?;
+        self.update_connection_with_capability_sync(
+            server_id,
+            instance_id,
+            service,
+            tools,
+            capabilities,
+            sync_capabilities,
+        )
+        .await?;
         Ok(())
     }
 
@@ -830,6 +868,19 @@ impl UpstreamConnectionPool {
         tools: Vec<Tool>,
         capabilities: Option<rmcp::model::ServerCapabilities>,
     ) -> Result<()> {
+        self.update_connection_with_capability_sync(server_id, instance_id, service, tools, capabilities, true)
+            .await
+    }
+
+    async fn update_connection_with_capability_sync(
+        &mut self,
+        server_id: &str,
+        instance_id: &str,
+        service: crate::core::transport::ClientService,
+        tools: Vec<Tool>,
+        capabilities: Option<rmcp::model::ServerCapabilities>,
+        sync_capabilities: bool,
+    ) -> Result<()> {
         let service = Arc::new(service);
         let conn = self
             .get_instance_mut(server_id, instance_id)
@@ -840,6 +891,7 @@ impl UpstreamConnectionPool {
         service.service().set_server_id(server_id);
         conn.service = Some(service.clone());
         conn.tools = tools.clone();
+        conn.startup_tools_pending = true;
         conn.capabilities = capabilities.clone();
         conn.update_ready();
 
@@ -857,6 +909,7 @@ impl UpstreamConnectionPool {
             service,
             tools,
             capabilities,
+            sync_capabilities,
         )
         .await
     }
@@ -868,6 +921,7 @@ impl UpstreamConnectionPool {
         service: Arc<crate::core::transport::ClientService>,
         tools: Vec<Tool>,
         capabilities: Option<ServerCapabilities>,
+        sync_capabilities: bool,
     ) -> Result<()> {
         let Some(database) = database else {
             return Ok(());
@@ -905,16 +959,44 @@ impl UpstreamConnectionPool {
 
         let supports_resources = capabilities.as_ref().and_then(|caps| caps.resources.as_ref()).is_some();
         let supports_prompts = capabilities.as_ref().and_then(|caps| caps.prompts.as_ref()).is_some();
-        Self::spawn_database_sync_task(
-            database,
-            server_id,
-            instance_id,
-            tools,
-            service.peer().clone(),
-            supports_resources,
-            supports_prompts,
-        );
+        if sync_capabilities {
+            Self::spawn_database_sync_task(
+                database,
+                server_id,
+                instance_id,
+                tools,
+                service.peer().clone(),
+                supports_resources,
+                supports_prompts,
+            );
+        }
         Ok(())
+    }
+
+    pub(crate) fn spawn_coordinated_capability_sync(
+        database: Option<Arc<crate::config::database::Database>>,
+        pool: Arc<tokio::sync::Mutex<Self>>,
+        server_id: String,
+    ) {
+        let Some(database) = database else {
+            return;
+        };
+        tokio::spawn(async move {
+            let service = crate::core::capability::read_service::CapabilityReadService::from_runtime(database, pool);
+            if let Err(error) = service
+                .list_all_kinds(
+                    &server_id,
+                    Some(crate::core::capability::runtime::RefreshStrategy::Force),
+                )
+                .await
+            {
+                tracing::error!(
+                    server_id = %server_id,
+                    error = %error,
+                    "Coordinated capability sync failed after production startup"
+                );
+            }
+        });
     }
 
     /// Spawn database sync operations in background task
@@ -1093,64 +1175,6 @@ impl UpstreamConnectionPool {
         }
     }
 
-    /// Update server status in the connection pool
-    ///
-    /// This is a unified interface for managing server status:
-    /// - If enabled=true: Loads latest config, creates connection, and connects
-    /// - If enabled=false: Disconnects all instances and removes from pool
-    pub async fn update_server_status(
-        &mut self,
-        server_id: &str,
-        enabled: bool,
-    ) -> Result<()> {
-        if enabled {
-            self.enable_server(server_id).await
-        } else {
-            self.disable_server(server_id).await
-        }
-    }
-
-    /// Enable and start a server.
-    ///
-    /// This is an admin/control-plane operation that creates a shared connection.
-    /// Production routing will use `ensure_connected_with_selection()` with proper affinity.
-    pub async fn enable_server(
-        &mut self,
-        server_id: &str,
-    ) -> Result<()> {
-        let db = self
-            .database
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Database connection not available"))?;
-
-        crate::config::server::namespace_repair::ensure_canonical_namespace_before_exposure(&db.pool, server_id)
-            .await?;
-
-        let config = crate::core::foundation::loader::load_pool_base_config(db, self.secret_store.clone()).await?;
-
-        let Some(_server_config) = config.mcp_servers.get(server_id) else {
-            return Err(anyhow::anyhow!(
-                "Server '{}' not found in pool base configuration",
-                server_id
-            ));
-        };
-
-        self.set_config(Arc::new(config))?;
-
-        if !self.connections.contains_key(server_id) {
-            let connection = crate::core::pool::UpstreamConnection::new(server_id.to_string());
-            let instance_id = connection.id.clone();
-            let instances = self.connections.entry(server_id.to_string()).or_default();
-            instances.insert(instance_id.clone(), connection);
-        }
-
-        let instance_id = self.get_default_instance_id(server_id)?;
-        self.connect_internal(server_id, &instance_id).await?;
-
-        tracing::info!("Server '{}' enabled and started", server_id);
-        Ok(())
-    }
-
     /// Disable and stop a server
     pub async fn disable_server(
         &mut self,
@@ -1177,16 +1201,32 @@ impl UpstreamConnectionPool {
             return Ok(());
         }
 
-        // Disconnect all instances
-        self.disconnect_all_instances(server_id).await;
+        self.disable_server_runtime(server_id).await;
 
+        tracing::info!("Server '{}' disabled in all active profile and stopped", server_id);
+        Ok(())
+    }
+
+    /// Remove every runtime owner for a globally disabled server.
+    pub(crate) async fn disable_server_globally(
+        &mut self,
+        server_id: &str,
+    ) -> (usize, usize) {
+        self.disable_server_runtime(server_id).await
+    }
+
+    async fn disable_server_runtime(
+        &mut self,
+        server_id: &str,
+    ) -> (usize, usize) {
+        self.invalidate_server_lifecycle(server_id);
+        Arc::make_mut(&mut self.config).mcp_servers.remove(server_id);
+        let disconnected = self.disconnect_all_instances(server_id).await;
         self.connections.remove(server_id);
         self.cancellation_tokens.remove(server_id);
         self.remove_all_client_bound_connections_for_server(server_id);
         self.remove_all_production_routes_for_server(server_id);
-
-        tracing::info!("Server '{}' disabled in all active profile and stopped", server_id);
-        Ok(())
+        disconnected
     }
 
     /// Immediately remove a capability-collision challenger from every
@@ -1226,17 +1266,23 @@ impl UpstreamConnectionPool {
     async fn disconnect_all_instances(
         &mut self,
         server_id: &str,
-    ) {
+    ) -> (usize, usize) {
+        let mut success_count = 0;
+        let mut total_count = 0;
         if let Some(instances) = self.connections.get(server_id) {
             let instance_ids: Vec<String> = instances.keys().cloned().collect();
             for instance_id in instance_ids {
-                if let Err(e) = self.disconnect(server_id, &instance_id).await {
-                    tracing::warn!(
-                        "Failed to disconnect server '{}' instance '{}': {}",
-                        server_id,
-                        instance_id,
-                        e
-                    );
+                total_count += 1;
+                match self.disconnect(server_id, &instance_id).await {
+                    Ok(()) => success_count += 1,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to disconnect server '{}' instance '{}': {}",
+                            server_id,
+                            instance_id,
+                            e
+                        );
+                    }
                 }
             }
         }
@@ -1251,17 +1297,22 @@ impl UpstreamConnectionPool {
             if let Some(instances) = self.client_bound_connections.get(&(sid.clone(), bound_id.clone())) {
                 let instance_ids: Vec<String> = instances.keys().cloned().collect();
                 for instance_id in instance_ids {
-                    if let Err(e) = self.disconnect(&sid, &instance_id).await {
-                        tracing::warn!(
-                            "Failed to disconnect client-bound instance '{}' for server '{}' bound '{}': {}",
-                            instance_id,
-                            sid,
-                            bound_id,
-                            e
-                        );
+                    total_count += 1;
+                    match self.disconnect(&sid, &instance_id).await {
+                        Ok(()) => success_count += 1,
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to disconnect client-bound instance '{}' for server '{}' bound '{}': {}",
+                                instance_id,
+                                sid,
+                                bound_id,
+                                e
+                            );
+                        }
                     }
                 }
             }
         }
+        (success_count, total_count)
     }
 }

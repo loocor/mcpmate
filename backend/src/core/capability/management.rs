@@ -77,35 +77,25 @@ impl ServerSurfaceManagement {
         pool: &Pool<Sqlite>,
         server_id: &str,
         enabled: bool,
-        source_revision_set: HashMap<String, i64>,
         actor: &str,
     ) -> Result<ServerStatusManagementResult> {
         let default_config_mode = load_default_config_mode(pool).await?;
         let coordinator = MaterializationCoordinator::new(pool.clone());
         let mut transaction = pool.begin().await?;
-        coordinator
-            .verify_catalog_revision_set_in_transaction(&mut transaction, &source_revision_set)
-            .await?;
-        let server_name: String = sqlx::query_scalar("SELECT name FROM server_config WHERE id = ?")
-            .bind(server_id)
-            .fetch_optional(&mut *transaction)
-            .await?
-            .ok_or_else(|| CatalogError::InvalidSurfaceValue {
-                field: "server status",
-                value: server_id.to_string(),
-            })?;
+        let server_name: String = sqlx::query_scalar(
+            "UPDATE server_config SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? RETURNING name",
+        )
+        .bind(enabled)
+        .bind(server_id)
+        .fetch_optional(&mut *transaction)
+        .await?
+        .ok_or_else(|| CatalogError::InvalidSurfaceValue {
+            field: "server status",
+            value: server_id.to_string(),
+        })?;
+        let source_revision_set =
+            SurfaceAuthoringLoader::load_catalog_revision_set_in_transaction(&mut transaction).await?;
         let consumer_ids = load_server_consumer_ids(&mut transaction, server_id, &default_config_mode).await?;
-        let updated = sqlx::query("UPDATE server_config SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-            .bind(enabled)
-            .bind(server_id)
-            .execute(&mut *transaction)
-            .await?;
-        if updated.rows_affected() != 1 {
-            return Err(CatalogError::ConcurrencyConflict {
-                entity: "server status",
-                id: server_id.to_string(),
-            });
-        }
         let trigger = MaterializationTrigger::new(
             "server_status_save",
             format!("{server_id}:{}", Uuid::new_v4()),

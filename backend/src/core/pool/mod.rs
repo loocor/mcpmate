@@ -10,6 +10,8 @@ mod connection;
 mod executor;
 mod health;
 mod monitoring;
+mod runtime;
+mod startup;
 
 // Business logic managers (separated from core pool logic)
 mod config;
@@ -25,4 +27,6 @@ pub(crate) use connection::{
 
 // Re-export selected types for external coordination
 pub use database::CapSyncFlags;
+pub(crate) use runtime::UpstreamSubject;
+pub(crate) use startup::ProductionConnectionBackoff;
 pub use types::{FailureKind, ProductionRouteKey, UpstreamConnection};

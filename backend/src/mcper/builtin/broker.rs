@@ -2489,18 +2489,15 @@ impl BrokerService {
         }
 
         {
-            let mut pool_guard = self.connection_pool.lock().await;
-            if let Some(selection) = client_context.connection_selection(server_id.to_string()) {
-                pool_guard
-                    .ensure_connected_with_selection(&selection)
-                    .await
-                    .with_context(|| format!("Failed to connect Unify broker to server '{}'", server_id))?;
-            } else {
-                pool_guard
-                    .ensure_connected(server_id)
-                    .await
-                    .with_context(|| format!("Failed to connect Unify broker to server '{}'", server_id))?;
-            }
+            let selection = client_context
+                .connection_selection(server_id.to_string())
+                .unwrap_or_else(|| crate::core::capability::ConnectionSelection {
+                    server_id: server_id.to_string(),
+                    affinity_key: crate::core::capability::AffinityKey::Default,
+                });
+            UpstreamConnectionPool::ensure_connected_coordinated(&self.connection_pool, &selection)
+                .await
+                .with_context(|| format!("Failed to connect Unify broker to server '{}'", server_id))?;
         }
 
         let pool_guard = self.connection_pool.lock().await;

@@ -1,0 +1,863 @@
+//! Production startup ownership coordinator for demand-driven connections.
+//!
+//! Coordinates the startup transaction so that slow transport initialization
+//! (database/secret materialization, process spawn, protocol initialize) never
+//! runs while the shared pool lock is held:
+//!
+//!   1. prepare under lock - resolve/allocate the production route, capture
+//!      the identity and generation facts, register an in-flight attempt for
+//!      single-flight joining.
+//!   2. start outside the lock - run the existing transport startup on a
+//!      detached worker pool clone.
+//!   3. conditional publish - reacquire the lock and publish only when the
+//!      route, identity and generation still match.
+//!   4. discard outside lock - the owning attempt explicitly cancels and shuts
+//!      down stale or superseded temporary transports.
+//!
+//! The coordinator reuses the existing `ProductionRouteKey` identity, connection
+//! `created_at` generation fact, and `config_fingerprint` checks instead of
+//! inventing a broader lease hierarchy. Joiners wait for the same typed outcome
+//! and never obtain shutdown authority over the temporary transport.
+
+use std::sync::Arc;
+
+use anyhow::{Context, Result};
+use tokio::sync::{Mutex, watch};
+use tokio_util::sync::CancellationToken;
+
+use crate::core::capability::{AffinityKey, ConnectionSelection};
+use crate::core::foundation::types::ConnectionStatus;
+use crate::core::pool::{ProductionRouteKey, UpstreamConnection, UpstreamConnectionPool};
+
+/// Typed outcome shared by all demands waiting on one startup attempt.
+#[derive(Clone, Debug)]
+pub(crate) enum StartupAttemptOutcome {
+    /// The attempt published its instance under the captured generation facts.
+    Published(String),
+    /// The attempt failed; every joiner receives the same error text.
+    Failed(String),
+    /// The attempt was superseded before publication; demands should retry.
+    Superseded,
+}
+
+/// Registry entry for one in-flight production startup attempt.
+///
+/// The attempt identity is the production route key plus a monotonic attempt id.
+/// The watch channel carries the typed outcome from the owning attempt to every
+/// joiner; a `None` value means the attempt is still starting.
+#[derive(Debug, Clone)]
+pub(crate) struct StartupAttemptEntry {
+    pub(crate) attempt_id: u64,
+    pub(crate) runtime_fingerprint: String,
+    pub(crate) outcome_tx: watch::Sender<Option<StartupAttemptOutcome>>,
+}
+
+/// Owner-side handle to a registered startup attempt.
+pub(crate) struct StartupAttempt {
+    route_key: ProductionRouteKey,
+    server_id: String,
+    instance_id: String,
+    created_at: std::time::Instant,
+    config_fingerprint: Option<String>,
+    runtime_fingerprint: String,
+    attempt_id: u64,
+    worker: UpstreamConnectionPool,
+}
+
+/// Result of the locked prepare phase.
+pub(crate) enum StartupPrepare {
+    /// A ready instance already satisfies the demand.
+    Ready(String),
+    /// Another attempt for the same identity is in flight; wait for its outcome.
+    Join(watch::Receiver<Option<StartupAttemptOutcome>>),
+    /// This demand owns the new attempt and must run the startup.
+    Own(Box<StartupAttempt>),
+}
+
+/// Result of the locked conditional publication phase.
+pub(crate) enum StartupPublish {
+    /// The attempt published; the replaced old generation is discarded outside
+    /// the lock.
+    Published {
+        replaced_connection: Option<UpstreamConnection>,
+        replaced_token: Option<CancellationToken>,
+    },
+    /// The attempt failed; its temporary result is discarded outside the lock.
+    /// The error is the exact typed outcome shared with every joiner.
+    Failed {
+        connection: Option<UpstreamConnection>,
+        cancellation: Option<CancellationToken>,
+        error: String,
+    },
+    /// The attempt was superseded; its temporary result is discarded outside
+    /// the lock and demands retry.
+    Invalidated {
+        connection: Option<UpstreamConnection>,
+        cancellation: Option<CancellationToken>,
+    },
+}
+
+/// Maximum number of startup attempts before a demand gives up on repeated
+/// route/configuration changes during startup.
+const MAX_STARTUP_ATTEMPTS: usize = 4;
+
+#[derive(Clone, Debug, thiserror::Error)]
+#[error("production owner acquisition deferred by backoff for server '{server_id}' for {remaining_ms} ms")]
+pub(crate) struct ProductionConnectionBackoff {
+    pub(crate) server_id: String,
+    pub(crate) remaining_ms: u128,
+}
+
+impl UpstreamConnectionPool {
+    async fn promote_matching_preview_owner(
+        pool: &Arc<Mutex<Self>>,
+        selection: &ConnectionSelection,
+    ) -> Result<Option<String>> {
+        if !matches!(selection.affinity_key, AffinityKey::Default) {
+            return Ok(None);
+        }
+        let candidate = {
+            let guard = pool.lock().await;
+            let Some(config) = guard.config.mcp_servers.get(&selection.server_id) else {
+                return Ok(None);
+            };
+            let Some(config_fingerprint) = config.source_fingerprint.clone() else {
+                return Ok(None);
+            };
+            let runtime_config = guard.runtime_server_config(&selection.server_id)?;
+            let runtime_fingerprint =
+                crate::config::server::fingerprint::materialized_runtime_fingerprint(&runtime_config)?;
+            if let Some(instance_id) = guard.select_ready_instance_id(selection)?
+                && guard
+                    .get_instance(&selection.server_id, &instance_id)
+                    .is_ok_and(|connection| {
+                        connection.config_fingerprint.as_deref() == Some(config_fingerprint.as_str())
+                            && connection.runtime_fingerprint.as_deref() == Some(runtime_fingerprint.as_str())
+                    })
+            {
+                return Ok(None);
+            }
+            if !guard.has_preview_candidate(&config_fingerprint) {
+                return Ok(None);
+            }
+            let timeout_policy = crate::core::transport::timeout_policy::McpTimeoutPolicy::for_server(
+                config.kind,
+                config.command.as_deref(),
+                None,
+            );
+            let database = guard
+                .database
+                .clone()
+                .context("Database connection is required to promote a preview owner")?;
+            (
+                database,
+                config_fingerprint,
+                runtime_fingerprint,
+                timeout_policy
+                    .startup
+                    .saturating_add(timeout_policy.capability_operation),
+            )
+        };
+        let (database, config_fingerprint, runtime_fingerprint, acquisition_timeout) = candidate;
+        let server = crate::config::server::get_server_by_id(&database.pool, &selection.server_id)
+            .await?
+            .with_context(|| {
+                format!(
+                    "Server '{}' disappeared before preview owner promotion",
+                    selection.server_id
+                )
+            })?;
+        let subject = crate::core::pool::UpstreamSubject::preview(server.name, config_fingerprint, runtime_fingerprint);
+        Self::promote_preview_owner_to_production(pool, &subject, selection, acquisition_timeout).await
+    }
+
+    /// Control-plane startup entry point for an enabled upstream.
+    ///
+    /// Database and secret materialization run without the shared pool lock.
+    /// The resulting server configuration is merged under a short lock before
+    /// transport startup delegates to the same production single-flight path
+    /// used by demand routing.
+    pub async fn enable_server_coordinated(
+        pool: &Arc<Mutex<Self>>,
+        server_id: &str,
+    ) -> Result<String> {
+        let (database, secret_store, lifecycle_generation) = {
+            let guard = pool.lock().await;
+            let database = guard
+                .database
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("Database connection not available"))?;
+            (
+                database,
+                guard.secret_store.clone(),
+                guard.server_lifecycle_generation(server_id),
+            )
+        };
+
+        crate::config::server::namespace_repair::ensure_canonical_namespace_before_exposure(&database.pool, server_id)
+            .await?;
+        let (_, server_config) =
+            crate::core::foundation::loader::load_server_config_strict(&database, server_id, secret_store).await?;
+
+        {
+            let mut guard = pool.lock().await;
+            if guard.server_lifecycle_generation(server_id) != lifecycle_generation {
+                anyhow::bail!("Enable for server '{server_id}' was superseded by a lifecycle change");
+            }
+            let mut config = (*guard.config).clone();
+            config.mcp_servers.insert(server_id.to_string(), server_config);
+            guard.set_config(Arc::new(config))?;
+        }
+
+        let selection = ConnectionSelection {
+            server_id: server_id.to_string(),
+            affinity_key: AffinityKey::Default,
+        };
+        let instance_id = Self::ensure_connected_coordinated(pool, &selection).await?;
+        tracing::info!(
+            server_id,
+            instance_id,
+            "Server enabled and started through runtime coordinator"
+        );
+        Ok(instance_id)
+    }
+
+    pub(crate) fn server_lifecycle_generation(
+        &self,
+        server_id: &str,
+    ) -> u64 {
+        self.server_lifecycle_generations.get(server_id).copied().unwrap_or(0)
+    }
+
+    pub(crate) fn invalidate_server_lifecycle(
+        &mut self,
+        server_id: &str,
+    ) {
+        let generation = self
+            .server_lifecycle_generations
+            .entry(server_id.to_string())
+            .or_default();
+        *generation = generation
+            .checked_add(1)
+            .expect("server lifecycle generation exhausted");
+    }
+
+    /// Production startup entry point coordinating one attempt per connection
+    /// identity while keeping transport startup outside the shared pool lock.
+    pub async fn ensure_connected_coordinated(
+        pool: &Arc<Mutex<Self>>,
+        selection: &ConnectionSelection,
+    ) -> Result<String> {
+        if let Some(instance_id) = Self::promote_matching_preview_owner(pool, selection).await? {
+            let database = pool.lock().await.database.clone();
+            Self::spawn_coordinated_capability_sync(database, pool.clone(), selection.server_id.clone());
+            return Ok(instance_id);
+        }
+        let mut attempts = 0;
+        loop {
+            attempts += 1;
+            let prepared = {
+                let mut guard = pool.lock().await;
+                guard.prepare_startup_attempt(selection)
+            }?;
+            match prepared {
+                StartupPrepare::Ready(instance_id) => return Ok(instance_id),
+                StartupPrepare::Join(mut outcome_rx) => {
+                    let outcome = outcome_rx
+                        .wait_for(|value| value.is_some())
+                        .await
+                        .context("startup attempt channel closed while waiting")?
+                        .clone()
+                        .expect("startup outcome present after wait");
+                    match outcome {
+                        StartupAttemptOutcome::Published(instance_id) => return Ok(instance_id),
+                        StartupAttemptOutcome::Failed(error) => return Err(anyhow::anyhow!("{error}")),
+                        StartupAttemptOutcome::Superseded => {
+                            if attempts >= MAX_STARTUP_ATTEMPTS {
+                                return Err(anyhow::anyhow!(
+                                    "Startup for server '{}' was superseded {} times by route or configuration changes",
+                                    selection.server_id,
+                                    attempts
+                                ));
+                            }
+                        }
+                    }
+                }
+                StartupPrepare::Own(attempt) => {
+                    let cleanup_route_key = attempt.route_key.clone();
+                    let cleanup_attempt_id = attempt.attempt_id;
+                    let cleanup_server_id = attempt.server_id.clone();
+                    let cleanup_instance_id = attempt.instance_id.clone();
+                    let cleanup_created_at = attempt.created_at;
+                    let task_pool = pool.clone();
+                    let outcome = match tokio::spawn(async move { run_startup_attempt(&task_pool, *attempt).await })
+                        .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(join_error) => {
+                            // A panic inside the attempt must never strand the
+                            // registry entry: claim it and fail every joiner.
+                            let mut guard = pool.lock().await;
+                            if let Some(entry) = guard.claim_startup_attempt(&cleanup_route_key, cleanup_attempt_id) {
+                                let _ = entry.outcome_tx.send(Some(StartupAttemptOutcome::Failed(format!(
+                                    "Startup attempt task failed: {join_error}"
+                                ))));
+                            }
+                            if let Ok(connection) = guard.get_instance_mut(&cleanup_server_id, &cleanup_instance_id)
+                                && connection.created_at == cleanup_created_at
+                            {
+                                connection.update_failed("Startup attempt task failed".to_string());
+                            }
+                            drop(guard);
+                            return Err(anyhow::anyhow!(
+                                "Startup attempt task failed for server '{}': {join_error}",
+                                selection.server_id
+                            ));
+                        }
+                    };
+                    match outcome {
+                        StartupAttemptOutcome::Published(instance_id) => return Ok(instance_id),
+                        StartupAttemptOutcome::Failed(error) => return Err(anyhow::anyhow!("{error}")),
+                        StartupAttemptOutcome::Superseded => {
+                            if attempts >= MAX_STARTUP_ATTEMPTS {
+                                return Err(anyhow::anyhow!(
+                                    "Startup for server '{}' was superseded {} times by route or configuration changes",
+                                    selection.server_id,
+                                    attempts
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Locked prepare phase: resolve the production route, register or join an
+    /// in-flight attempt, and capture the generation facts needed for
+    /// conditional publication.
+    pub(crate) fn prepare_startup_attempt(
+        &mut self,
+        selection: &ConnectionSelection,
+    ) -> Result<StartupPrepare> {
+        let runtime_config = self.runtime_server_config(&selection.server_id)?;
+        let runtime_fingerprint =
+            crate::config::server::fingerprint::materialized_runtime_fingerprint(&runtime_config)?;
+        let config_fingerprint = self
+            .config
+            .mcp_servers
+            .get(&selection.server_id)
+            .and_then(|config| config.source_fingerprint.clone());
+        if let Some(instance_id) = self.resolve_production_route(selection)
+            && let Ok(Some(ready_id)) = self.select_ready_instance_id(selection)
+            && ready_id == instance_id
+            && self
+                .get_instance(&selection.server_id, &instance_id)
+                .is_ok_and(|connection| {
+                    connection.config_fingerprint == config_fingerprint
+                        && connection.runtime_fingerprint.as_deref() == Some(runtime_fingerprint.as_str())
+                })
+        {
+            return Ok(StartupPrepare::Ready(instance_id));
+        }
+
+        if let Some(remaining) = self.remaining_backoff(&selection.server_id) {
+            tracing::warn!(
+                server_id = %selection.server_id,
+                wait_secs = remaining.as_secs_f32(),
+                "Connection attempt blocked due to active backoff"
+            );
+            return Err(ProductionConnectionBackoff {
+                server_id: selection.server_id.clone(),
+                remaining_ms: remaining.as_millis(),
+            }
+            .into());
+        }
+
+        let route_key = ProductionRouteKey::new(selection.server_id.clone(), selection.affinity_key.clone());
+        if let Some(entry) = self.startup_attempts.get(&route_key) {
+            if entry.runtime_fingerprint == runtime_fingerprint {
+                return Ok(StartupPrepare::Join(entry.outcome_tx.subscribe()));
+            }
+        }
+        if let Some(entry) = self.startup_attempts.remove(&route_key) {
+            let _ = entry.outcome_tx.send(Some(StartupAttemptOutcome::Superseded));
+        }
+
+        let instance_id = match self.resolve_production_route(selection) {
+            Some(instance_id) => instance_id,
+            None => self.allocate_production_route(selection),
+        };
+        self.invalidate_health_reconnect(&selection.server_id, &instance_id);
+        let created_at = self
+            .get_instance(&selection.server_id, &instance_id)
+            .expect("allocated production instance exists")
+            .created_at;
+        let attempt_id = self
+            .next_startup_attempt
+            .fetch_update(
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+                |current| current.checked_add(1),
+            )
+            .expect("startup attempt identifier exhausted");
+        self.get_instance_mut(&selection.server_id, &instance_id)
+            .expect("allocated production instance exists")
+            .update_initializing();
+        let (outcome_tx, _) = watch::channel(None);
+        self.startup_attempts.insert(
+            route_key.clone(),
+            StartupAttemptEntry {
+                attempt_id,
+                runtime_fingerprint: runtime_fingerprint.clone(),
+                outcome_tx,
+            },
+        );
+        let worker = self.runtime_worker();
+        Ok(StartupPrepare::Own(Box::new(StartupAttempt {
+            route_key,
+            server_id: selection.server_id.clone(),
+            instance_id,
+            created_at,
+            config_fingerprint,
+            runtime_fingerprint,
+            attempt_id,
+            worker,
+        })))
+    }
+
+    /// Locked claim: remove the attempt registry entry only when this attempt
+    /// still owns it. The entry is returned so the owner can send its typed
+    /// outcome after the registry slot has been claimed.
+    fn claim_startup_attempt(
+        &mut self,
+        route_key: &ProductionRouteKey,
+        attempt_id: u64,
+    ) -> Option<StartupAttemptEntry> {
+        let owns = self
+            .startup_attempts
+            .get(route_key)
+            .is_some_and(|entry| entry.attempt_id == attempt_id);
+        if owns {
+            self.startup_attempts.remove(route_key)
+        } else {
+            None
+        }
+    }
+
+    /// Locked conditional publication for one attempt.
+    #[allow(clippy::too_many_arguments)]
+    fn publish_startup_attempt(
+        &mut self,
+        route_key: &ProductionRouteKey,
+        server_id: &str,
+        instance_id: &str,
+        created_at: std::time::Instant,
+        config_fingerprint: Option<&str>,
+        runtime_fingerprint: &str,
+        attempt_id: u64,
+        result: Result<()>,
+        worker_connection: Option<UpstreamConnection>,
+        worker_token: Option<CancellationToken>,
+    ) -> StartupPublish {
+        let Some(entry) = self.claim_startup_attempt(route_key, attempt_id) else {
+            return StartupPublish::Invalidated {
+                connection: worker_connection,
+                cancellation: worker_token,
+            };
+        };
+
+        let route_owned = self.production_routes.get(route_key).map(String::as_str) == Some(instance_id);
+        let instance_owned = self
+            .get_instance(server_id, instance_id)
+            .ok()
+            .is_some_and(|connection| {
+                connection.created_at == created_at && matches!(connection.status, ConnectionStatus::Initializing)
+            });
+        let config_owned = self
+            .config
+            .mcp_servers
+            .get(server_id)
+            .and_then(|config| config.source_fingerprint.as_deref())
+            == config_fingerprint;
+        let runtime_owned = self.runtime_server_config(server_id).is_ok_and(|config| {
+            crate::config::server::fingerprint::materialized_runtime_fingerprint(&config)
+                .is_ok_and(|fingerprint| fingerprint == runtime_fingerprint)
+        });
+        if !(route_owned && instance_owned && config_owned && runtime_owned) {
+            if let Ok(connection) = self.get_instance_mut(server_id, instance_id)
+                && connection.created_at == created_at
+                && matches!(connection.status, ConnectionStatus::Initializing)
+            {
+                connection.update_failed("Startup attempt superseded before publication".to_string());
+            }
+            let _ = entry.outcome_tx.send(Some(StartupAttemptOutcome::Superseded));
+            return StartupPublish::Invalidated {
+                connection: worker_connection,
+                cancellation: worker_token,
+            };
+        }
+
+        match result {
+            Ok(()) => {
+                self.clear_failure_state(server_id);
+                let connection = worker_connection.expect("successful startup attempt retains its worker connection");
+                let replaced_connection = self
+                    .instance_map_mut(route_key)
+                    .insert(instance_id.to_string(), connection);
+                // Only stdio transports register a cancellation token; HTTP/SSE
+                // transports do not, matching the pre-existing pool behavior.
+                let replaced_token = worker_token.and_then(|token| {
+                    self.cancellation_tokens
+                        .entry(server_id.to_string())
+                        .or_default()
+                        .insert(instance_id.to_string(), token)
+                });
+                let _ = entry
+                    .outcome_tx
+                    .send(Some(StartupAttemptOutcome::Published(instance_id.to_string())));
+                StartupPublish::Published {
+                    replaced_connection,
+                    replaced_token,
+                }
+            }
+            Err(error) => {
+                let requires_manual_intervention =
+                    crate::core::capability::connection_provider::PoolCapabilityConnectionProvider::authentication_failure_code(
+                        &error,
+                    )
+                    .is_some();
+                if requires_manual_intervention {
+                    self.clear_failure_state(server_id);
+                } else {
+                    self.register_failure(
+                        server_id,
+                        crate::core::pool::FailureKind::Connect,
+                        Some(error.to_string()),
+                    );
+                }
+                if let Ok(connection) = self.get_instance_mut(server_id, instance_id)
+                    && connection.created_at == created_at
+                {
+                    let message = format!("Connection failed: {}", error);
+                    if requires_manual_intervention {
+                        connection.update_permanent_error(message);
+                    } else {
+                        connection.update_failed(message);
+                    }
+                }
+                let outcome_error = format!("{error:?}");
+                let _ = entry
+                    .outcome_tx
+                    .send(Some(StartupAttemptOutcome::Failed(outcome_error.clone())));
+                StartupPublish::Failed {
+                    connection: worker_connection,
+                    cancellation: worker_token,
+                    error: outcome_error,
+                }
+            }
+        }
+    }
+
+    /// Mutable instance map for the route's affinity partition.
+    fn instance_map_mut(
+        &mut self,
+        route_key: &ProductionRouteKey,
+    ) -> &mut std::collections::HashMap<String, UpstreamConnection> {
+        match &route_key.affinity_key {
+            AffinityKey::Default => self.connections.entry(route_key.server_id.clone()).or_default(),
+            AffinityKey::PerClient(bound_id) | AffinityKey::PerSession(bound_id) => self
+                .client_bound_connections
+                .entry((route_key.server_id.clone(), bound_id.clone()))
+                .or_default(),
+        }
+    }
+
+    /// Explicitly discard a startup attempt's temporary transport outside the
+    /// pool lock. The attempt owns the transport until conditional publication,
+    /// so discarding never touches a newer published instance.
+    pub(crate) async fn discard_startup_result(
+        connection: Option<UpstreamConnection>,
+        cancellation: Option<CancellationToken>,
+    ) {
+        if let Some(cancellation) = cancellation {
+            cancellation.cancel();
+        }
+        let Some(mut connection) = connection else {
+            return;
+        };
+        let Some(service) = connection.service.take() else {
+            return;
+        };
+        service.cancellation_token().cancel();
+        match Arc::try_unwrap(service) {
+            Ok(service) => {
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(5), service.cancel()).await;
+            }
+            Err(_) => {
+                tracing::warn!(
+                    instance_id = %connection.id,
+                    "Discarded startup service still has another owner"
+                );
+            }
+        }
+    }
+}
+
+/// Start the attempt's transport outside the pool lock and publish under lock.
+async fn run_startup_attempt(
+    pool: &Arc<Mutex<UpstreamConnectionPool>>,
+    attempt: StartupAttempt,
+) -> StartupAttemptOutcome {
+    let mut worker = attempt.worker;
+    let result = worker
+        .connect_transport_for_startup(&attempt.server_id, &attempt.instance_id)
+        .await;
+    let worker_connection = match &attempt.route_key.affinity_key {
+        AffinityKey::Default => worker
+            .connections
+            .get_mut(&attempt.server_id)
+            .and_then(|instances| instances.remove(&attempt.instance_id)),
+        AffinityKey::PerClient(bound_id) | AffinityKey::PerSession(bound_id) => worker
+            .client_bound_connections
+            .get_mut(&(attempt.server_id.clone(), bound_id.clone()))
+            .and_then(|instances| instances.remove(&attempt.instance_id)),
+    };
+    let worker_token = worker
+        .cancellation_tokens
+        .get_mut(&attempt.server_id)
+        .and_then(|tokens| tokens.remove(&attempt.instance_id));
+
+    let failure_message = result.as_ref().err().map(ToString::to_string);
+    let publish = {
+        let mut guard = pool.lock().await;
+        guard.publish_startup_attempt(
+            &attempt.route_key,
+            &attempt.server_id,
+            &attempt.instance_id,
+            attempt.created_at,
+            attempt.config_fingerprint.as_deref(),
+            &attempt.runtime_fingerprint,
+            attempt.attempt_id,
+            result,
+            worker_connection,
+            worker_token,
+        )
+    };
+
+    match publish {
+        StartupPublish::Published {
+            replaced_connection,
+            replaced_token,
+        } => {
+            UpstreamConnectionPool::discard_startup_result(replaced_connection, replaced_token).await;
+            let event_database = pool.lock().await.database.clone();
+            UpstreamConnectionPool::publish_startup_result(event_database.clone(), &attempt.server_id, true, None)
+                .await;
+            UpstreamConnectionPool::spawn_coordinated_capability_sync(
+                event_database,
+                pool.clone(),
+                attempt.server_id.clone(),
+            );
+            StartupAttemptOutcome::Published(attempt.instance_id)
+        }
+        StartupPublish::Failed {
+            connection,
+            cancellation,
+            error,
+        } => {
+            UpstreamConnectionPool::discard_startup_result(connection, cancellation).await;
+            let event_database = pool.lock().await.database.clone();
+            UpstreamConnectionPool::publish_startup_result(event_database, &attempt.server_id, false, failure_message)
+                .await;
+            StartupAttemptOutcome::Failed(error)
+        }
+        StartupPublish::Invalidated {
+            connection,
+            cancellation,
+        } => {
+            UpstreamConnectionPool::discard_startup_result(connection, cancellation).await;
+            StartupAttemptOutcome::Superseded
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use rmcp::{ServerHandler, ServiceExt};
+    use tokio_util::sync::CancellationToken;
+
+    use super::*;
+    use crate::common::server::ServerType;
+    use crate::core::models::{Config, MCPServerConfig};
+    use crate::core::pool::UpstreamConnection;
+
+    #[derive(Clone, Default)]
+    struct TestServer;
+
+    impl ServerHandler for TestServer {}
+
+    async fn ready_connection(
+        server_id: &str,
+        instance_id: &str,
+    ) -> (UpstreamConnection, tokio::task::JoinHandle<anyhow::Result<()>>) {
+        let (server_transport, client_transport) = tokio::io::duplex(4096);
+        let server_handle = tokio::spawn(async move {
+            let service = TestServer.serve(server_transport).await?;
+            service.waiting().await?;
+            Ok(())
+        });
+        let service = crate::core::transport::client::UpstreamClientHandler::new(server_id.to_string())
+            .serve(client_transport)
+            .await
+            .expect("startup test client should initialize");
+        let mut connection = UpstreamConnection::new(server_id.to_string());
+        connection.id = instance_id.to_string();
+        connection.update_connected(service, Vec::new(), Some(rmcp::model::ServerCapabilities::default()));
+        (connection, server_handle)
+    }
+
+    /// Contract 5: after a newer instance is published, the stale attempt's
+    /// cleanup must not cancel or close the newer service.
+    #[tokio::test]
+    async fn late_startup_cleanup_does_not_cancel_or_close_a_newer_instance() {
+        let (new_connection, new_server_handle) = ready_connection("server-a", "instance-a").await;
+        let new_token = CancellationToken::new();
+        let mut pool = UpstreamConnectionPool::new(Arc::new(Config::default()), None);
+        pool.connections.insert(
+            "server-a".to_string(),
+            HashMap::from([("instance-a".to_string(), new_connection.clone())]),
+        );
+        pool.cancellation_tokens.insert(
+            "server-a".to_string(),
+            HashMap::from([("instance-a".to_string(), new_token.clone())]),
+        );
+
+        let (old_connection, old_server_handle) = ready_connection("server-a", "instance-a").await;
+        let old_token = CancellationToken::new();
+
+        UpstreamConnectionPool::discard_startup_result(Some(old_connection), Some(old_token)).await;
+
+        assert!(
+            !new_token.is_cancelled(),
+            "stale attempt cleanup must not cancel the newer instance token"
+        );
+        let published = pool
+            .get_instance("server-a", "instance-a")
+            .expect("newer instance remains published");
+        let service = published
+            .service
+            .as_ref()
+            .expect("newer instance service remains published");
+        assert!(!service.is_closed(), "stale cleanup must not close the newer service");
+        service.cancellation_token().cancel();
+        let _ = service;
+        drop(pool);
+
+        tokio::time::timeout(Duration::from_secs(5), new_server_handle)
+            .await
+            .expect("new server should stop after cancellation")
+            .expect("new server task should join")
+            .expect("new server should stop");
+        tokio::time::timeout(Duration::from_secs(5), old_server_handle)
+            .await
+            .expect("old server should stop after discard")
+            .expect("old server task should join")
+            .expect("old server should stop");
+    }
+
+    /// Contract 1/6 for HTTP transports: a successful startup with no pool
+    /// cancellation token (HTTP transports never register one) must publish
+    /// without panicking or blocking the outcome (C1 regression guard).
+    #[tokio::test]
+    async fn startup_publish_tolerates_missing_pool_token() {
+        let (connection, server_handle) = ready_connection("server-a", "instance-a").await;
+        let mut config = Config::default();
+        config.mcp_servers.insert(
+            "server-a".to_string(),
+            MCPServerConfig {
+                source_fingerprint: Some("v1".to_string()),
+                kind: ServerType::StreamableHttp,
+                command: None,
+                args: None,
+                url: Some("http://127.0.0.1:1/mcp".to_string()),
+                env: None,
+                headers: None,
+            },
+        );
+        let mut pool = UpstreamConnectionPool::new(Arc::new(config), None);
+        let mut instance = UpstreamConnection::new("server-a".to_string());
+        instance.id = "instance-a".to_string();
+        instance.update_initializing();
+        let created_at = instance.created_at;
+        pool.connections.insert(
+            "server-a".to_string(),
+            HashMap::from([("instance-a".to_string(), instance)]),
+        );
+        let route_key = ProductionRouteKey::shareable("server-a");
+        pool.production_routes
+            .insert(route_key.clone(), "instance-a".to_string());
+        let (outcome_tx, outcome_rx) = watch::channel(None);
+        pool.startup_attempts.insert(
+            route_key.clone(),
+            StartupAttemptEntry {
+                attempt_id: 11,
+                runtime_fingerprint: crate::config::server::fingerprint::materialized_runtime_fingerprint(
+                    pool.config.mcp_servers.get("server-a").expect("server config"),
+                )
+                .expect("runtime fingerprint"),
+                outcome_tx,
+            },
+        );
+
+        let publish = pool.publish_startup_attempt(
+            &route_key,
+            "server-a",
+            "instance-a",
+            created_at,
+            Some("v1"),
+            &crate::config::server::fingerprint::materialized_runtime_fingerprint(
+                pool.config.mcp_servers.get("server-a").expect("server config"),
+            )
+            .expect("runtime fingerprint"),
+            11,
+            Ok(()),
+            Some(connection),
+            None,
+        );
+        assert!(
+            matches!(
+                publish,
+                StartupPublish::Published {
+                    replaced_token: None,
+                    ..
+                }
+            ),
+            "missing pool token must not panic or block publication"
+        );
+        let outcome = outcome_rx.borrow().clone().expect("outcome must be published");
+        assert!(
+            matches!(outcome, StartupAttemptOutcome::Published(instance) if instance == "instance-a"),
+            "joiners must receive the published instance id"
+        );
+        let published = pool
+            .get_instance("server-a", "instance-a")
+            .expect("published instance exists");
+        assert!(published.service.is_some(), "service must be published");
+        assert!(published.is_connected(), "instance must be ready");
+        let service = published.service.clone().expect("service published");
+        service.cancellation_token().cancel();
+        let _ = published;
+        drop(pool);
+
+        tokio::time::timeout(Duration::from_secs(5), server_handle)
+            .await
+            .expect("server should stop after cancellation")
+            .expect("server task should join")
+            .expect("server should stop");
+    }
+}

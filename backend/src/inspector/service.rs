@@ -583,8 +583,13 @@ async fn ensure_proxy_connection(
     state: &AppState,
     server_id: &str,
 ) -> Result<(), ApiError> {
-    let mut pool = state.connection_pool.lock().await;
-    pool.ensure_connected(server_id).await.map_err(map_anyhow)?;
+    let selection = crate::core::capability::ConnectionSelection {
+        server_id: server_id.to_string(),
+        affinity_key: crate::core::capability::AffinityKey::Default,
+    };
+    crate::core::pool::UpstreamConnectionPool::ensure_connected_coordinated(&state.connection_pool, &selection)
+        .await
+        .map_err(map_anyhow)?;
     Ok(())
 }
 

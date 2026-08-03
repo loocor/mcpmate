@@ -443,26 +443,24 @@ pub async fn read_upstream_resource(
         }
 
         if target_instance_id.is_none() {
-            if let Some(selection) = connection_selection {
-                let scoped_selection = crate::core::capability::ConnectionSelection {
+            drop(pool);
+            let scoped_selection = connection_selection
+                .map(|selection| crate::core::capability::ConnectionSelection {
                     server_id: server_id.to_string(),
                     affinity_key: selection.affinity_key.clone(),
-                };
-                let iid = pool
-                    .ensure_connected_with_selection(&scoped_selection)
-                    .await
-                    .context(format!(
-                        "Failed to ensure scoped connection for server '{}' (resource '{}')",
-                        server_id, uri
-                    ))?;
-                target_instance_id = Some(iid);
-            } else {
-                let iid = pool.ensure_connected(server_id).await.context(format!(
+                })
+                .unwrap_or_else(|| crate::core::capability::ConnectionSelection {
+                    server_id: server_id.to_string(),
+                    affinity_key: crate::core::capability::AffinityKey::Default,
+                });
+            let iid = UpstreamConnectionPool::ensure_connected_coordinated(connection_pool, &scoped_selection)
+                .await
+                .context(format!(
                     "Failed to ensure connection for server '{}' (resource '{}')",
                     server_id, uri
                 ))?;
-                target_instance_id = Some(iid);
-            }
+            pool = connection_pool.lock().await;
+            target_instance_id = Some(iid);
         }
 
         let iid = target_instance_id.expect("instance id must be set");
@@ -634,11 +632,28 @@ mod tests {
         let handler = crate::core::transport::client::UpstreamClientHandler::new("direct-read-fixture".to_string());
         let service = handler.serve(client_transport).await.expect("connect fixture");
         let capabilities = service.peer_info().map(|info| info.capabilities.clone());
+        let server_config = crate::core::models::MCPServerConfig {
+            source_fingerprint: Some("direct-read-config".to_string()),
+            kind: crate::common::server::ServerType::Stdio,
+            command: Some("direct-read-fixture".to_string()),
+            args: None,
+            url: None,
+            env: None,
+            headers: None,
+        };
+        let runtime_fingerprint = crate::config::server::fingerprint::materialized_runtime_fingerprint(&server_config)
+            .expect("fingerprint direct-read fixture");
         let mut connection = UpstreamConnection::new("direct-read-fixture".to_string());
         let instance_id = connection.id.clone();
         connection.update_connected(service, Vec::new(), capabilities);
+        connection.config_fingerprint = server_config.source_fingerprint.clone();
+        connection.runtime_fingerprint = Some(runtime_fingerprint);
 
-        let mut pool = UpstreamConnectionPool::new(Arc::new(crate::core::models::Config::default()), None);
+        let mut config = crate::core::models::Config::default();
+        config
+            .mcp_servers
+            .insert("server-direct-read".to_string(), server_config);
+        let mut pool = UpstreamConnectionPool::new(Arc::new(config), None);
         pool.connections
             .entry("server-direct-read".to_string())
             .or_default()

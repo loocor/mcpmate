@@ -1032,19 +1032,48 @@ async fn builtin_catalog_sync_republishes_existing_unify_surface_with_only_ucan_
 }
 
 #[tokio::test]
-async fn global_server_status_and_affected_surfaces_commit_together() {
+async fn global_server_disable_uses_current_catalog_revision_for_affected_surfaces() {
     let (pool, _) = fixture().await;
-    bootstrap_managed_surfaces(&pool).await.unwrap();
-
-    let result = ServerSurfaceManagement::set_server_enabled(
-        &pool,
-        "server-a",
-        false,
-        HashMap::from([("server-a".to_string(), 1)]),
-        "test",
+    sqlx::query(
+        "INSERT INTO server_config (id, name, server_type, command, enabled) VALUES ('server-b', 'Server B', 'stdio', '', 1)",
     )
+    .execute(&pool)
     .await
     .unwrap();
+    let unrelated_initialize: InitializeResult = serde_json::from_value(json!({
+        "protocolVersion": "2025-11-25",
+        "capabilities": {},
+        "serverInfo": {"name": "unrelated", "version": "1.0.0"}
+    }))
+    .unwrap();
+    let catalog = SqliteCapabilityCatalog::new(pool.clone());
+    catalog
+        .commit_observation(CapabilityObservation::new(
+            "server-b",
+            "unrelated",
+            "config-v1",
+            unrelated_initialize.clone(),
+            Vec::new(),
+            Vec::new(),
+        ))
+        .await
+        .unwrap();
+    bootstrap_managed_surfaces(&pool).await.unwrap();
+    catalog
+        .commit_observation(CapabilityObservation::new(
+            "server-b",
+            "unrelated",
+            "config-v2",
+            unrelated_initialize,
+            Vec::new(),
+            Vec::new(),
+        ))
+        .await
+        .unwrap();
+
+    let result = ServerSurfaceManagement::set_server_enabled(&pool, "server-a", false, "test")
+        .await
+        .unwrap();
 
     assert!(!result.enabled);
     assert_eq!(result.materializations.len(), 1);
@@ -1067,6 +1096,16 @@ async fn global_server_status_and_affected_surfaces_commit_together() {
     .await
     .unwrap();
     assert_eq!(active_entry_count, 0);
+    let source_revision_set: String = sqlx::query_scalar(
+        "SELECT source_revision_set FROM surface_proposals WHERE trigger_kind = 'server_status_save' ORDER BY rowid DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&source_revision_set).unwrap(),
+        json!({"server-a": 1, "server-b": 2})
+    );
 }
 
 #[tokio::test]

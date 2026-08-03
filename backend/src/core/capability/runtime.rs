@@ -698,6 +698,15 @@ pub(crate) async fn discover_owner(
             timeout_ms: None,
         });
     }
+    if ctx.capability == CapabilityType::Tools
+        && let Some(tools) = owner.startup_tools.as_ref()
+    {
+        return Ok(CapabilityDiscoveryObservation {
+            items: CapabilityItems::Tools(tools.clone()),
+            flags: CapSyncFlags::TOOLS,
+            kind_states: Vec::new(),
+        });
+    }
     let (items, flags, failure, kind_states) = fetch_runtime_items(
         ctx.capability,
         owner.peer.clone(),
@@ -779,6 +788,13 @@ pub(crate) async fn discover_all_kinds_owner(
                 CapabilityType::ResourceTemplates => CapSyncFlags::RESOURCE_TEMPLATES,
             };
             flags = flags.union(capability_flags);
+            continue;
+        }
+        if capability == CapabilityType::Tools
+            && let Some(startup_tools) = owner.startup_tools.as_ref()
+        {
+            tools = startup_tools.clone();
+            flags = flags.union(CapSyncFlags::TOOLS);
             continue;
         }
         let (items, capability_flags, failure, capability_states) = fetch_runtime_items(
@@ -1371,13 +1387,15 @@ async fn call_tool_impl(
     let t_fetch_ms = t_fetch_begin.elapsed().as_millis();
     if peer_info.0.is_none() {
         let t_connect_begin = std::time::Instant::now();
-        let mut pool_guard = pool.lock().await;
         if let Some(selection) = ctx.connection_selection.as_ref() {
-            pool_guard.ensure_connected_with_selection(selection).await?;
+            UpstreamConnectionPool::ensure_connected_coordinated(pool, selection).await?;
         } else {
-            pool_guard.ensure_connected(&ctx.server_id).await?;
+            let selection = crate::core::capability::ConnectionSelection {
+                server_id: ctx.server_id.clone(),
+                affinity_key: crate::core::capability::AffinityKey::Default,
+            };
+            UpstreamConnectionPool::ensure_connected_coordinated(pool, &selection).await?;
         }
-        drop(pool_guard);
         peer_info = fetch_peer().await;
         tracing::debug!(
             server_id = %ctx.server_id,

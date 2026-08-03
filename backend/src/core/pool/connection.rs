@@ -307,6 +307,13 @@ pub struct UpstreamConnectionPool {
     next_validation_owner_epoch: Arc<AtomicU64>,
     health_reconnect_epochs: HashMap<(String, String), u64>,
     next_health_reconnect_epoch: Arc<AtomicU64>,
+    /// In-flight production startup attempts keyed by production route identity.
+    pub(crate) startup_attempts: HashMap<types::ProductionRouteKey, super::startup::StartupAttemptEntry>,
+    pub(crate) next_startup_attempt: Arc<AtomicU64>,
+    pub(crate) preview_owners: HashMap<super::runtime::PreviewOwnerKey, super::runtime::PreviewOwnerEntry>,
+    pub(crate) preview_attempts: HashMap<super::runtime::PreviewOwnerKey, super::runtime::PreviewAttemptEntry>,
+    pub(crate) next_preview_attempt: Arc<AtomicU64>,
+    pub(crate) server_lifecycle_generations: HashMap<String, u64>,
     /// Server configuration
     pub config: Arc<Config>,
     /// Map of server ID to map of instance ID to cancellation token
@@ -326,6 +333,12 @@ pub struct UpstreamConnectionPool {
 }
 
 impl UpstreamConnectionPool {
+    pub(crate) fn runtime_worker(&self) -> Self {
+        let mut worker = self.clone();
+        worker.clear_preview_runtime_state();
+        worker
+    }
+
     fn validation_worker(&self) -> Self {
         Self {
             connections: HashMap::new(),
@@ -342,6 +355,12 @@ impl UpstreamConnectionPool {
             next_validation_owner_epoch: self.next_validation_owner_epoch.clone(),
             health_reconnect_epochs: HashMap::new(),
             next_health_reconnect_epoch: self.next_health_reconnect_epoch.clone(),
+            startup_attempts: HashMap::new(),
+            next_startup_attempt: self.next_startup_attempt.clone(),
+            preview_owners: HashMap::new(),
+            preview_attempts: HashMap::new(),
+            next_preview_attempt: self.next_preview_attempt.clone(),
+            server_lifecycle_generations: HashMap::new(),
             config: self.config.clone(),
             cancellation_tokens: HashMap::new(),
             process_monitor: None,
@@ -383,6 +402,12 @@ impl UpstreamConnectionPool {
             next_validation_owner_epoch: Arc::new(AtomicU64::new(1)),
             health_reconnect_epochs: HashMap::new(),
             next_health_reconnect_epoch: Arc::new(AtomicU64::new(1)),
+            startup_attempts: HashMap::new(),
+            next_startup_attempt: Arc::new(AtomicU64::new(1)),
+            preview_owners: HashMap::new(),
+            preview_attempts: HashMap::new(),
+            next_preview_attempt: Arc::new(AtomicU64::new(1)),
+            server_lifecycle_generations: HashMap::new(),
             config,
             cancellation_tokens: HashMap::new(),
             process_monitor: Some(process_monitor),
@@ -527,9 +552,31 @@ impl UpstreamConnectionPool {
         kind: FailureKind,
         reason: Option<String>,
     ) -> Duration {
-        let backoff = self
-            .failure_state_mut(server_id)
-            .register_failure(Instant::now(), kind, reason.clone());
+        self.register_failure_internal(server_id, kind, reason, false)
+    }
+
+    pub fn register_claimed_recovery_failure(
+        &mut self,
+        server_id: &str,
+        kind: FailureKind,
+        reason: Option<String>,
+    ) -> Duration {
+        self.register_failure_internal(server_id, kind, reason, true)
+    }
+
+    fn register_failure_internal(
+        &mut self,
+        server_id: &str,
+        kind: FailureKind,
+        reason: Option<String>,
+        attempt_already_claimed: bool,
+    ) -> Duration {
+        let state = self.failure_state_mut(server_id);
+        let backoff = if attempt_already_claimed {
+            state.register_claimed_recovery_failure(Instant::now(), kind, reason.clone())
+        } else {
+            state.register_failure(Instant::now(), kind, reason.clone())
+        };
 
         tracing::warn!(
             server_id = server_id,
@@ -595,6 +642,22 @@ impl UpstreamConnectionPool {
         self.failure_states
             .get(server_id)
             .and_then(|state| state.remaining_backoff(now))
+    }
+
+    pub fn automatic_recovery_exhausted(
+        &self,
+        server_id: &str,
+    ) -> bool {
+        self.failure_states
+            .get(server_id)
+            .is_some_and(types::FailureState::automatic_recovery_exhausted)
+    }
+
+    pub fn claim_automatic_recovery_attempt(
+        &mut self,
+        server_id: &str,
+    ) -> bool {
+        self.failure_state_mut(server_id).claim_automatic_recovery_attempt()
     }
 
     /// Initialize the connection pool with all servers
@@ -1331,7 +1394,7 @@ impl UpstreamConnectionPool {
             return ValidationSuccessFinalization::Lost(connection);
         }
 
-        apply_validation_failure_updates(self, failure_updates);
+        apply_pool_failure_updates(self, failure_updates);
         let session = self
             .validation_sessions
             .get(attempt.token.session_id())
@@ -1404,7 +1467,7 @@ impl UpstreamConnectionPool {
         let committed = {
             let mut pool = shared.lock().await;
             if pool.claim_validation_attempt(&attempt.token, attempt.attempt_id, &attempt.server_id) {
-                apply_validation_failure_updates(&mut pool, failure_updates);
+                apply_pool_failure_updates(&mut pool, failure_updates);
                 true
             } else {
                 false
@@ -1689,7 +1752,7 @@ struct PendingValidationConnection {
     armed: bool,
 }
 
-fn apply_validation_failure_updates(
+pub(crate) fn apply_pool_failure_updates(
     pool: &mut UpstreamConnectionPool,
     updates: Vec<(String, types::FailureState)>,
 ) {
@@ -2449,8 +2512,7 @@ mod tests {
     async fn invalidated_server_attempt_cannot_restore_backoff_after_oauth_completion() {
         let pool = Arc::new(tokio::sync::Mutex::new(empty_pool()));
         let lease =
-            UpstreamConnectionPool::reserve_validation_session(&pool, "oauth-complete", Duration::from_secs(60))
-                .await;
+            UpstreamConnectionPool::reserve_validation_session(&pool, "oauth-complete", Duration::from_secs(60)).await;
         let token = lease.token().clone();
         let cancellation = CancellationToken::new();
         let attempt = pool
@@ -2460,9 +2522,7 @@ mod tests {
             .expect("register pre-OAuth validation attempt");
 
         assert_eq!(
-            pool.lock()
-                .await
-                .invalidate_validation_attempts_for_server("server-1"),
+            pool.lock().await.invalidate_validation_attempts_for_server("server-1"),
             1
         );
         assert!(cancellation.is_cancelled());
@@ -2481,12 +2541,7 @@ mod tests {
             )
             .await
         );
-        assert!(
-            pool.lock()
-                .await
-                .remaining_backoff("validation:server-1")
-                .is_none()
-        );
+        assert!(pool.lock().await.remaining_backoff("validation:server-1").is_none());
 
         UpstreamConnectionPool::release_validation_reservation(&pool, &token)
             .await

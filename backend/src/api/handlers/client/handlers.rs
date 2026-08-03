@@ -1916,11 +1916,8 @@ mod tests {
         server_id: &str,
         enabled: bool,
     ) {
-        let revisions = crate::core::capability::materializer::SurfaceAuthoringLoader::load_catalog_revision_set(pool)
-            .await
-            .expect("load catalog revision set");
         crate::core::capability::management::ServerSurfaceManagement::set_server_enabled(
-            pool, server_id, enabled, revisions, "test",
+            pool, server_id, enabled, "test",
         )
         .await
         .expect("set server global status");

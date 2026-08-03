@@ -1,4 +1,90 @@
+use std::collections::HashMap;
+
+use sha2::{Digest, Sha256};
 use url::Url;
+
+use crate::common::server::ServerType;
+
+#[derive(Debug, Clone)]
+pub(crate) struct ServerDedupFingerprint {
+    pub(crate) value: String,
+    pub(crate) url_signature: Option<UrlSignature>,
+}
+
+pub(crate) fn server_dedup_fingerprint(
+    server_type: ServerType,
+    command: Option<&str>,
+    url: Option<&str>,
+    args: &[String],
+) -> ServerDedupFingerprint {
+    match server_type {
+        ServerType::Stdio => ServerDedupFingerprint {
+            value: fingerprint_for_stdio(command.unwrap_or_default(), args),
+            url_signature: None,
+        },
+        ServerType::Sse | ServerType::StreamableHttp => {
+            let url_signature = url_signature(url.unwrap_or_default());
+            ServerDedupFingerprint {
+                value: format!("{}|{}", url_signature.fingerprint, server_type.client_format()),
+                url_signature: Some(url_signature),
+            }
+        }
+    }
+}
+
+pub(crate) struct RuntimeConfigFingerprintInput<'a> {
+    pub(crate) server_type: &'a str,
+    pub(crate) command: Option<&'a str>,
+    pub(crate) url: Option<&'a str>,
+    pub(crate) enabled: bool,
+    pub(crate) args: &'a [(i64, String)],
+    pub(crate) env: &'a HashMap<String, String>,
+    pub(crate) headers: &'a HashMap<String, String>,
+}
+
+pub(crate) fn runtime_config_fingerprint(input: &RuntimeConfigFingerprintInput<'_>) -> serde_json::Result<String> {
+    let server = (input.server_type, input.command, input.url, input.enabled);
+    let mut env = input
+        .env
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect::<Vec<_>>();
+    env.sort_unstable();
+    let mut headers = input
+        .headers
+        .iter()
+        .filter_map(|(key, value)| {
+            let key = key.trim().to_ascii_lowercase();
+            (!key.is_empty()).then_some((key, value.as_str()))
+        })
+        .collect::<Vec<_>>();
+    headers.sort_unstable();
+    let value = serde_json::to_vec(&(server, input.args, env, headers))?;
+    Ok(format!("sha256:{:x}", Sha256::digest(value)))
+}
+
+pub(crate) fn materialized_runtime_fingerprint(
+    config: &crate::core::models::MCPServerConfig
+) -> serde_json::Result<String> {
+    let args = config
+        .args
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .enumerate()
+        .map(|(index, value)| (index as i64, value.clone()))
+        .collect::<Vec<_>>();
+    let empty = HashMap::new();
+    runtime_config_fingerprint(&RuntimeConfigFingerprintInput {
+        server_type: config.kind.client_format(),
+        command: config.command.as_deref(),
+        url: config.url.as_deref(),
+        enabled: true,
+        args: &args,
+        env: config.env.as_ref().unwrap_or(&empty),
+        headers: config.headers.as_ref().unwrap_or(&empty),
+    })
+}
 
 // Public entrypoints
 pub(crate) fn fingerprint_for_stdio(

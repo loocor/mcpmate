@@ -2285,11 +2285,27 @@ mod tests {
             .await
             .expect("connect subscription resource");
         let capabilities = service.peer_info().map(|info| info.capabilities.clone());
+        let server_config = crate::core::models::MCPServerConfig {
+            source_fingerprint: Some("subscription-resource-config".to_string()),
+            kind: crate::common::server::ServerType::Stdio,
+            command: Some("subscription-resource".to_string()),
+            args: None,
+            url: None,
+            env: None,
+            headers: None,
+        };
+        let runtime_fingerprint = crate::config::server::fingerprint::materialized_runtime_fingerprint(&server_config)
+            .expect("fingerprint subscription resource fixture");
         let mut connection = crate::core::pool::UpstreamConnection::new("subscription_docs".to_string());
         let instance_id = connection.id.clone();
         connection.update_connected(service, Vec::new(), capabilities);
+        connection.config_fingerprint = server_config.source_fingerprint.clone();
+        connection.runtime_fingerprint = Some(runtime_fingerprint);
 
         let mut pool = server.connection_pool.lock().await;
+        Arc::make_mut(&mut pool.config)
+            .mcp_servers
+            .insert(server_id.to_string(), server_config);
         pool.connections
             .entry(server_id.to_string())
             .or_default()

@@ -17,6 +17,7 @@ use crate::generate_id;
 
 const FAILURE_DECAY_WINDOW_SECS: u64 = 120;
 const FAILURE_BACKOFF_SCHEDULE_SECS: [u64; 3] = [5, 15, 60];
+const MAX_AUTOMATIC_START_ATTEMPTS: u32 = 3;
 
 /// Production route key for affinity-aware connection routing.
 ///
@@ -90,6 +91,7 @@ impl FailureKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FailureState {
     pub consecutive_failures: u32,
+    automatic_start_attempts: u32,
     pub last_failure_at: Option<Instant>,
     pub next_retry_at: Option<Instant>,
     pub last_error: Option<String>,
@@ -100,6 +102,7 @@ impl FailureState {
     pub fn new() -> Self {
         Self {
             consecutive_failures: 0,
+            automatic_start_attempts: 0,
             last_failure_at: None,
             next_retry_at: None,
             last_error: None,
@@ -108,6 +111,27 @@ impl FailureState {
     }
 
     pub fn register_failure(
+        &mut self,
+        now: Instant,
+        kind: FailureKind,
+        reason: Option<String>,
+    ) -> Duration {
+        if kind == FailureKind::Connect {
+            self.automatic_start_attempts = self.automatic_start_attempts.saturating_add(1);
+        }
+        self.register_failure_history(now, kind, reason)
+    }
+
+    pub fn register_claimed_recovery_failure(
+        &mut self,
+        now: Instant,
+        kind: FailureKind,
+        reason: Option<String>,
+    ) -> Duration {
+        self.register_failure_history(now, kind, reason)
+    }
+
+    fn register_failure_history(
         &mut self,
         now: Instant,
         kind: FailureKind,
@@ -141,6 +165,7 @@ impl FailureState {
 
     pub fn record_success(&mut self) {
         self.consecutive_failures = 0;
+        self.automatic_start_attempts = 0;
         self.last_failure_at = None;
         self.next_retry_at = None;
         self.last_error = None;
@@ -154,11 +179,60 @@ impl FailureState {
         self.next_retry_at
             .and_then(|deadline| deadline.checked_duration_since(now))
     }
+
+    pub fn automatic_recovery_exhausted(&self) -> bool {
+        self.automatic_start_attempts >= MAX_AUTOMATIC_START_ATTEMPTS
+    }
+
+    pub fn claim_automatic_recovery_attempt(&mut self) -> bool {
+        if self.automatic_recovery_exhausted() {
+            return false;
+        }
+
+        self.automatic_start_attempts = self.automatic_start_attempts.saturating_add(1);
+        true
+    }
 }
 
 impl Default for FailureState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FailureKind, FailureState};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn automatic_start_budget_does_not_decay_with_backoff_history() {
+        let mut state = FailureState::new();
+        let started_at = Instant::now();
+
+        for offset in [0, 121, 242] {
+            state.register_failure(
+                started_at + Duration::from_secs(offset),
+                FailureKind::Connect,
+                Some("fixture failure".to_string()),
+            );
+        }
+
+        assert!(state.automatic_recovery_exhausted());
+    }
+
+    #[test]
+    fn automatic_recovery_claim_reserves_the_last_attempt() {
+        let mut state = FailureState::new();
+        state.register_failure(
+            Instant::now(),
+            FailureKind::Connect,
+            Some("initial failure".to_string()),
+        );
+
+        assert!(state.claim_automatic_recovery_attempt());
+        assert!(state.claim_automatic_recovery_attempt());
+        assert!(!state.claim_automatic_recovery_attempt());
     }
 }
 
@@ -171,12 +245,16 @@ pub struct UpstreamConnection {
     pub server_name: String,
     /// Canonical configuration fingerprint bound to the config that opened this connection.
     pub config_fingerprint: Option<String>,
+    /// Effective launch materialization fingerprint bound to this connection.
+    pub runtime_fingerprint: Option<String>,
     /// Active service connection (using Arc for cheap cloning)
     pub service: Option<Arc<crate::core::transport::ClientService>>,
     /// Server capabilities (resources, tools, etc.)
     pub capabilities: Option<ServerCapabilities>,
     /// Tools provided by this server
     pub tools: Vec<Tool>,
+    /// Whether startup-discovered tools are still available to seed the first catalog observation.
+    pub startup_tools_pending: bool,
     /// Time when the connection was created
     pub created_at: Instant,
     /// Last time the server was connected
@@ -207,9 +285,11 @@ impl Clone for UpstreamConnection {
             id: self.id.clone(),
             server_name: self.server_name.clone(),
             config_fingerprint: self.config_fingerprint.clone(),
+            runtime_fingerprint: self.runtime_fingerprint.clone(),
             service: self.service.clone(), // Arc clone is cheap and preserves service
             capabilities: self.capabilities.clone(),
             tools: self.tools.clone(),
+            startup_tools_pending: self.startup_tools_pending,
             created_at: self.created_at,
             last_connected: self.last_connected,
             last_activity: self.last_activity,
@@ -232,9 +312,11 @@ impl UpstreamConnection {
             id: generate_id!("upsv"),
             server_name,
             config_fingerprint: None,
+            runtime_fingerprint: None,
             service: None,
             capabilities: None,
             tools: Vec::new(),
+            startup_tools_pending: false,
             created_at: now,
             last_connected: now,
             last_activity: now,
@@ -278,6 +360,7 @@ impl UpstreamConnection {
     ) {
         self.service = Some(Arc::new(service));
         self.tools = tools;
+        self.startup_tools_pending = true;
         self.capabilities = capabilities;
         self.status = ConnectionStatus::Ready;
         self.last_connected = Instant::now();
@@ -404,6 +487,7 @@ impl UpstreamConnection {
 
         self.service = None;
         self.tools = Vec::new();
+        self.startup_tools_pending = false;
         self.status = ConnectionStatus::Disabled(disabled_details);
 
         tracing::error!(
@@ -417,6 +501,7 @@ impl UpstreamConnection {
     pub fn update_disconnected(&mut self) {
         self.service = None;
         self.tools = Vec::new();
+        self.startup_tools_pending = false;
         self.status = ConnectionStatus::Shutdown;
         self.last_activity = Instant::now();
     }
@@ -495,6 +580,7 @@ impl UpstreamConnection {
                 self.connection_attempts = 0;
                 self.service = None;
                 self.tools = Vec::new();
+                self.startup_tools_pending = false;
 
                 tracing::info!(
                     "Server '{}' has been manually re-enabled and is ready for connection",

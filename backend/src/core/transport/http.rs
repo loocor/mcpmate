@@ -93,14 +93,20 @@ where
     E: std::error::Error + Send + Sync + 'static,
 {
     let service = build_initialized_service(server_name, transport, service_timeout).await?;
-
-    // Fetch tools
-    let tools = timeout(tools_timeout, service.list_all_tools())
-        .await
-        .map_err(|_| anyhow::anyhow!(format!("Timeout listing tools for server '{server_name}'")))?;
-    let tools = annotate_operation(tools.map_err(anyhow::Error::from), "tools/list", server_name)?;
-
     let capabilities = service.peer_info().map(|info| info.capabilities.clone());
+
+    let tools = if capabilities
+        .as_ref()
+        .and_then(|capabilities| capabilities.tools.as_ref())
+        .is_some()
+    {
+        let tools = timeout(tools_timeout, service.list_all_tools())
+            .await
+            .map_err(|_| anyhow::anyhow!(format!("Timeout listing tools for server '{server_name}'")))?;
+        annotate_operation(tools.map_err(anyhow::Error::from), "tools/list", server_name)?
+    } else {
+        Vec::new()
+    };
 
     tracing::info!(
         "Connected to server '{}', found {} tools, capabilities: {:?}",

@@ -283,19 +283,26 @@ async fn connect_stdio_server_inner(
     // Connect to server with timeout handling
     // server_name here is a display label (e.g., "Gitmcp (SERVxxxx)") provided by the caller
     let service = connect_with_timeout(cmd, ct.clone(), server_name, connection_timeout).await?;
+    let capabilities = service.peer_info().map(|info| info.capabilities.clone());
 
-    // Get tools with timeout handling
-    let tools = match get_tools_with_timeout(&service, server_name, tools_timeout, ct.clone()).await {
-        Ok(tools) => tools,
-        Err(e) => {
-            cancel_service_safely(service).await;
-            return Err(e);
+    let tools = if capabilities
+        .as_ref()
+        .and_then(|capabilities| capabilities.tools.as_ref())
+        .is_some()
+    {
+        match get_tools_with_timeout(&service, server_name, tools_timeout, ct.clone()).await {
+            Ok(tools) => tools,
+            Err(e) => {
+                cancel_service_safely(service).await;
+                return Err(e);
+            }
         }
+    } else {
+        Vec::new()
     };
 
     // Get process ID and capabilities
     let pid = get_process_id_for_server(server_name, server_config).await;
-    let capabilities = service.peer_info().map(|info| info.capabilities.clone());
 
     tracing::debug!(
         "Connected to server '{}', found {} tools, capabilities: {:?}, process ID: {:?}",
