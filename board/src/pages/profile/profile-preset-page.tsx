@@ -10,6 +10,7 @@ import {
 	CardTitle,
 } from "../../components/ui/card";
 import { configApi } from "../../lib/api";
+import type { ConfigPreset } from "../../lib/types";
 
 export function ProfilePresetPage() {
 	const { presetId } = useParams<{ presetId: string }>();
@@ -32,7 +33,7 @@ export function ProfilePresetPage() {
 	});
 
 	const updateMutation = useMutation({
-		mutationFn: ({ id, preset }: { id: string; preset: any }) =>
+		mutationFn: ({ id, preset }: { id: string; preset: Partial<ConfigPreset> }) =>
 			configApi.updatePreset(id, preset),
 		onSuccess: () => {
 			queryClient.invalidateQueries({

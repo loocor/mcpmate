@@ -15,6 +15,10 @@ import {
 } from "lucide-react";
 
 import { llmApi } from "../../lib/api";
+import {
+	SETTINGS_CARD_CONTENT_CLASS,
+	SETTINGS_ITEM_DESCRIPTION_CLASS,
+} from "./settings-layout";
 import type {
 	LlmConnectivityResult,
 	LlmProviderConfig,
@@ -241,7 +245,7 @@ export function ProvidersSettings() {
 					</CardDescription>
 				</div>
 			</CardHeader>
-			<CardContent>
+			<CardContent className={SETTINGS_CARD_CONTENT_CLASS}>
 				{isLoading ? (
 					<div className="flex items-center justify-center py-8">
 						<Loader2 className="h-6 w-6 animate-spin" />
@@ -249,7 +253,7 @@ export function ProvidersSettings() {
 				) : providers.length === 0 ? (
 					<div className="flex flex-col items-center justify-center py-12 text-center">
 						<Zap className="h-10 w-10 text-muted-foreground/50 mb-3" />
-						<p className="text-sm text-muted-foreground mb-4">
+						<p className={`mb-4 ${SETTINGS_ITEM_DESCRIPTION_CLASS}`}>
 							{t(
 								"settings:providers.empty",
 								"No providers configured yet. Add an LLM provider to enable LLM-powered workflows.",

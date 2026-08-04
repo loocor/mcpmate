@@ -47,7 +47,11 @@ import {
 import { CapsuleStripeRowBody } from "../../components/capsule-stripe-row";
 import { ProfileFormDrawer } from "../../components/profile-form-drawer";
 import { SurfaceReviewDialog } from "../../components/surface-review-dialog";
-import { DETAIL_TAB_CONTENT_CLASS } from "../../components/detail-tab-content-class";
+import {
+	DETAIL_TAB_CONTENT_CLASS,
+	DETAIL_OVERVIEW_PINNED_SECTION_CLASS,
+	DETAIL_OVERVIEW_STACK_CLASS,
+} from "../../components/detail-tab-content-class";
 import { ProfileTokenUsageChart } from "./components/profile-token-usage-chart";
 import {
 	AlertDialog,
@@ -1630,12 +1634,9 @@ export function ProfileDetailPage() {
 						</ButtonGroup>
 					</div>
 
-					<TabsContent
-						value="overview"
-						className="mt-0 flex min-h-0 flex-1 flex-col overflow-y-auto data-[state=inactive]:hidden"
-					>
-						<div className="grid gap-4">
-							<Card>
+					<TabsContent value="overview" className={DETAIL_TAB_CONTENT_CLASS}>
+						<div className={DETAIL_OVERVIEW_STACK_CLASS}>
+							<Card className={DETAIL_OVERVIEW_PINNED_SECTION_CLASS}>
 								<CardContent className="relative p-4">
 									{!isHostApp && !isCustomMode && (
 										<div className="absolute right-4 top-4">
@@ -1670,8 +1671,8 @@ export function ProfileDetailPage() {
 													<Badge
 														variant="secondary"
 														className={`justify-self-start border px-2.5 py-0.5 leading-none min-h-[1.5rem] ${suit.is_active
-																? "border-emerald-200 bg-emerald-100 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-400/50 dark:bg-emerald-500/20 dark:text-emerald-200"
-																: "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-300"
+															? "border-emerald-200 bg-emerald-100 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-400/50 dark:bg-emerald-500/20 dark:text-emerald-200"
+															: "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-300"
 															}`}
 													>
 														{suit.is_active
@@ -1754,7 +1755,9 @@ export function ProfileDetailPage() {
 								</CardContent>
 							</Card>
 
-							<div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+							<div
+								className={`grid grid-cols-2 md:grid-cols-4 gap-4 ${DETAIL_OVERVIEW_PINNED_SECTION_CLASS}`}
+							>
 								<Card className="h-full">
 									<CardHeader
 										className="pb-2 cursor-pointer"
@@ -1840,6 +1843,7 @@ export function ProfileDetailPage() {
 							</div>
 							{showProfileLiveLogs ? (
 								<AuditLogsPanel
+									fillHeight
 									title={t("profiles:detail.logs.title", {
 										defaultValue: "Logs",
 									})}
@@ -2004,8 +2008,8 @@ export function ProfileDetailPage() {
 														key={ALL_CAPABILITY_SERVERS_ID}
 														interactive
 														className={`group relative px-3 transition-colors ${isAllCapabilityServersSelected
-																? "bg-primary/10"
-																: ""
+															? "bg-primary/10"
+															: ""
 															}`}
 														onClick={() =>
 															setSelectedCapabilityServerId(

@@ -8,6 +8,7 @@ import {
 	CardHeader,
 	CardTitle,
 } from "../components/ui/card";
+import { cn } from "../lib/utils";
 
 export interface EntityCardProps {
 	id: string;
@@ -21,6 +22,8 @@ export interface EntityCardProps {
 	avatarShape?: "circle" | "rounded" | "square";
 
 	topRightBadge?: ReactNode;
+	/** Pin `topRightBadge` to the header top-right without shrinking the title row. */
+	topRightBadgePosition?: "inline" | "corner";
 
 	// 统计信息 (4x2 网格)
 	stats?: Array<{
@@ -51,6 +54,7 @@ export function EntityCard({
 	avatar,
 	avatarShape = "circle",
 	topRightBadge,
+	topRightBadgePosition = "inline",
 	stats = [],
 	bottomLeft,
 	bottomRight,
@@ -76,15 +80,36 @@ export function EntityCard({
 		onKeyDown?.(e);
 	};
 
+	const isCornerBadge =
+		topRightBadgePosition === "corner" && topRightBadge != null;
+	const titleClassNames = cn(
+		"min-w-0 truncate text-lg font-semibold leading-tight",
+		!isCornerBadge && "flex-1",
+		titleClassName,
+	);
+	const titleNode = (
+		<CardTitle className={titleClassNames} title={title}>
+			{title}
+		</CardTitle>
+	);
+
 	return (
 		<Card
-			className={`group flex h-full cursor-pointer flex-col overflow-hidden border border-slate-200 transition-all duration-200 hover:border-primary/40 hover:shadow-xl hover:-translate-y-0.5 dark:border-slate-700 ${className}`}
+			className={cn(
+				"group flex h-full cursor-pointer flex-col overflow-hidden border border-slate-200 transition-all duration-200 hover:border-primary/40 hover:shadow-xl hover:-translate-y-0.5 dark:border-slate-700",
+				className,
+			)}
 			role="button"
 			tabIndex={0}
 			onClick={handleClick}
 			onKeyDown={handleKeyDown}
 		>
-			<CardHeader className="p-4 pb-2">
+			<CardHeader className={cn("p-4 pb-2", isCornerBadge && "relative")}>
+				{isCornerBadge ? (
+					<div className="absolute right-3 top-3 z-10 flex flex-row-reverse flex-nowrap items-start gap-1">
+						{topRightBadge}
+					</div>
+				) : null}
 				<div className="flex min-w-0 items-start gap-3">
 					<CachedAvatar
 						src={avatar?.src}
@@ -94,20 +119,19 @@ export function EntityCard({
 						shape={avatarShape}
 						className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200 font-semibold"
 					/>
-					<div className="min-w-0 flex-1 space-y-2">
-						<div className="flex min-w-0 items-start justify-between gap-2">
-						<CardTitle
-							className={`min-w-0 flex-1 truncate text-lg font-semibold leading-tight ${titleClassName}`}
-							title={title}
-						>
-								{title}
-							</CardTitle>
-							{topRightBadge ? (
-								<div className="flex shrink-0 flex-row-reverse flex-nowrap gap-1 pt-0.5">
-									{topRightBadge}
-								</div>
-							) : null}
-						</div>
+					<div className={cn("min-w-0 flex-1 space-y-2", isCornerBadge && "pr-20")}>
+						{isCornerBadge ? (
+							titleNode
+						) : (
+							<div className="flex min-w-0 items-start justify-between gap-2">
+								{titleNode}
+								{topRightBadge ? (
+									<div className="flex shrink-0 flex-row-reverse flex-nowrap gap-1 pt-0.5">
+										{topRightBadge}
+									</div>
+								) : null}
+							</div>
+						)}
 						<div className="h-10 flex min-w-0 items-start">
 							{typeof description === "string" || description === undefined ? (
 								<CardDescription className="text-sm text-slate-500 line-clamp-2 leading-5">

@@ -2,7 +2,7 @@ import { useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Pagination } from "../../components/pagination";
+import { Pagination, catalogPaginationClassName } from "../../components/pagination";
 import { serversApi } from "../../lib/api";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyInfo } from "../../lib/notify";
@@ -11,10 +11,7 @@ import { useAppStore } from "../../lib/store";
 import type { RegistryServerEntry } from "../../lib/types";
 import { useUrlSearch, useUrlState } from "../../lib/hooks/use-url-state";
 import { useMarketData } from "./hooks/use-market-data";
-import {
-	MARKET_PAGE_SIZE_OPTIONS,
-	rememberMarketListReturnSearch,
-} from "./market-list-pagination-storage";
+import { rememberMarketListReturnSearch } from "./market-list-pagination-storage";
 import { MarketSearch } from "./market-search";
 import { ServerGrid } from "./server-grid";
 import type { SortOption } from "./types";
@@ -108,7 +105,7 @@ export function MarketPage() {
 			!isEmpty);
 
 	return (
-		<div className="flex h-full min-h-0 flex-col gap-3.5">
+		<div className="flex h-full min-h-0 flex-col gap-4">
 			<div className="shrink-0 py-1">
 				<div className="flex items-center gap-2 min-w-0 overflow-visible">
 					<p className="flex-1 min-w-0 truncate whitespace-nowrap text-base text-muted-foreground">
@@ -126,43 +123,45 @@ export function MarketPage() {
 				</div>
 			</div>
 
-			<ServerGrid
-				servers={servers}
-				installedRegistryServerKeys={installedRegistryServerKeys}
-				isInitialLoading={isInitialLoading}
-				isPageLoading={isPageLoading}
-				isEmpty={isEmpty}
-				fetchError={fetchError}
-				hasActiveSearch={search.trim().length > 0}
-				pagination={pagination}
-				onRetry={onRefresh}
-				onClearSearch={handleClearSearch}
-				onServerPreview={handleOpenDetailPage}
-				onServerInstall={handleOpenDetailPage}
-				onServerHide={handleHideServer}
-				enableBlacklist={enableMarketBlacklist}
-			/>
-
-			{showPagination ? (
-				<Pagination
-					currentPage={pagination.currentPage}
-					hasPreviousPage={pagination.hasPreviousPage}
-					hasNextPage={pagination.hasNextPage}
-					isLoading={isInitialLoading || isPageLoading || isPaginationActionLoading}
-					itemsPerPage={pagination.itemsPerPage}
-					currentPageItemCount={servers.length}
-					totalPages={pagination.totalPages}
-					disableLastPageWhenTotalUnknown
-					onGoToPage={onGoToPage}
-					onItemsPerPageChange={onItemsPerPageChange}
-					onPreviousPage={onPreviousPage}
-					onFirstPage={onFirstPage}
-					onNextPage={onNextPage}
-					onLastPage={onLastPage}
-					pageSizeOptions={[...MARKET_PAGE_SIZE_OPTIONS]}
-					className="shrink-0 pb-1"
+			<div className="flex min-h-0 flex-1 flex-col">
+				<ServerGrid
+					servers={servers}
+					installedRegistryServerKeys={installedRegistryServerKeys}
+					isInitialLoading={isInitialLoading}
+					isPageLoading={isPageLoading}
+					isEmpty={isEmpty}
+					fetchError={fetchError}
+					hasActiveSearch={search.trim().length > 0}
+					pagination={pagination}
+					onRetry={onRefresh}
+					onClearSearch={handleClearSearch}
+					onServerPreview={handleOpenDetailPage}
+					onServerInstall={handleOpenDetailPage}
+					onServerHide={handleHideServer}
+					enableBlacklist={enableMarketBlacklist}
 				/>
-			) : null}
+
+				{showPagination ? (
+					<Pagination
+						currentPage={pagination.currentPage}
+						hasPreviousPage={pagination.hasPreviousPage}
+						hasNextPage={pagination.hasNextPage}
+						isLoading={isInitialLoading || isPageLoading || isPaginationActionLoading}
+						itemsPerPage={pagination.itemsPerPage}
+						currentPageItemCount={servers.length}
+						totalPages={pagination.totalPages}
+						disableLastPageWhenTotalUnknown
+						onGoToPage={onGoToPage}
+						onItemsPerPageChange={onItemsPerPageChange}
+						onPreviousPage={onPreviousPage}
+						onFirstPage={onFirstPage}
+						onNextPage={onNextPage}
+						onLastPage={onLastPage}
+						pageSizeOptions={pagination.pageSizeOptions}
+						className={catalogPaginationClassName}
+					/>
+				) : null}
+			</div>
 		</div>
 	);
 }

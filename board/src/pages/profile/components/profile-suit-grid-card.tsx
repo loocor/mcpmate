@@ -46,6 +46,7 @@ export function ProfileSuitGridCard({
 			id={suit.id}
 			title={displayName}
 			description={suit.description}
+			topRightBadgePosition="corner"
 			avatar={{
 				fallback: avatarInitial,
 			}}

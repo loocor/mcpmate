@@ -49,6 +49,7 @@ export interface ServerGridProps {
 		hasNextPage: boolean;
 		itemsPerPage: number;
 		totalPages: number | null;
+		pageSizeOptions: number[];
 	};
 	onRetry: () => void;
 	onClearSearch: () => void;
@@ -80,6 +81,7 @@ export interface UseMarketDataReturn {
 		hasNextPage: boolean;
 		itemsPerPage: number;
 		totalPages: number | null;
+		pageSizeOptions: number[];
 	};
 	onNextPage: () => void;
 	onPreviousPage: () => void;

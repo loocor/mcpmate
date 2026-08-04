@@ -30,13 +30,13 @@ export interface Entity {
 }
 import { Button } from "./button";
 import { Input } from "./input";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "./select";
+import { PageToolbarSelect } from "./page-toolbar-select";
+
+export { PageToolbarSelect } from "./page-toolbar-select";
+export type {
+	PageToolbarSelectOption,
+	PageToolbarSelectProps,
+} from "./page-toolbar-select";
 
 export const toolbarSearchInputClassName =
 	"h-9 w-full rounded-md border border-slate-200 bg-white px-4 py-2 text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-offset-0 focus:ring-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-offset-0 focus-visible:ring-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:placeholder:text-slate-400 dark:focus:ring-slate-600 dark:focus-visible:ring-slate-600";
@@ -45,6 +45,7 @@ export const toolbarSearchInputClassName =
 export interface PageToolbarConfig<T extends Entity = Entity> {
 	// 数据源
 	data?: T[];
+	isDataReady?: boolean;
 
 	// 搜索配置
 	search?: {
@@ -124,6 +125,7 @@ export function PageToolbar<T extends Entity = Entity>({
 }: PageToolbarProps<T>) {
 	const {
 		data = [],
+		isDataReady = true,
 		search: searchConfig,
 		viewMode: viewModeConfig,
 		sort: sortConfig,
@@ -258,23 +260,40 @@ export function PageToolbar<T extends Entity = Entity>({
 	}, [filteredData, sortState, sortConfig, getNestedValue]);
 
 	// 通知排序后的数据变化（避免无限循环）
-	const lastSortedRef = React.useRef<T[] | null>(null);
+	const lastSortedNotificationRef = React.useRef<{
+		items: T[];
+		data: T[];
+		search: string;
+		sortField: string;
+		sortDirection: SortState["direction"];
+	} | null>(null);
 	React.useEffect(() => {
-		if (!callbacks?.onSortedDataChange) return;
+		if (!isDataReady || !callbacks?.onSortedDataChange) return;
 
-		const previous = lastSortedRef.current;
-		const isSameAsPrevious =
+		const previous = lastSortedNotificationRef.current;
+		const hasSameItems =
 			previous !== null &&
-			previous.length === sortedData.length &&
-			previous.every((item, index) => item === sortedData[index]);
+			previous.items.length === sortedData.length &&
+			previous.items.every((item, index) => item === sortedData[index]);
+		const hasSameInput =
+			previous?.data === data &&
+			previous.search === search &&
+			previous.sortField === sortState.field &&
+			previous.sortDirection === sortState.direction;
 
-		if (isSameAsPrevious) {
+		if (hasSameItems && hasSameInput) {
 			return;
 		}
 
-		lastSortedRef.current = sortedData;
+		lastSortedNotificationRef.current = {
+			items: sortedData,
+			data,
+			search,
+			sortField: sortState.field,
+			sortDirection: sortState.direction,
+		};
 		callbacks.onSortedDataChange(sortedData);
-	}, [sortedData, callbacks]);
+	}, [callbacks, data, isDataReady, search, sortedData, sortState.direction, sortState.field]);
 
 	// 是否启用精简模式
 	const isCompact = compactConfig?.enabled !== false;
@@ -365,8 +384,6 @@ export function PageToolbar<T extends Entity = Entity>({
 			handleSortChange({ field: sortState.field, direction: newDirection });
 		};
 
-		const currentLabel = currentOption?.label || "Sort";
-
 		return (
 			<div className="flex items-center rounded-md border border-slate-200 dark:border-slate-700 h-9">
 				<Button
@@ -383,18 +400,16 @@ export function PageToolbar<T extends Entity = Entity>({
 					)}
 				</Button>
 
-				<Select value={sortState.field} onValueChange={handleSortFieldChange}>
-					<SelectTrigger className="h-9 w-full sm:w-[200px] border-l-0 rounded-l-none">
-						<SelectValue placeholder="Sort">{currentLabel}</SelectValue>
-					</SelectTrigger>
-					<SelectContent align="end">
-						{sortConfig.options.map((option) => (
-							<SelectItem key={option.value} value={option.value}>
-								{option.label}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
+				<PageToolbarSelect
+					value={sortState.field}
+					onValueChange={handleSortFieldChange}
+					options={sortConfig.options.map((option) => ({
+						value: option.value,
+						label: option.label,
+					}))}
+					placeholder="Sort"
+					triggerClassName="border-l-0 rounded-l-none"
+				/>
 			</div>
 		);
 	};

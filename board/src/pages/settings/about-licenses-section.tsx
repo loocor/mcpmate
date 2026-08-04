@@ -133,15 +133,12 @@ export function AboutLicensesSection({ document }: AboutLicensesSectionProps) {
 		<Card className="flex h-full flex-col">
 			<CardHeader className="space-y-0">
 				<CardTitle>
-					{t("settings:about.title", { defaultValue: "About MCPMate" })}{" "}
-					<sup className="text-sm font-normal text-slate-500 dark:text-slate-400">
-						{t("wip", { defaultValue: "WIP" })}
-					</sup>
+					{t("settings:about.title", { defaultValue: "About MCPMate" })}
 				</CardTitle>
 				<CardDescription>
 					{t("settings:about.description", {
 						defaultValue:
-							"Open-source acknowledgements for the MCPMate preview build.",
+							"Open-source acknowledgements for MCPMate.",
 					})}
 				</CardDescription>
 				{generatedAtDisplay && (

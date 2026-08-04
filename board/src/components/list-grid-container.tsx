@@ -4,6 +4,7 @@ import { cn } from "../lib/utils";
 
 export interface ListGridContainerProps {
 	children: ReactNode;
+	viewMode?: "grid" | "list";
 	loading?: boolean;
 	loadingSkeleton?: ReactNode;
 	emptyState?: ReactNode;
@@ -13,6 +14,7 @@ export interface ListGridContainerProps {
 
 export function ListGridContainer({
 	children,
+	viewMode,
 	loading = false,
 	loadingSkeleton,
 	emptyState,
@@ -22,12 +24,13 @@ export function ListGridContainer({
 	const defaultView = useAppStore(
 		(state) => state.dashboardSettings.defaultView,
 	);
+	const resolvedView = viewMode ?? defaultView;
 
 	if (loading) {
 		return (
 			<div
 				className={cn(
-					defaultView === "grid"
+					resolvedView === "grid"
 						? "grid gap-4 md:grid-cols-2 xl:grid-cols-3"
 						: "space-y-4",
 					className,
@@ -47,7 +50,7 @@ export function ListGridContainer({
 	return (
 		<div
 			className={cn(
-				defaultView === "grid"
+				resolvedView === "grid"
 					? "grid gap-4 md:grid-cols-2 xl:grid-cols-3"
 					: "space-y-4",
 				className,

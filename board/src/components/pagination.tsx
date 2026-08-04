@@ -97,6 +97,20 @@ interface PaginationProps {
 
 const ICON_BTN = "h-8 w-8 shrink-0";
 
+/** Keep keyboard focus visible without adding the default two-pixel glow. */
+const PAGINATION_CONTROL_FOCUS_CLASS =
+	"focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1";
+
+const PER_PAGE_SELECT_TRIGGER_CLASS = cn(
+	"relative h-8 w-[4.25rem] shrink-0 justify-center px-2 text-xs",
+	PAGINATION_CONTROL_FOCUS_CLASS,
+	"[&>span]:line-clamp-none [&>span]:flex-1 [&>span]:text-center",
+	"[&>svg]:absolute [&>svg]:right-1 [&>svg]:h-3.5 [&>svg]:w-3.5 [&>svg]:opacity-50",
+);
+
+/** Sticky catalog footer pagination; pair with a scrollable list using `flex-1` above it. */
+export const catalogPaginationClassName = "shrink-0 pt-3";
+
 function PaginationSummary(props: {
 	totalItemCount?: number | null;
 	summaryId: string;
@@ -127,6 +141,9 @@ function PaginationSummary(props: {
 		</p>
 	);
 }
+
+/** Horizontal padding on each side of "/" so gaps to page numbers match in px. */
+const PAGE_INDICATOR_SLASH_SIDE_PADDING_PX = 6;
 
 function PageIndicator(props: {
 	currentPage: number;
@@ -182,9 +199,10 @@ function PageIndicator(props: {
 	const pageWord = t("pagination.pageWord", { defaultValue: "Page" });
 	const pageSuffix = t("pagination.pageSuffix", { defaultValue: "" });
 
+	const totalDigits =
+		typeof totalPages === "number" && totalPages > 0 ? String(totalPages).length : 0;
+
 	const widthCh = useMemo(() => {
-		const totalDigits =
-			typeof totalPages === "number" && totalPages > 0 ? String(totalPages).length : 0;
 		const core = Math.max(
 			1,
 			draft.length,
@@ -193,45 +211,94 @@ function PageIndicator(props: {
 		);
 		// Padding for caret and focus ring; scales with digit count
 		return Math.min(24, core + 1.75);
-	}, [currentPage, draft, totalPages]);
+	}, [currentPage, draft, totalDigits]);
+
+	const currentPageWidthCh = useMemo(() => {
+		const core = Math.max(1, draft.length, String(currentPage).length);
+		return Math.min(24, core + 1.75);
+	}, [currentPage, draft]);
+
+	const pageInputClassName = cn(
+		"h-8 min-h-8 shrink-0 box-border rounded-md border text-sm tabular-nums font-medium text-foreground transition-[width,box-shadow,border-color,background-color]",
+		PAGINATION_CONTROL_FOCUS_CLASS,
+		showTotal ? "text-right" : "min-w-0 max-w-full text-center",
+		"disabled:cursor-not-allowed disabled:opacity-50",
+		focused
+			? cn("border-input bg-background py-0", showTotal ? "px-1" : "px-2")
+			: "border-transparent bg-transparent py-0 shadow-none px-1",
+	);
+
+	const pageInput = onGoToPage ? (
+		<input
+			id={inputId}
+			type="text"
+			inputMode="numeric"
+			autoComplete="off"
+			disabled={isLoading}
+			aria-label={t("pagination.goToPage", { defaultValue: "Go to page" })}
+			aria-describedby={describedBy}
+			value={draft}
+			onChange={(event) => setDraft(event.target.value)}
+			onFocus={() => setFocused(true)}
+			onBlur={handleBlur}
+			onKeyDown={handleKeyDown}
+			style={{
+				width: `${showTotal ? currentPageWidthCh : widthCh}ch`,
+			}}
+			className={pageInputClassName}
+		/>
+	) : (
+		<span
+			className={cn(
+				"shrink-0 tabular-nums font-medium text-foreground",
+				!showTotal && "min-w-[2.5rem]",
+			)}
+		>
+			{currentPage}
+		</span>
+	);
 
 	return (
-		<div className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm text-slate-600 dark:text-slate-400">
-			{pageWord.trim() ? <span className="shrink-0">{pageWord}</span> : null}
-			{onGoToPage ? (
-				<input
-					id={inputId}
-					type="text"
-					inputMode="numeric"
-					autoComplete="off"
-					disabled={isLoading}
-					aria-label={t("pagination.goToPage", { defaultValue: "Go to page" })}
-					aria-describedby={describedBy}
-					value={draft}
-					onChange={(event) => setDraft(event.target.value)}
-					onFocus={() => setFocused(true)}
-					onBlur={handleBlur}
-					onKeyDown={handleKeyDown}
-					style={{ width: `${widthCh}ch`, maxWidth: "100%" }}
-					className={cn(
-						"h-8 min-h-8 box-border min-w-0 rounded-md border text-center text-sm tabular-nums font-medium text-foreground transition-[width,box-shadow,border-color,background-color]",
-						"disabled:cursor-not-allowed disabled:opacity-50",
-						focused
-							? "border-input bg-background px-2 py-0 ring-2 ring-ring ring-offset-2 ring-offset-background"
-							: "border-transparent bg-transparent px-1 py-0 shadow-none ring-0 ring-offset-0 outline-none focus-visible:ring-0 focus-visible:ring-offset-0",
-					)}
-				/>
-			) : (
-				<span className="min-w-[2.5rem] tabular-nums font-medium text-foreground">{currentPage}</span>
-			)}
-			{pageSuffix ? (
-				<span className="shrink-0 tabular-nums text-foreground">{pageSuffix}</span>
+		<div
+			className="inline-flex shrink-0 flex-nowrap items-center gap-1.5 whitespace-nowrap text-sm text-slate-600 dark:text-slate-400"
+		>
+			{!showTotal && pageWord.trim() ? (
+				<span className="shrink-0">{pageWord}</span>
 			) : null}
 			{showTotal ? (
-				<span className="shrink-0 tabular-nums">
-					{t("pagination.ofTotal", { total: totalPages, defaultValue: "of {{total}}" })}
-				</span>
-			) : null}
+				<div className="inline-flex flex-nowrap items-center whitespace-nowrap">
+					<div className="shrink-0 tabular-nums">{pageInput}</div>
+					<span
+						className="inline-flex shrink-0 items-center justify-center leading-none text-slate-600 dark:text-slate-400"
+						style={{
+							paddingLeft: PAGE_INDICATOR_SLASH_SIDE_PADDING_PX,
+							paddingRight: PAGE_INDICATOR_SLASH_SIDE_PADDING_PX,
+						}}
+						aria-hidden
+					>
+						/
+					</span>
+					<span
+						className="shrink-0 tabular-nums font-medium text-foreground"
+						aria-hidden
+					>
+						{totalPages}
+					</span>
+					<span className="sr-only">
+						{t("pagination.ofTotal", {
+							total: totalPages,
+							defaultValue: "of {{total}}",
+						})}
+					</span>
+				</div>
+			) : (
+				<>
+					{pageInput}
+					{!showTotal && pageSuffix ? (
+						<span className="shrink-0 tabular-nums text-foreground">{pageSuffix}</span>
+					) : null}
+				</>
+			)}
 		</div>
 	);
 }
@@ -323,7 +390,7 @@ export function Pagination({
 					type="button"
 					variant="outline"
 					size="icon"
-					className={ICON_BTN}
+					className={cn(ICON_BTN, PAGINATION_CONTROL_FOCUS_CLASS)}
 					onClick={onFirstPage}
 					disabled={isFirstDisabled}
 					aria-label={t("pagination.first", { defaultValue: "First" })}
@@ -334,7 +401,7 @@ export function Pagination({
 					type="button"
 					variant="outline"
 					size="icon"
-					className={ICON_BTN}
+					className={cn(ICON_BTN, PAGINATION_CONTROL_FOCUS_CLASS)}
 					onClick={onPreviousPage}
 					disabled={isPreviousDisabled}
 					aria-label={t("pagination.previous", { defaultValue: "Previous" })}
@@ -349,7 +416,7 @@ export function Pagination({
 						disabled={isLoading}
 					>
 						<SelectTrigger
-							className="h-8 w-[4.25rem] shrink-0 px-2 text-xs"
+							className={PER_PAGE_SELECT_TRIGGER_CLASS}
 							aria-label={t("pagination.perPage", { defaultValue: "Per page" })}
 						>
 							<SelectValue />
@@ -368,7 +435,7 @@ export function Pagination({
 					type="button"
 					variant="outline"
 					size="icon"
-					className={ICON_BTN}
+					className={cn(ICON_BTN, PAGINATION_CONTROL_FOCUS_CLASS)}
 					onClick={onNextPage}
 					disabled={isNextDisabled}
 					aria-label={t("pagination.next", { defaultValue: "Next" })}
@@ -379,7 +446,7 @@ export function Pagination({
 					type="button"
 					variant="outline"
 					size="icon"
-					className={ICON_BTN}
+					className={cn(ICON_BTN, PAGINATION_CONTROL_FOCUS_CLASS)}
 					onClick={onLastPage}
 					disabled={isLastDisabled}
 					aria-label={t("pagination.last", { defaultValue: "Last" })}

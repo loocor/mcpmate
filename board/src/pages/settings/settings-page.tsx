@@ -122,6 +122,29 @@ import {
 import type { OpenSourceDocument } from "../../types/open-source";
 import { AboutLicensesSection } from "./about-licenses-section";
 import {
+	SETTINGS_CARD_CONTENT_CLASS,
+	SETTINGS_CARD_CONTENT_STACK_CLASS,
+	SETTINGS_CLIENTS_CONTROL_CLASS,
+	SETTINGS_CLIENTS_LABEL_CLASS,
+	SETTINGS_CLIENTS_ROW_CLASS,
+	SETTINGS_CONTROL_CLASS,
+	SETTINGS_GRID_CONTROL_CLASS,
+	SETTINGS_GRID_ROW_CLASS, SETTINGS_INPUT_WIDE_CLASS,
+	SETTINGS_ITEM_DESCRIPTION_CLASS,
+	SETTINGS_ITEM_TITLE_CLASS,
+	SETTINGS_LABEL_CLASS,
+	SETTINGS_LABEL_FLEX_CLASS,
+	SETTINGS_MUTED_HINT_CLASS,
+	SETTINGS_ROW_CLASS,
+	SETTINGS_SECTION_CLASS,
+	SETTINGS_SECURITY_DIVIDER_CLASS,
+	SETTINGS_SECURITY_GROUP_CLASS,
+	SETTINGS_SELECT_TRIGGER_CLASS,
+	SETTINGS_SELECT_TRIGGER_WIDE_CLASS,
+	SETTINGS_SWITCH_ROW_CLASS,
+	SETTINGS_TAB_TRIGGER_CLASS
+} from "./settings-layout";
+import {
 	buildClientWritebackDefaultUpdate,
 	removeClientWritebackDecisionCache,
 	resolveClientWritebackDefaultSelection,
@@ -1440,22 +1463,6 @@ export function SettingsPage() {
 		wireDashboardToCoreSource,
 	]);
 
-	const tabTriggerClass =
-		"w-full justify-center gap-2 px-2 py-2 text-left text-sm font-medium text-slate-600 data-[state=active]:text-emerald-700 md:justify-start md:px-3 dark:text-slate-300";
-	const settingItemTitleClass = "text-base font-medium";
-	const settingItemDescriptionClass = "text-sm text-muted-foreground";
-	const generalSettingsRowClass =
-		"flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4";
-	const generalSettingsLabelClass = "min-w-0 space-y-0.5";
-	const generalSettingsControlClass = "w-full shrink-0 sm:w-72";
-	/** Clients tab: left column wraps without stealing flex space from controls; right keeps a floor width so Segments are not squeezed. */
-	const clientsSettingsRowClass =
-		"flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6";
-	const clientsSettingsLabelClass =
-		"min-w-0 max-w-full flex-1 space-y-0.5 sm:pr-2 lg:max-w-lg xl:max-w-xl";
-	const clientsSettingsControlClass =
-		"w-full shrink-0 sm:w-auto sm:min-w-[16rem] md:min-w-[20rem] lg:min-w-[24rem]";
-
 	const themeOptions = useMemo<SegmentOption[]>(
 		() =>
 			THEME_CONFIG.map(({ value, icon: Icon, labelKey, fallback }) => ({
@@ -1839,13 +1846,13 @@ export function SettingsPage() {
 				}
 			>
 				<TabsList className="sticky top-4 flex w-14 shrink-0 flex-col gap-1 self-start rounded-lg p-1 md:w-56 md:p-2">
-					<TabsTrigger value="general" className={tabTriggerClass}>
+					<TabsTrigger value="general" className={SETTINGS_TAB_TRIGGER_CLASS}>
 						<LayoutGrid className="h-4 w-4 shrink-0" />
 						<span className="hidden md:inline truncate">
 							{t("settings:tabs.general", { defaultValue: "General" })}
 						</span>
 					</TabsTrigger>
-					<TabsTrigger value="servers" className={tabTriggerClass}>
+					<TabsTrigger value="servers" className={SETTINGS_TAB_TRIGGER_CLASS}>
 						<Server className="h-4 w-4 shrink-0" />
 						<span className="hidden md:inline truncate">
 							{t("settings:tabs.serverControls", {
@@ -1853,7 +1860,7 @@ export function SettingsPage() {
 							})}
 						</span>
 					</TabsTrigger>
-					<TabsTrigger value="clients" className={tabTriggerClass}>
+					<TabsTrigger value="clients" className={SETTINGS_TAB_TRIGGER_CLASS}>
 						<AppWindow className="h-4 w-4 shrink-0" />
 						<span className="hidden md:inline truncate">
 							{t("settings:tabs.clientDefaults", {
@@ -1861,50 +1868,50 @@ export function SettingsPage() {
 							})}
 						</span>
 					</TabsTrigger>
-					<TabsTrigger value="profile" className={tabTriggerClass}>
+					<TabsTrigger value="profile" className={SETTINGS_TAB_TRIGGER_CLASS}>
 						<Sliders className="h-4 w-4 shrink-0" />
 						<span className="hidden md:inline truncate">
 							{t("settings:tabs.profile", { defaultValue: "Profile" })}
 						</span>
 					</TabsTrigger>
-					<TabsTrigger value="market" className={tabTriggerClass}>
+					<TabsTrigger value="market" className={SETTINGS_TAB_TRIGGER_CLASS}>
 						<Store className="h-4 w-4 shrink-0" />
 						<span className="hidden md:inline truncate">
 							{t("settings:tabs.market", { defaultValue: "Market" })}
 						</span>
 					</TabsTrigger>
-					<TabsTrigger value="audit" className={tabTriggerClass}>
+					<TabsTrigger value="audit" className={SETTINGS_TAB_TRIGGER_CLASS}>
 						<FileSearch className="h-4 w-4 shrink-0" />
 						<span className="hidden md:inline truncate">
 							{t("settings:tabs.audit", { defaultValue: "Logs" })}
 						</span>
 					</TabsTrigger>
-					<TabsTrigger value="develop" className={tabTriggerClass}>
+					<TabsTrigger value="develop" className={SETTINGS_TAB_TRIGGER_CLASS}>
 						<Bug className="h-4 w-4 shrink-0" />
 						<span className="hidden md:inline truncate">
 							{t("settings:tabs.developer", { defaultValue: "Developer" })}
 						</span>
 					</TabsTrigger>
-					<TabsTrigger value="security" className={tabTriggerClass}>
+					<TabsTrigger value="security" className={SETTINGS_TAB_TRIGGER_CLASS}>
 						<ShieldCheck className="h-4 w-4 shrink-0" />
 						<span className="hidden md:inline truncate">
 							{t("settings:tabs.security", { defaultValue: "Security" })}
 						</span>
 					</TabsTrigger>
-					<TabsTrigger value="providers" className={tabTriggerClass}>
+					<TabsTrigger value="providers" className={SETTINGS_TAB_TRIGGER_CLASS}>
 						<Zap className="h-4 w-4 shrink-0" />
 						<span className="hidden md:inline truncate">
 							{t("settings:tabs.providers", { defaultValue: "Providers" })}
 						</span>
 					</TabsTrigger>
-					<TabsTrigger value="system" className={tabTriggerClass}>
+					<TabsTrigger value="system" className={SETTINGS_TAB_TRIGGER_CLASS}>
 						<Activity className="h-4 w-4 shrink-0" />
 						<span className="hidden md:inline truncate">
 							{t("settings:tabs.system", { defaultValue: "System" })}
 						</span>
 					</TabsTrigger>
 					{showLicenseTab && (
-						<TabsTrigger value="about" className={tabTriggerClass}>
+						<TabsTrigger value="about" className={SETTINGS_TAB_TRIGGER_CLASS}>
 							<BookText className="h-4 w-4 shrink-0" />
 							<span className="hidden md:inline truncate">
 								{t("settings:tabs.about", { defaultValue: "About" })}
@@ -1933,23 +1940,23 @@ export function SettingsPage() {
 									})}
 								</CardDescription>
 							</CardHeader>
-							<CardContent className="space-y-5">
+							<CardContent className={SETTINGS_CARD_CONTENT_CLASS}>
 								{/* Default View */}
-								<div className={generalSettingsRowClass}>
-									<div className={generalSettingsLabelClass}>
-										<h3 className={settingItemTitleClass}>
+								<div className={SETTINGS_ROW_CLASS}>
+									<div className={SETTINGS_LABEL_CLASS}>
+										<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 											{t("settings:general.defaultView", {
 												defaultValue: "Default View",
 											})}
 										</h3>
-										<p className={settingItemDescriptionClass}>
+										<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 											{t("settings:general.defaultViewDescription", {
 												defaultValue:
 													"Choose the default layout for displaying items.",
 											})}
 										</p>
 									</div>
-									<div className={generalSettingsControlClass}>
+									<div className={SETTINGS_CONTROL_CLASS}>
 										<Segment
 											options={defaultViewOptions}
 											value={dashboardSettings.defaultView}
@@ -1965,20 +1972,20 @@ export function SettingsPage() {
 								</div>
 
 								{/* Theme */}
-								<div className={generalSettingsRowClass}>
-									<div className={generalSettingsLabelClass}>
-										<h3 className={settingItemTitleClass}>
+								<div className={SETTINGS_ROW_CLASS}>
+									<div className={SETTINGS_LABEL_CLASS}>
+										<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 											{t("settings:general.themeTitle", {
 												defaultValue: "Theme",
 											})}
 										</h3>
-										<p className={settingItemDescriptionClass}>
+										<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 											{t("settings:general.themeDescription", {
 												defaultValue: "Switch between light, dark, and system theme.",
 											})}
 										</p>
 									</div>
-									<div className={generalSettingsControlClass}>
+									<div className={SETTINGS_CONTROL_CLASS}>
 										<Segment
 											options={themeOptions}
 											value={theme}
@@ -1989,20 +1996,20 @@ export function SettingsPage() {
 								</div>
 
 								{/* Language Selection */}
-								<div className={generalSettingsRowClass}>
-									<div className={generalSettingsLabelClass}>
-										<h3 className={settingItemTitleClass}>
+								<div className={SETTINGS_ROW_CLASS}>
+									<div className={SETTINGS_LABEL_CLASS}>
+										<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 											{t("settings:general.language", {
 												defaultValue: "Language",
 											})}
 										</h3>
-										<p className={settingItemDescriptionClass}>
+										<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 											{t("settings:general.languageDescription", {
 												defaultValue: "Select the dashboard language.",
 											})}
 										</p>
 									</div>
-									<div className={generalSettingsControlClass}>
+									<div className={SETTINGS_CONTROL_CLASS}>
 										<Select
 											value={dashboardSettings.language}
 											onValueChange={(value: DashboardLanguage) =>
@@ -2028,22 +2035,22 @@ export function SettingsPage() {
 								</div>
 
 								{isTauriShell && (
-									<div className="space-y-5">
-										<div className={generalSettingsRowClass}>
-											<div className={generalSettingsLabelClass}>
-												<h3 className={settingItemTitleClass}>
+									<div className={SETTINGS_SECTION_CLASS}>
+										<div className={SETTINGS_ROW_CLASS}>
+											<div className={SETTINGS_LABEL_CLASS}>
+												<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 													{t("settings:general.menuBarTitle", {
 														defaultValue: "Menu Bar Icon",
 													})}
 												</h3>
-												<p className={settingItemDescriptionClass}>
+												<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 													{t("settings:general.menuBarDescription", {
 														defaultValue:
 															"Choose when the desktop tray icon should appear.",
 													})}
 												</p>
 											</div>
-											<div className={generalSettingsControlClass}>
+											<div className={SETTINGS_CONTROL_CLASS}>
 												<Select
 													value={dashboardSettings.menuBarIconMode}
 													onValueChange={(value: MenuBarIconMode) =>
@@ -2075,14 +2082,14 @@ export function SettingsPage() {
 											</div>
 										</div>
 
-										<div className={generalSettingsRowClass}>
-											<div className={generalSettingsLabelClass}>
-												<h3 className={settingItemTitleClass}>
+										<div className={SETTINGS_ROW_CLASS}>
+											<div className={SETTINGS_LABEL_CLASS}>
+												<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 													{t("settings:general.dockTitle", {
 														defaultValue: "Dock / Taskbar Icon",
 													})}
 												</h3>
-												<p className={settingItemDescriptionClass}>
+												<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 													{t("settings:general.dockDescription", {
 														defaultValue:
 															"Show MCPMate in the Dock (macOS), taskbar (Windows/Linux), or run from the tray or menu bar only.",
@@ -2126,15 +2133,15 @@ export function SettingsPage() {
 									})}
 								</CardDescription>
 							</CardHeader>
-							<CardContent className="space-y-5">
-								<div className="flex items-center justify-between gap-4">
-									<div>
-										<h3 className="text-base font-medium">
+							<CardContent className={SETTINGS_CARD_CONTENT_CLASS}>
+								<div className={SETTINGS_SWITCH_ROW_CLASS}>
+									<div className={SETTINGS_LABEL_CLASS}>
+										<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 											{t("settings:servers.syncTitle", {
 												defaultValue: "Sync Global Start/Stop",
 											})}
 										</h3>
-										<p className="text-sm text-muted-foreground">
+										<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 											{t("settings:servers.syncDescription", {
 												defaultValue:
 													"Push global enable state to managed clients instantly.",
@@ -2149,14 +2156,14 @@ export function SettingsPage() {
 									/>
 								</div>
 
-								<div className="flex items-center justify-between gap-4">
-									<div>
-										<h3 className="text-base font-medium">
+								<div className={SETTINGS_SWITCH_ROW_CLASS}>
+									<div className={SETTINGS_LABEL_CLASS}>
+										<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 											{t("settings:servers.autoAddTitle", {
 												defaultValue: "Auto Add To Default Profile",
 											})}
 										</h3>
-										<p className="text-sm text-muted-foreground">
+										<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 											{t("settings:servers.autoAddDescription", {
 												defaultValue:
 													"Include new servers in the default profile automatically.",
@@ -2173,14 +2180,14 @@ export function SettingsPage() {
 										}
 									/>
 								</div>
-								<div className="flex items-center justify-between gap-4">
-									<div>
-										<h3 className="text-base font-medium">
+								<div className={SETTINGS_SWITCH_ROW_CLASS}>
+									<div className={SETTINGS_LABEL_CLASS}>
+										<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 											{t("settings:servers.liveLogsTitle", {
 												defaultValue: "Server Detail Logs",
 											})}
 										</h3>
-										<p className="text-sm text-muted-foreground">
+										<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 											{t("settings:servers.liveLogsDescription", {
 												defaultValue:
 													"Show paginated live logs on the Server detail page.",
@@ -2213,22 +2220,22 @@ export function SettingsPage() {
 									})}
 								</CardDescription>
 							</CardHeader>
-							<CardContent className="space-y-5">
-								<div className={clientsSettingsRowClass}>
-									<div className={clientsSettingsLabelClass}>
-										<h3 className="text-base font-medium">
+							<CardContent className={SETTINGS_CARD_CONTENT_CLASS}>
+								<div className={SETTINGS_CLIENTS_ROW_CLASS}>
+									<div className={SETTINGS_CLIENTS_LABEL_CLASS}>
+										<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 											{t("settings:clients.modeTitle", {
 												defaultValue: "Client Application Mode",
 											})}
 										</h3>
-										<p className="text-sm text-muted-foreground">
+										<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 											{t("settings:clients.modeDescription", {
 												defaultValue:
 													"Choose how client applications should operate by default.",
 											})}
 										</p>
 									</div>
-									<div className={clientsSettingsControlClass}>
+									<div className={SETTINGS_CLIENTS_CONTROL_CLASS}>
 										<Segment
 											options={clientModeOptions}
 											value={defaultClientPolicyQuery.data?.config_mode ?? dashboardSettings.clientDefaultMode}
@@ -2239,21 +2246,21 @@ export function SettingsPage() {
 									</div>
 								</div>
 
-								<div className={clientsSettingsRowClass}>
-									<div className={clientsSettingsLabelClass}>
-										<h3 className="text-base font-medium">
+								<div className={SETTINGS_CLIENTS_ROW_CLASS}>
+									<div className={SETTINGS_CLIENTS_LABEL_CLASS}>
+										<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 											{t("settings:clients.firstContactTitle", {
 												defaultValue: "First-contact Behavior",
 											})}
 										</h3>
-										<p className="text-sm text-muted-foreground">
+										<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 											{t("settings:clients.firstContactDescription", {
 												defaultValue:
 													"Control how new, unknown clients are handled when they first request an MCP connection.",
 											})}
 										</p>
 									</div>
-									<div className={clientsSettingsControlClass}>
+									<div className={SETTINGS_CLIENTS_CONTROL_CLASS}>
 										<Segment
 											options={firstContactOptions}
 											value={currentFirstContactBehavior}
@@ -2264,21 +2271,21 @@ export function SettingsPage() {
 									</div>
 								</div>
 
-								<div className={clientsSettingsRowClass}>
-									<div className={clientsSettingsLabelClass}>
-										<h3 className="text-base font-medium">
+								<div className={SETTINGS_CLIENTS_ROW_CLASS}>
+									<div className={SETTINGS_CLIENTS_LABEL_CLASS}>
+										<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 											{t("settings:clients.defaultVisibilityTitle", {
 												defaultValue: "Default Client Visibility",
 											})}
 										</h3>
-										<p className="text-sm text-muted-foreground">
+										<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 											{t("settings:clients.defaultVisibilityDescription", {
 												defaultValue:
 													"Choose which client statuses are shown by default on the Clients page.",
 											})}
 										</p>
 									</div>
-									<div className={clientsSettingsControlClass}>
+									<div className={SETTINGS_CLIENTS_CONTROL_CLASS}>
 										<Segment
 											options={clientFilterOptions}
 											value={dashboardSettings.clientListDefaultFilter}
@@ -2293,21 +2300,21 @@ export function SettingsPage() {
 									</div>
 								</div>
 
-								<div className={clientsSettingsRowClass}>
-									<div className={clientsSettingsLabelClass}>
-										<h3 className="text-base font-medium">
+								<div className={SETTINGS_CLIENTS_ROW_CLASS}>
+									<div className={SETTINGS_CLIENTS_LABEL_CLASS}>
+										<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 											{t("settings:clients.writebackDefaultTitle", {
 												defaultValue: "Config Writeback Default",
 											})}
 										</h3>
-										<p className="text-sm text-muted-foreground">
+										<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 											{t("settings:clients.writebackDefaultDescription", {
 												defaultValue:
 													"Choose the default config writeback behavior. You can also set it per client.",
 											})}
 										</p>
 									</div>
-									<div className={clientsSettingsControlClass}>
+									<div className={SETTINGS_CLIENTS_CONTROL_CLASS}>
 										<Segment
 											options={clientWritebackDefaultOptions}
 											value={currentClientWritebackDefault}
@@ -2318,21 +2325,21 @@ export function SettingsPage() {
 									</div>
 								</div>
 
-								<div className={clientsSettingsRowClass}>
-									<div className={clientsSettingsLabelClass}>
-										<h3 className="text-base font-medium">
+								<div className={SETTINGS_CLIENTS_ROW_CLASS}>
+									<div className={SETTINGS_CLIENTS_LABEL_CLASS}>
+										<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 											{t("settings:clients.backupStrategyTitle", {
 												defaultValue: "Client Backup Strategy",
 											})}
 										</h3>
-										<p className="text-sm text-muted-foreground">
+										<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 											{t("settings:clients.backupStrategyDescription", {
 												defaultValue:
 													"Define how client configurations should be backed up.",
 											})}
 										</p>
 									</div>
-									<div className={clientsSettingsControlClass}>
+									<div className={SETTINGS_CLIENTS_CONTROL_CLASS}>
 										<Segment
 											options={backupStrategyOptions}
 											value={dashboardSettings.clientBackupStrategy}
@@ -2347,14 +2354,14 @@ export function SettingsPage() {
 									</div>
 								</div>
 
-								<div className={clientsSettingsRowClass}>
-									<div className={clientsSettingsLabelClass}>
-										<h3 className="text-base font-medium">
+								<div className={SETTINGS_CLIENTS_ROW_CLASS}>
+									<div className={SETTINGS_CLIENTS_LABEL_CLASS}>
+										<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 											{t("settings:clients.backupLimitTitle", {
 												defaultValue: "Maximum Backup Copies",
 											})}
 										</h3>
-										<p className="text-sm text-muted-foreground">
+										<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 											{t("settings:clients.backupLimitDescription", {
 												defaultValue:
 													"Set the maximum number of backup copies to keep. Applied when the strategy is set to Keep N. Values below 1 are rounded up.",
@@ -2375,17 +2382,17 @@ export function SettingsPage() {
 										disabled={
 											dashboardSettings.clientBackupStrategy !== "keep_n"
 										}
-										className={clientsSettingsControlClass}
+										className={SETTINGS_CLIENTS_CONTROL_CLASS}
 									/>
 								</div>
 								<div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
-									<div className={clientsSettingsLabelClass}>
-										<h3 className="text-base font-medium">
+									<div className={SETTINGS_CLIENTS_LABEL_CLASS}>
+										<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 											{t("settings:clients.liveLogsTitle", {
 												defaultValue: "Client Detail Logs",
 											})}
 										</h3>
-										<p className="text-sm text-muted-foreground">
+										<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 											{t("settings:clients.liveLogsDescription", {
 												defaultValue:
 													"Show paginated live logs on the Client detail page.",
@@ -2418,9 +2425,9 @@ export function SettingsPage() {
 									})}
 								</CardDescription>
 							</CardHeader>
-							<CardContent className="space-y-6">
+							<CardContent className={SETTINGS_CARD_CONTENT_CLASS}>
 								{storeStatusQuery.isLoading ? (
-									<p className="text-sm text-muted-foreground">
+									<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 										{t("settings:security.loading", { defaultValue: "Checking store status..." })}
 									</p>
 								) : storeStatusQuery.isError ? (
@@ -2443,12 +2450,12 @@ export function SettingsPage() {
 									/>
 								) : storeStatusQuery.data ? (
 									<>
-										<div className="space-y-3">
+										<div className={SETTINGS_SECURITY_GROUP_CLASS}>
 											{/* Password Protection */}
-											<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
-												<div className="space-y-1.5">
+											<div className={SETTINGS_GRID_ROW_CLASS}>
+												<div className={SETTINGS_LABEL_CLASS}>
 													<div className="flex items-center gap-1.5">
-														<h3 className="text-base font-medium">
+														<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 															{t("settings:security.passwordProtection", { defaultValue: "Password Protection" })}
 														</h3>
 														<span
@@ -2471,13 +2478,13 @@ export function SettingsPage() {
 															/>
 														</span>
 													</div>
-													<p className="text-sm text-muted-foreground">
+													<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 														{t("settings:security.passwordProtectionDescription", {
 															defaultValue: "Require a login password before accessing MCPMate or Settings.",
 														})}
 													</p>
 												</div>
-												<div className="flex sm:justify-end">
+												<div className={SETTINGS_GRID_CONTROL_CLASS}>
 													<Segment
 														options={[
 															{
@@ -2507,18 +2514,18 @@ export function SettingsPage() {
 												</div>
 											</div>
 											{effectiveProtectionLevel !== "off" ? (
-												<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
-													<div className="space-y-1.5">
-														<h3 className="text-base font-medium">
+												<div className={SETTINGS_GRID_ROW_CLASS}>
+													<div className={SETTINGS_LABEL_CLASS}>
+														<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 															{t("settings:security.loginPasswordRow", { defaultValue: "Password" })}
 														</h3>
-														<p className="text-sm text-muted-foreground">
+														<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 															{t("settings:security.loginPasswordRowDescription", {
 																defaultValue: "Login password used when protection is enabled.",
 															})}
 														</p>
 													</div>
-													<div className="flex sm:justify-end">
+													<div className={SETTINGS_GRID_CONTROL_CLASS}>
 														<Button
 															variant="outline"
 															size="sm"
@@ -2541,12 +2548,12 @@ export function SettingsPage() {
 											) : null}
 										</div>
 
-										<div className="space-y-3 border-t pt-6">
+										<div className={SETTINGS_SECURITY_DIVIDER_CLASS}>
 											{/* Encryption Mode */}
-											<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
-												<div className="space-y-1.5">
+											<div className={SETTINGS_GRID_ROW_CLASS}>
+												<div className={SETTINGS_LABEL_CLASS}>
 													<div className="flex items-center gap-1.5">
-														<h3 className="text-base font-medium">
+														<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 															{t("settings:security.encryptionMode", { defaultValue: "Encryption Mode" })}
 														</h3>
 														<span
@@ -2565,7 +2572,7 @@ export function SettingsPage() {
 															/>
 														</span>
 													</div>
-													<p className="text-sm text-muted-foreground">
+													<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 														{t("settings:security.encryptionModeDescription", {
 															defaultValue: "How the root encryption key is stored and protected.",
 														})}
@@ -2573,7 +2580,7 @@ export function SettingsPage() {
 												</div>
 												<div className="flex flex-col items-stretch gap-2 sm:items-end">
 													{!encryptionModeKnown && !selectedMode ? (
-														<p className="text-xs text-muted-foreground sm:text-right">
+														<p className={SETTINGS_MUTED_HINT_CLASS}>
 															{t("settings:security.providerModeUnknown", {
 																defaultValue:
 																	"Current encryption mode could not be determined. Choose a mode below to switch away from a broken provider.",
@@ -2618,21 +2625,21 @@ export function SettingsPage() {
 												</div>
 											</div>
 											{effectiveEncryptionMode === "passphrase" ? (
-												<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
-													<div className="space-y-1.5">
-														<h3 className="text-base font-medium">
+												<div className={SETTINGS_GRID_ROW_CLASS}>
+													<div className={SETTINGS_LABEL_CLASS}>
+														<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 															{t("settings:security.encryptionPasswordRow", {
 																defaultValue: "Password",
 															})}
 														</h3>
-														<p className="text-sm text-muted-foreground">
+														<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 															{t("settings:security.encryptionPasswordRowDescription", {
 																defaultValue:
 																	"Master password that wraps the root encryption key.",
 															})}
 														</p>
 													</div>
-													<div className="flex sm:justify-end">
+													<div className={SETTINGS_GRID_CONTROL_CLASS}>
 														<Button
 															variant="outline"
 															size="sm"
@@ -2908,22 +2915,22 @@ export function SettingsPage() {
 									})}
 								</CardDescription>
 							</CardHeader>
-							<CardContent className="space-y-5">
-								<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
-									<div className="space-y-1.5">
-										<h3 className="text-base font-medium">
+							<CardContent className={SETTINGS_CARD_CONTENT_CLASS}>
+								<div className={SETTINGS_GRID_ROW_CLASS}>
+									<div className={SETTINGS_LABEL_CLASS}>
+										<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 											{t("settings:profile.tokenEstimateTitle", {
 												defaultValue: "Profile token estimate",
 											})}
 										</h3>
-										<p className="text-sm text-muted-foreground">
+										<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 											{t("settings:profile.tokenEstimateDescription", {
 												defaultValue:
 													"Tokenizer used for profile capability size on the chart and dashboard.",
 											})}
 										</p>
 									</div>
-									<div className="flex sm:justify-end">
+									<div className={SETTINGS_GRID_CONTROL_CLASS}>
 										<Select
 											value={dashboardSettings.profileTokenEstimateMethod}
 											onValueChange={(value) => {
@@ -2931,7 +2938,7 @@ export function SettingsPage() {
 												setDashboardSetting("profileTokenEstimateMethod", value);
 											}}
 										>
-											<SelectTrigger className="w-full sm:w-72">
+											<SelectTrigger className={SETTINGS_SELECT_TRIGGER_WIDE_CLASS}>
 												<SelectValue />
 											</SelectTrigger>
 											<SelectContent>
@@ -2949,14 +2956,14 @@ export function SettingsPage() {
 										</Select>
 									</div>
 								</div>
-								<div className="flex items-center justify-between gap-4">
-									<div className="space-y-0.5">
-										<h3 className="text-base font-medium">
+								<div className={SETTINGS_SWITCH_ROW_CLASS}>
+									<div className={SETTINGS_LABEL_CLASS}>
+										<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 											{t("settings:profile.liveLogsTitle", {
 												defaultValue: "Profile Detail Logs",
 											})}
 										</h3>
-										<p className="text-sm text-muted-foreground">
+										<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 											{t("settings:profile.liveLogsDescription", {
 												defaultValue:
 													"Show paginated live logs on the Profile detail page.",
@@ -2988,22 +2995,22 @@ export function SettingsPage() {
 									})}
 								</CardDescription>
 							</CardHeader>
-							<CardContent className="space-y-5">
-								<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
-									<div className="space-y-1.5">
-										<h3 className={settingItemTitleClass}>
+							<CardContent className={SETTINGS_CARD_CONTENT_CLASS}>
+								<div className={SETTINGS_GRID_ROW_CLASS}>
+									<div className={SETTINGS_LABEL_CLASS}>
+										<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 											{t("settings:audit.typeTitle", {
 												defaultValue: "Retention Strategy",
 											})}
 										</h3>
-										<p className={settingItemDescriptionClass}>
+										<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 											{t("settings:audit.typeDescription", { defaultValue: "Choose how stored log events are pruned automatically." })}
 										</p>
 									</div>
-									<div className="flex sm:justify-end">
+									<div className={SETTINGS_GRID_CONTROL_CLASS}>
 										<Select value={policyType} onValueChange={handlePolicyTypeChange}>
 											<SelectTrigger
-												className="w-full sm:w-64"
+												className={SETTINGS_SELECT_TRIGGER_CLASS}
 												disabled={policyMutation.isPending}
 											>
 												<SelectValue />
@@ -3019,18 +3026,18 @@ export function SettingsPage() {
 								</div>
 
 								{(policyType === "keep_days" || policyType === "combined") && (
-									<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
-										<div className="space-y-1.5">
-											<h3 className={settingItemTitleClass}>
+									<div className={SETTINGS_GRID_ROW_CLASS}>
+										<div className={SETTINGS_LABEL_CLASS}>
+											<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 												{t("settings:audit.daysTitle", {
 													defaultValue: "Days to keep",
 												})}
 											</h3>
-											<p className={settingItemDescriptionClass}>
+											<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 												{t("settings:audit.daysDescription", { defaultValue: "Events older than this number of days will be deleted." })}
 											</p>
 										</div>
-										<div className="flex sm:justify-end">
+										<div className={SETTINGS_GRID_CONTROL_CLASS}>
 											<Input
 												type="number"
 												min={1}
@@ -3038,25 +3045,25 @@ export function SettingsPage() {
 												onChange={(e) => setPolicyDays(Number(e.target.value))}
 												onBlur={handlePolicyDaysBlur}
 												disabled={policyMutation.isPending}
-												className="w-full sm:w-64"
+												className={SETTINGS_SELECT_TRIGGER_CLASS}
 											/>
 										</div>
 									</div>
 								)}
 
 								{(policyType === "keep_count" || policyType === "combined") && (
-									<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
-										<div className="space-y-1.5">
-											<h3 className={settingItemTitleClass}>
+									<div className={SETTINGS_GRID_ROW_CLASS}>
+										<div className={SETTINGS_LABEL_CLASS}>
+											<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 												{t("settings:audit.countTitle", {
 													defaultValue: "Max events",
 												})}
 											</h3>
-											<p className={settingItemDescriptionClass}>
+											<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 												{t("settings:audit.countDescription", { defaultValue: "If event count exceeds this limit, oldest events will be deleted." })}
 											</p>
 										</div>
-										<div className="flex sm:justify-end">
+										<div className={SETTINGS_GRID_CONTROL_CLASS}>
 											<Input
 												type="number"
 												min={1}
@@ -3064,7 +3071,7 @@ export function SettingsPage() {
 												onChange={(e) => setPolicyCount(Number(e.target.value))}
 												onBlur={handlePolicyCountBlur}
 												disabled={policyMutation.isPending}
-												className="w-full sm:w-64"
+												className={SETTINGS_SELECT_TRIGGER_CLASS}
 											/>
 										</div>
 									</div>
@@ -3091,22 +3098,22 @@ export function SettingsPage() {
 									})}
 								</CardDescription>
 							</CardHeader>
-							<CardContent className="space-y-5">
-								<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
-									<div className="space-y-1.5">
-										<h3 className={settingItemTitleClass}>
+							<CardContent className={SETTINGS_CARD_CONTENT_CLASS}>
+								<div className={SETTINGS_GRID_ROW_CLASS}>
+									<div className={SETTINGS_LABEL_CLASS}>
+										<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 											{t("settings:system.sourceTitle", {
 												defaultValue: "Service Target",
 											})}
 										</h3>
-										<p className={settingItemDescriptionClass}>
+										<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 											{t("settings:system.sourceDescription", {
 												defaultValue:
 													"Choose whether Desktop should attach to the built-in local service or a remote service endpoint.",
 											})}
 										</p>
 									</div>
-									<div className="flex sm:justify-end">
+									<div className={SETTINGS_GRID_CONTROL_CLASS}>
 										<div className="w-56">
 											<Segment
 												value={coreSource}
@@ -3124,21 +3131,21 @@ export function SettingsPage() {
 								</div>
 
 								{coreSource === "remote" ? (
-									<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
-										<div className="space-y-1.5">
-											<h3 className={settingItemTitleClass}>
+									<div className={SETTINGS_GRID_ROW_CLASS}>
+										<div className={SETTINGS_LABEL_CLASS}>
+											<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 												{t("settings:system.remoteUrlTitle", {
 													defaultValue: "Remote Core URL",
 												})}
 											</h3>
-											<p className={settingItemDescriptionClass}>
+											<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 												{t("settings:system.remoteUrlDescription", {
 													defaultValue:
 														"Store the remote core endpoint for future attach support. This phase still prioritizes localhost service management.",
 												})}
 											</p>
 										</div>
-										<div className="flex sm:justify-end">
+										<div className={SETTINGS_GRID_CONTROL_CLASS}>
 											<Input
 												id="remote-core-url"
 												type="url"
@@ -3147,21 +3154,21 @@ export function SettingsPage() {
 												placeholder={t("settings:system.remoteUrlPlaceholder", {
 													defaultValue: "https://your-core.example.com",
 												})}
-												className="w-full sm:w-80"
+												className={SETTINGS_INPUT_WIDE_CLASS}
 											/>
 										</div>
 									</div>
 								) : null}
 
 								{coreSource === "localhost" ? (
-									<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
-										<div className="space-y-1.5">
-											<h3 className={settingItemTitleClass}>
+									<div className={SETTINGS_GRID_ROW_CLASS}>
+										<div className={SETTINGS_LABEL_CLASS}>
+											<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 												{t("settings:system.runtimeModeTitle", {
 													defaultValue: "Local Runtime Mode",
 												})}
 											</h3>
-											<p className={settingItemDescriptionClass}>
+											<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 												{t("settings:system.runtimeModeDescription", {
 													defaultValue:
 														"Choose whether localhost core is managed as an OS service or tied to the MCPMate desktop lifecycle.",
@@ -3182,7 +3189,7 @@ export function SettingsPage() {
 												) : null}
 											</p>
 										</div>
-										<div className="flex sm:justify-end">
+										<div className={SETTINGS_GRID_CONTROL_CLASS}>
 											<div className="w-56">
 												<Segment
 													value={localhostRuntimeMode}
@@ -3203,7 +3210,7 @@ export function SettingsPage() {
 								{isTauriShell && coreSource === "localhost" && serviceStatusExpanded ? (
 									<div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/60">
 										<div className="flex items-start justify-between gap-4">
-											<div className="space-y-0.5">
+											<div className={SETTINGS_LABEL_CLASS}>
 												<p className="text-sm font-medium text-slate-900 dark:text-slate-100">
 													{t("settings:system.serviceStatusTitle", {
 														defaultValue: "Local Service Status",
@@ -3246,21 +3253,21 @@ export function SettingsPage() {
 								) : null}
 
 								{/* Row: API Port */}
-								<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
-									<div className="space-y-1.5">
-										<h3 className={settingItemTitleClass}>
+								<div className={SETTINGS_GRID_ROW_CLASS}>
+									<div className={SETTINGS_LABEL_CLASS}>
+										<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 											{t("settings:system.apiPortTitle", {
 												defaultValue: "Localhost Core API Port",
 											})}
 										</h3>
-										<p className={settingItemDescriptionClass}>
+										<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 											{t("settings:system.apiPortDescription", {
 												defaultValue:
 													"Port for localhost REST and dashboard access (default 8080).",
 											})}
 										</p>
 									</div>
-									<div className="flex sm:justify-end">
+									<div className={SETTINGS_GRID_CONTROL_CLASS}>
 										<Input
 											id="api-port"
 											type="number"
@@ -3278,21 +3285,21 @@ export function SettingsPage() {
 								</div>
 
 								{/* Row: MCP Port */}
-								<div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:items-center">
-									<div className="space-y-1.5">
-										<h3 className={settingItemTitleClass}>
+								<div className={SETTINGS_GRID_ROW_CLASS}>
+									<div className={SETTINGS_LABEL_CLASS}>
+										<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 											{t("settings:system.mcpPortTitle", {
 												defaultValue: "Localhost Core MCP Port",
 											})}
 										</h3>
-										<p className={settingItemDescriptionClass}>
+										<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 											{t("settings:system.mcpPortDescription", {
 												defaultValue:
 													"Port for the localhost MCP proxy endpoint (/mcp). Default 8000.",
 											})}
 										</p>
 									</div>
-									<div className="flex sm:justify-end">
+									<div className={SETTINGS_GRID_CONTROL_CLASS}>
 										<Input
 											id="mcp-port"
 											type="number"
@@ -3367,16 +3374,16 @@ export function SettingsPage() {
 									})}
 								</CardDescription>
 							</CardHeader>
-							<CardContent className="space-y-5">
+							<CardContent className={SETTINGS_CARD_CONTENT_CLASS}>
 								{/* ports block moved to System tab */}
-								<div className="flex items-center justify-between gap-4">
-									<div>
-										<h3 className="text-base font-medium">
+								<div className={SETTINGS_SWITCH_ROW_CLASS}>
+									<div className={SETTINGS_LABEL_CLASS}>
+										<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 											{t("settings:developer.enableServerDebugTitle", {
 												defaultValue: "Enable Server Inspection",
 											})}
 										</h3>
-										<p className="text-sm text-muted-foreground">
+										<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 											{t("settings:developer.enableServerDebugDescription", {
 												defaultValue:
 													"Expose inspection instrumentation for newly added servers.",
@@ -3391,14 +3398,14 @@ export function SettingsPage() {
 									/>
 								</div>
 
-								<div className="flex items-center justify-between gap-4">
-									<div>
-										<h3 className="text-base font-medium">
+								<div className={SETTINGS_SWITCH_ROW_CLASS}>
+									<div className={SETTINGS_LABEL_CLASS}>
+										<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 											{t("settings:developer.openDebugInNewWindowTitle", {
 												defaultValue: "Open Inspect Views In New Window",
 											})}
 										</h3>
-										<p className="text-sm text-muted-foreground">
+										<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 											{t("settings:developer.openDebugInNewWindowDescription", {
 												defaultValue:
 													"When enabled, Inspect buttons launch a separate tab instead of navigating the current view.",
@@ -3413,14 +3420,14 @@ export function SettingsPage() {
 									/>
 								</div>
 
-								<div className="flex items-center justify-between gap-4">
-									<div>
-										<h3 className="text-base font-medium">
+								<div className={SETTINGS_SWITCH_ROW_CLASS}>
+									<div className={SETTINGS_LABEL_CLASS}>
+										<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 											{t("settings:developer.showApiDocsTitle", {
 												defaultValue: "Show API Docs Menu",
 											})}
 										</h3>
-										<p className="text-sm text-muted-foreground">
+										<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 											{t("settings:developer.showApiDocsDescription", {
 												defaultValue:
 													"Reveal the API Docs shortcut in the sidebar navigation.",
@@ -3435,14 +3442,14 @@ export function SettingsPage() {
 									/>
 								</div>
 
-								<div className="flex items-center justify-between gap-4">
-									<div>
-										<h3 className="text-base font-medium">
+								<div className={SETTINGS_SWITCH_ROW_CLASS}>
+									<div className={SETTINGS_LABEL_CLASS}>
+										<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 											{t("settings:developer.showRawJsonTitle", {
 												defaultValue: "Show Raw Capability JSON",
 											})}
 										</h3>
-										<p className="text-sm text-muted-foreground">
+										<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 											{t("settings:developer.showRawJsonDescription", {
 												defaultValue:
 													"Display raw JSON payloads under Details in capability lists (Server details and Uni‑Import preview).",
@@ -3457,14 +3464,14 @@ export function SettingsPage() {
 									/>
 								</div>
 
-								<div className="flex items-center justify-between gap-4">
-									<div>
-										<h3 className="text-base font-medium">
+								<div className={SETTINGS_SWITCH_ROW_CLASS}>
+									<div className={SETTINGS_LABEL_CLASS}>
+										<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 											{t("settings:developer.inspectorTimeoutTitle", {
 												defaultValue: "Inspector Timeout (ms)",
 											})}
 										</h3>
-										<p className="text-sm text-muted-foreground">
+										<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 											{t("settings:developer.inspectorTimeoutDescription", {
 												defaultValue:
 													"Default timeout for tool/resource/prompt calls in the Inspector drawer.",
@@ -3571,16 +3578,16 @@ function MarketBlacklistCard({
 					})}
 				</CardDescription>
 			</CardHeader>
-			<CardContent className="flex h-full flex-col gap-5">
+			<CardContent className={SETTINGS_CARD_CONTENT_STACK_CLASS}>
 				{/* Enable Blacklist settings */}
-				<div className="flex items-center justify-between gap-4">
-					<div className="space-y-0.5">
-						<h3 className="text-base font-medium">
+				<div className={SETTINGS_SWITCH_ROW_CLASS}>
+					<div className={SETTINGS_LABEL_CLASS}>
+						<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 							{t("settings:market.enableBlacklistTitle", {
 								defaultValue: "Enable Blacklist",
 							})}
 						</h3>
-						<p className="text-sm text-muted-foreground">
+						<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 							{t("settings:market.enableBlacklistDescription", {
 								defaultValue:
 									"Hide quality-poor or unavailable content from the market to keep it clean",
@@ -3711,13 +3718,13 @@ function MarketBlacklistCard({
 
 				<div className="space-y-4 border-t border-slate-200 pt-4 dark:border-slate-700">
 					<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between md:gap-4">
-						<div className="min-w-0 space-y-0.5 md:flex-1">
-							<h3 className="text-base font-medium">
+						<div className={SETTINGS_LABEL_FLEX_CLASS}>
+							<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 								{t("settings:market.installChromeExtension", {
 									defaultValue: "Install Chrome Extension",
 								})}
 							</h3>
-							<p className="text-sm text-muted-foreground">
+							<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 								{t("settings:market.installChromeExtensionDescription", {
 									defaultValue:
 										"Install the MCPMate browser extension from Chrome Web Store to detect importable MCP server snippets and send them to MCPMate.",
@@ -3742,13 +3749,13 @@ function MarketBlacklistCard({
 					</div>
 
 					<div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between md:gap-4">
-						<div className="min-w-0 space-y-0.5 md:flex-1">
-							<h3 className="text-base font-medium">
+						<div className={SETTINGS_LABEL_FLEX_CLASS}>
+							<h3 className={SETTINGS_ITEM_TITLE_CLASS}>
 								{t("settings:market.installEdgeExtension", {
 									defaultValue: "Install Edge Extension",
 								})}
 							</h3>
-							<p className="text-sm text-muted-foreground">
+							<p className={SETTINGS_ITEM_DESCRIPTION_CLASS}>
 								{t("settings:market.installEdgeExtensionDescription", {
 									defaultValue:
 										"Install the MCPMate browser extension from Microsoft Edge Add-ons to discover importable MCP server configurations on web pages.",
