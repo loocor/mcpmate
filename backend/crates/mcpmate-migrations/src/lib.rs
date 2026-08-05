@@ -24,7 +24,10 @@ impl DatabaseTarget {
 
 #[async_trait]
 pub trait MigrationStep: Send + Sync {
-    async fn apply(&self, transaction: &mut Transaction<'_, Sqlite>) -> Result<()>;
+    async fn apply(
+        &self,
+        transaction: &mut Transaction<'_, Sqlite>,
+    ) -> Result<()>;
 }
 
 pub struct SqlMigration {
@@ -39,7 +42,10 @@ impl SqlMigration {
 
 #[async_trait]
 impl MigrationStep for SqlMigration {
-    async fn apply(&self, transaction: &mut Transaction<'_, Sqlite>) -> Result<()> {
+    async fn apply(
+        &self,
+        transaction: &mut Transaction<'_, Sqlite>,
+    ) -> Result<()> {
         for statement in self.sql.split(";\n").filter(|statement| !statement.trim().is_empty()) {
             sqlx::query(statement)
                 .execute(&mut **transaction)
@@ -63,7 +69,11 @@ impl Migration {
     }
 }
 
-pub async fn run(pool: &Pool<Sqlite>, target: DatabaseTarget, migrations: Vec<Migration>) -> Result<()> {
+pub async fn run(
+    pool: &Pool<Sqlite>,
+    target: DatabaseTarget,
+    migrations: Vec<Migration>,
+) -> Result<()> {
     let mut transaction = pool.begin().await.context("begin migration transaction")?;
     sqlx::query(&format!(
         "CREATE TABLE IF NOT EXISTS {LEDGER_TABLE} (target TEXT NOT NULL, version INTEGER NOT NULL, name TEXT NOT NULL, checksum TEXT NOT NULL, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (target, version))"
@@ -79,9 +89,9 @@ pub async fn run(pool: &Pool<Sqlite>, target: DatabaseTarget, migrations: Vec<Mi
         }
         previous = migration.version;
         let checksum = migration.checksum();
-        let applied: Option<(String, String)> = sqlx::query_as(
-            &format!("SELECT name, checksum FROM {LEDGER_TABLE} WHERE target = ? AND version = ?"),
-        )
+        let applied: Option<(String, String)> = sqlx::query_as(&format!(
+            "SELECT name, checksum FROM {LEDGER_TABLE} WHERE target = ? AND version = ?"
+        ))
         .bind(target.name())
         .bind(migration.version)
         .fetch_optional(&mut *transaction)
@@ -89,12 +99,21 @@ pub async fn run(pool: &Pool<Sqlite>, target: DatabaseTarget, migrations: Vec<Mi
         .context("read migration ledger")?;
         if let Some((name, existing_checksum)) = applied {
             if name != migration.name || existing_checksum != checksum {
-                bail!("migration {} for {} was modified after being applied", migration.version, target.name());
+                bail!(
+                    "migration {} for {} was modified after being applied",
+                    migration.version,
+                    target.name()
+                );
             }
             continue;
         }
         migration.step.apply(&mut transaction).await.with_context(|| {
-            format!("apply migration {} ({}) for {}", migration.version, migration.name, target.name())
+            format!(
+                "apply migration {} ({}) for {}",
+                migration.version,
+                migration.name,
+                target.name()
+            )
         })?;
         sqlx::query(&format!(
             "INSERT INTO {LEDGER_TABLE} (target, version, name, checksum) VALUES (?, ?, ?, ?)"
@@ -123,6 +142,59 @@ pub async fn migrate_audit(pool: &Pool<Sqlite>) -> Result<()> {
     )
     .await
 }
+
+pub async fn migrate_config(pool: &Pool<Sqlite>) -> Result<()> {
+    run(
+        pool,
+        DatabaseTarget::Config,
+        vec![
+            Migration {
+                version: 1,
+                name: "create llm provider",
+                checksum_source: LLM_PROVIDER_INITIAL_SCHEMA,
+                step: Box::new(SqlMigration::new(LLM_PROVIDER_INITIAL_SCHEMA)),
+            },
+            Migration {
+                version: 2,
+                name: "add llm provider default flag",
+                checksum_source: "add llm_provider.is_default when absent",
+                step: Box::new(AddLlmDefaultColumn),
+            },
+        ],
+    )
+    .await
+}
+
+struct AddLlmDefaultColumn;
+
+#[async_trait]
+impl MigrationStep for AddLlmDefaultColumn {
+    async fn apply(
+        &self,
+        transaction: &mut Transaction<'_, Sqlite>,
+    ) -> Result<()> {
+        let columns: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('llm_provider')")
+            .fetch_all(&mut **transaction)
+            .await
+            .context("inspect llm_provider schema")?;
+        if !columns.iter().any(|column| column == "is_default") {
+            sqlx::query("ALTER TABLE llm_provider ADD COLUMN is_default BOOLEAN NOT NULL DEFAULT 0")
+                .execute(&mut **transaction)
+                .await
+                .context("add llm_provider.is_default")?;
+        }
+        Ok(())
+    }
+}
+
+const LLM_PROVIDER_INITIAL_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS llm_provider (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, provider_type TEXT NOT NULL,
+    base_url TEXT NOT NULL, model_id TEXT NOT NULL, secret_alias TEXT,
+    default_params_json TEXT, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"#;
 
 const AUDIT_INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS audit_events (
@@ -155,7 +227,11 @@ mod tests {
 
     #[tokio::test]
     async fn applies_once_and_detects_mutated_history() {
-        let pool = SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
         run(
             &pool,
             DatabaseTarget::Config,
@@ -197,18 +273,41 @@ mod tests {
 
     #[tokio::test]
     async fn creates_audit_schema_through_the_ledger() {
-        let pool = SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
         migrate_audit(&pool).await.unwrap();
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM mcpmate_schema_migrations WHERE target = 'audit'",
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mcpmate_schema_migrations WHERE target = 'audit'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+        sqlx::query(
+            "INSERT INTO audit_policy (id, policy, sweep_interval_secs, updated_at_ms) VALUES (1, 'keep', 1, 1)",
         )
-        .fetch_one(&pool)
+        .execute(&pool)
         .await
         .unwrap();
-        assert_eq!(count, 1);
-        sqlx::query("INSERT INTO audit_policy (id, policy, sweep_interval_secs, updated_at_ms) VALUES (1, 'keep', 1, 1)")
+    }
+
+    #[tokio::test]
+    async fn upgrades_legacy_llm_provider_schema() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE llm_provider (id TEXT PRIMARY KEY, name TEXT NOT NULL, provider_type TEXT NOT NULL, base_url TEXT NOT NULL, model_id TEXT NOT NULL, secret_alias TEXT, default_params_json TEXT, created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP NOT NULL)")
             .execute(&pool)
             .await
             .unwrap();
+        migrate_config(&pool).await.unwrap();
+        let columns: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('llm_provider')")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert!(columns.iter().any(|column| column == "is_default"));
     }
 }
