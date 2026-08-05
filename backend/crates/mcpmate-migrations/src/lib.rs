@@ -130,24 +130,32 @@ pub async fn run(
 }
 
 pub async fn migrate_audit(pool: &Pool<Sqlite>) -> Result<()> {
-    run(
-        pool,
-        DatabaseTarget::Audit,
-        vec![Migration {
+    run(pool, DatabaseTarget::Audit, audit_migrations()).await
+}
+
+pub async fn audit_has_pending(pool: &Pool<Sqlite>) -> Result<bool> {
+    has_pending(pool, DatabaseTarget::Audit, audit_migrations()).await
+}
+
+fn audit_migrations() -> Vec<Migration> {
+    vec![Migration {
             version: 1,
             name: "create audit storage",
             checksum_source: AUDIT_INITIAL_SCHEMA,
             step: Box::new(SqlMigration::new(AUDIT_INITIAL_SCHEMA)),
-        }],
-    )
-    .await
+        }]
 }
 
 pub async fn migrate_config(pool: &Pool<Sqlite>) -> Result<()> {
-    run(
-        pool,
-        DatabaseTarget::Config,
-        vec![
+    run(pool, DatabaseTarget::Config, config_migrations()).await
+}
+
+pub async fn config_has_pending(pool: &Pool<Sqlite>) -> Result<bool> {
+    has_pending(pool, DatabaseTarget::Config, config_migrations()).await
+}
+
+fn config_migrations() -> Vec<Migration> {
+    vec![
             Migration {
                 version: 1,
                 name: "create llm provider",
@@ -172,9 +180,35 @@ pub async fn migrate_config(pool: &Pool<Sqlite>) -> Result<()> {
                 checksum_source: "upgrade legacy server_config and server_meta columns",
                 step: Box::new(UpgradeServerColumns),
             },
-        ],
-    )
+    ]
+}
+
+async fn has_pending(pool: &Pool<Sqlite>, target: DatabaseTarget, migrations: Vec<Migration>) -> Result<bool> {
+    let ledger_exists: bool = sqlx::query_scalar(&format!(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '{LEDGER_TABLE}')"
+    ))
+    .fetch_one(pool)
     .await
+    .context("inspect migration ledger")?;
+    if !ledger_exists {
+        return Ok(!migrations.is_empty());
+    }
+    for migration in migrations {
+        let applied: Option<(String, String)> = sqlx::query_as(&format!(
+            "SELECT name, checksum FROM {LEDGER_TABLE} WHERE target = ? AND version = ?"
+        ))
+        .bind(target.name())
+        .bind(migration.version)
+        .fetch_optional(pool)
+        .await
+        .context("read migration ledger")?;
+        match applied {
+            None => return Ok(true),
+            Some((name, checksum)) if name == migration.name && checksum == migration.checksum() => {}
+            Some(_) => bail!("migration {} for {} was modified after being applied", migration.version, target.name()),
+        }
+    }
+    Ok(false)
 }
 
 struct UpgradeServerColumns;

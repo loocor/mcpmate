@@ -52,6 +52,20 @@ pub(crate) async fn initialize_capability_catalog(pool: &Pool<Sqlite>) -> Result
         .context("Failed to initialize capability catalog schema")
 }
 
+async fn create_migration_backup(
+    pool: &Pool<Sqlite>,
+    database_path: &Path,
+) -> Result<PathBuf> {
+    let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+    let backup_path = PathBuf::from(format!("{}.migration-{timestamp}.bak", database_path.display()));
+    sqlx::query("VACUUM INTO ?")
+        .bind(backup_path.to_string_lossy().as_ref())
+        .execute(pool)
+        .await
+        .with_context(|| format!("Failed to create migration backup at {}", backup_path.display()))?;
+    Ok(backup_path)
+}
+
 /// Database connection pool
 #[derive(Debug, Clone)]
 pub struct Database {
@@ -161,6 +175,11 @@ impl Database {
                 return Err(anyhow::anyhow!("Failed to connect to SQLite database: {}", e));
             }
         };
+
+        if db_exists && database_url != "sqlite::memory:" && mcpmate_migrations::config_has_pending(&pool).await? {
+            let backup_path = create_migration_backup(&pool, &db_path).await?;
+            tracing::info!(path = %backup_path.display(), "Created database backup before migration");
+        }
 
         // Initialize naming store as early as possible so other components can rely on it
         naming::initialize(pool.clone());
@@ -314,6 +333,40 @@ mod tests {
         assert_eq!(busy_timeout, 5_000);
         assert_eq!(foreign_keys, 1);
         assert_eq!(synchronous, 1, "SQLite NORMAL synchronous mode is encoded as 1");
+    }
+
+    #[tokio::test]
+    async fn migration_backup_is_a_readable_snapshot() {
+        let directory = tempfile::tempdir().unwrap();
+        let database_path = directory.path().join("migration.db");
+        let database_url = format!("sqlite://{}", database_path.display());
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(sqlite_connect_options(&database_url).unwrap())
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE backup_probe (value TEXT NOT NULL)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO backup_probe (value) VALUES ('before-migration')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let backup = create_migration_backup(&pool, &database_path).await.unwrap();
+        assert!(backup.exists());
+        let backup_url = format!("sqlite://{}", backup.display());
+        let backup_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(&backup_url)
+            .await
+            .unwrap();
+        let value: String = sqlx::query_scalar("SELECT value FROM backup_probe")
+            .fetch_one(&backup_pool)
+            .await
+            .unwrap();
+        assert_eq!(value, "before-migration");
     }
 
     #[tokio::test]
