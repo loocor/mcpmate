@@ -4,6 +4,7 @@ use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 use sqlx::{Pool, Sqlite, Transaction};
+use std::path::{Path, PathBuf};
 
 const LEDGER_TABLE: &str = "mcpmate_schema_migrations";
 
@@ -152,6 +153,33 @@ pub async fn migrate_config(pool: &Pool<Sqlite>) -> Result<()> {
 
 pub async fn config_has_pending(pool: &Pool<Sqlite>) -> Result<bool> {
     has_pending(pool, DatabaseTarget::Config, config_migrations()).await
+}
+
+pub async fn backup_pending_config(pool: &Pool<Sqlite>, path: &Path) -> Result<Option<PathBuf>> {
+    backup_if_pending(pool, DatabaseTarget::Config, config_migrations(), path).await
+}
+
+pub async fn backup_pending_audit(pool: &Pool<Sqlite>, path: &Path) -> Result<Option<PathBuf>> {
+    backup_if_pending(pool, DatabaseTarget::Audit, audit_migrations(), path).await
+}
+
+async fn backup_if_pending(
+    pool: &Pool<Sqlite>,
+    target: DatabaseTarget,
+    migrations: Vec<Migration>,
+    path: &Path,
+) -> Result<Option<PathBuf>> {
+    if !has_pending(pool, target, migrations).await? {
+        return Ok(None);
+    }
+    let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+    let backup_path = PathBuf::from(format!("{}.migration-{timestamp}.bak", path.display()));
+    sqlx::query("VACUUM INTO ?")
+        .bind(backup_path.to_string_lossy().as_ref())
+        .execute(pool)
+        .await
+        .with_context(|| format!("create migration backup at {}", backup_path.display()))?;
+    Ok(Some(backup_path))
 }
 
 fn config_migrations() -> Vec<Migration> {

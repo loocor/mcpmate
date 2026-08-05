@@ -22,6 +22,7 @@ impl AuditDatabase {
     pub async fn new() -> Result<Self> {
         let database_url = global_paths().audit_database_url();
         let path = global_paths().audit_database_path();
+        let existed = path.exists();
 
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -56,6 +57,12 @@ impl AuditDatabase {
             .execute(&pool)
             .await
             .context("Failed to configure busy_timeout for audit database")?;
+
+        if existed {
+            if let Some(backup_path) = mcpmate_migrations::backup_pending_audit(&pool, &path).await? {
+                tracing::info!(path = %backup_path.display(), "Created audit database backup before migration");
+            }
+        }
 
         mcpmate_migrations::migrate_audit(&pool)
             .await

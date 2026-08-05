@@ -52,20 +52,6 @@ pub(crate) async fn initialize_capability_catalog(pool: &Pool<Sqlite>) -> Result
         .context("Failed to initialize capability catalog schema")
 }
 
-async fn create_migration_backup(
-    pool: &Pool<Sqlite>,
-    database_path: &Path,
-) -> Result<PathBuf> {
-    let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
-    let backup_path = PathBuf::from(format!("{}.migration-{timestamp}.bak", database_path.display()));
-    sqlx::query("VACUUM INTO ?")
-        .bind(backup_path.to_string_lossy().as_ref())
-        .execute(pool)
-        .await
-        .with_context(|| format!("Failed to create migration backup at {}", backup_path.display()))?;
-    Ok(backup_path)
-}
-
 /// Database connection pool
 #[derive(Debug, Clone)]
 pub struct Database {
@@ -176,9 +162,10 @@ impl Database {
             }
         };
 
-        if db_exists && database_url != "sqlite::memory:" && mcpmate_migrations::config_has_pending(&pool).await? {
-            let backup_path = create_migration_backup(&pool, &db_path).await?;
-            tracing::info!(path = %backup_path.display(), "Created database backup before migration");
+        if db_exists && database_url != "sqlite::memory:" {
+            if let Some(backup_path) = mcpmate_migrations::backup_pending_config(&pool, &db_path).await? {
+                tracing::info!(path = %backup_path.display(), "Created database backup before migration");
+            }
         }
 
         // Initialize naming store as early as possible so other components can rely on it
@@ -354,7 +341,10 @@ mod tests {
             .await
             .unwrap();
 
-        let backup = create_migration_backup(&pool, &database_path).await.unwrap();
+        let backup = mcpmate_migrations::backup_pending_config(&pool, &database_path)
+            .await
+            .unwrap()
+            .expect("pending migrations create a backup");
         assert!(backup.exists());
         let backup_url = format!("sqlite://{}", backup.display());
         let backup_pool = SqlitePoolOptions::new()
