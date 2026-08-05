@@ -57,6 +57,10 @@ impl AuditDatabase {
             .await
             .context("Failed to configure busy_timeout for audit database")?;
 
+        mcpmate_migrations::migrate_audit(&pool)
+            .await
+            .context("Failed to migrate audit database")?;
+
         Ok(Self { pool, path })
     }
 

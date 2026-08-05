@@ -110,6 +110,44 @@ pub async fn run(pool: &Pool<Sqlite>, target: DatabaseTarget, migrations: Vec<Mi
     transaction.commit().await.context("commit migrations")
 }
 
+pub async fn migrate_audit(pool: &Pool<Sqlite>) -> Result<()> {
+    run(
+        pool,
+        DatabaseTarget::Audit,
+        vec![Migration {
+            version: 1,
+            name: "create audit storage",
+            checksum_source: AUDIT_INITIAL_SCHEMA,
+            step: Box::new(SqlMigration::new(AUDIT_INITIAL_SCHEMA)),
+        }],
+    )
+    .await
+}
+
+const AUDIT_INITIAL_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS audit_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    category TEXT NOT NULL, action TEXT NOT NULL, status TEXT NOT NULL,
+    occurred_at_ms INTEGER NOT NULL, actor TEXT, request_id TEXT, client_id TEXT,
+    profile_id TEXT, server_id TEXT, session_id TEXT, protocol_version TEXT,
+    http_method TEXT, route TEXT, mcp_method TEXT, target TEXT, direction TEXT,
+    error_code TEXT, error_message TEXT, detail TEXT, duration_ms INTEGER,
+    data_json TEXT, task_id TEXT, related_task_id TEXT, progress_token TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_audit_events_occurred_at ON audit_events (occurred_at_ms DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_events_category_action ON audit_events (category, action, occurred_at_ms DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_events_status ON audit_events (status, occurred_at_ms DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_events_server_id ON audit_events (server_id, occurred_at_ms DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_events_profile_id ON audit_events (profile_id, occurred_at_ms DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_events_client_id ON audit_events (client_id, occurred_at_ms DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_events_session_id ON audit_events (session_id, occurred_at_ms DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_events_task_id ON audit_events (task_id, occurred_at_ms DESC, id DESC);
+CREATE TABLE IF NOT EXISTS audit_policy (
+    id INTEGER PRIMARY KEY CHECK (id = 1), policy TEXT NOT NULL,
+    sweep_interval_secs INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL
+);
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,5 +193,22 @@ mod tests {
         .await
         .unwrap_err();
         assert!(error.to_string().contains("modified"));
+    }
+
+    #[tokio::test]
+    async fn creates_audit_schema_through_the_ledger() {
+        let pool = SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        migrate_audit(&pool).await.unwrap();
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM mcpmate_schema_migrations WHERE target = 'audit'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1);
+        sqlx::query("INSERT INTO audit_policy (id, policy, sweep_interval_secs, updated_at_ms) VALUES (1, 'keep', 1, 1)")
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 }
