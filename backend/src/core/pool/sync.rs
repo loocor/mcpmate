@@ -249,6 +249,7 @@ mod tests {
             .execute(&pool)
             .await
             .expect("enable foreign keys");
+        crate::test_helpers::prepare_config_database(&pool).await;
         run_initialization(&pool).await.expect("initialize schema");
         let db_path = temp_dir.path().join("test.db");
 

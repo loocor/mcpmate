@@ -58,15 +58,18 @@ impl AuditDatabase {
             .await
             .context("Failed to configure busy_timeout for audit database")?;
 
-        if existed {
-            if let Some(backup_path) = mcpmate_migrations::backup_pending_audit(&pool, &path).await? {
-                tracing::info!(path = %backup_path.display(), "Created audit database backup before migration");
-            }
+        if let Some(backup_path) = mcpmate_migrations::prepare_audit_database(
+            &pool,
+            mcpmate_migrations::DatabaseSource::File {
+                path: &path,
+                existed_before_open: existed,
+            },
+        )
+        .await
+        .context("Failed to migrate audit database")?
+        {
+            tracing::info!(path = %backup_path.display(), "Created audit database backup before migration");
         }
-
-        mcpmate_migrations::migrate_audit(&pool)
-            .await
-            .context("Failed to migrate audit database")?;
 
         Ok(Self { pool, path })
     }

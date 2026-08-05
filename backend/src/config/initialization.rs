@@ -15,7 +15,7 @@ use super::database::initialize_capability_catalog;
 pub async fn run_initialization(pool: &Pool<Sqlite>) -> Result<()> {
     tracing::info!("Running database initialization");
 
-    mcpmate_migrations::migrate_config(pool).await?;
+    mcpmate_migrations::verify_config_database(pool).await?;
 
     // Initialize server-related tables
     tracing::debug!("Initializing server-related tables");

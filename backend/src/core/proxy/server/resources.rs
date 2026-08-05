@@ -207,6 +207,7 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .expect("connect route database");
+        crate::test_helpers::prepare_config_database(&pool).await;
         crate::config::server::init::initialize_server_tables(&pool)
             .await
             .expect("initialize server tables");

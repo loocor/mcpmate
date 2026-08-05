@@ -140,6 +140,7 @@ async fn materializer_combines_owners_with_the_strictest_policy_and_restores_ite
         .connect("sqlite::memory:")
         .await
         .unwrap();
+    database_support::prepare_config(&pool).await;
     let catalog = SqliteCapabilityCatalog::new(pool.clone());
     catalog.ensure_schema().await.unwrap();
     let first = record("first", "version one");
@@ -296,6 +297,7 @@ async fn resolved_proposal_is_idempotent_for_repeated_complete_trigger() {
         .connect("sqlite::memory:")
         .await
         .unwrap();
+    database_support::prepare_config(&pool).await;
     let catalog = SqliteCapabilityCatalog::new(pool.clone());
     catalog.ensure_schema().await.unwrap();
     let capability = record("builtin", "version one");
@@ -380,6 +382,7 @@ async fn authoring_loader_combines_direct_exposure_and_builtin_records_without_s
         .connect("sqlite::memory:")
         .await
         .unwrap();
+    database_support::prepare_config(&pool).await;
     let catalog = SqliteCapabilityCatalog::new(pool.clone());
     catalog.ensure_schema().await.unwrap();
     mcpmate::config::server::init::initialize_server_tables(&pool)
@@ -428,14 +431,10 @@ async fn authoring_loader_combines_direct_exposure_and_builtin_records_without_s
         ))
         .await
         .unwrap();
-    for statement in [
-        "CREATE TABLE profile_capability_refs (profile_id TEXT, ref_id TEXT, enabled INTEGER)",
-        "CREATE TABLE profile_server_relationships (profile_id TEXT, server_id TEXT, enabled BOOLEAN, new_ref_policy TEXT)",
-        "CREATE TABLE direct_exposure_refs (consumer_id TEXT, ref_id TEXT, enabled INTEGER)",
-        "CREATE TABLE direct_exposure_servers (consumer_id TEXT, server_id TEXT, new_ref_policy TEXT)",
-    ] {
-        sqlx::query(statement).execute(&pool).await.unwrap();
-    }
+    sqlx::query("INSERT INTO client (id, name, identifier) VALUES ('client-a', 'Consumer A', 'consumer-a')")
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query("INSERT INTO direct_exposure_refs VALUES ('consumer-a', ?, 1)")
         .bind(upstream.ref_id.as_str())
         .execute(&pool)
@@ -471,3 +470,5 @@ async fn authoring_loader_combines_direct_exposure_and_builtin_records_without_s
     assert_eq!(targets.len(), 1);
     transaction.rollback().await.unwrap();
 }
+#[path = "support/database.rs"]
+mod database_support;

@@ -56,6 +56,7 @@ async fn initialized_surface_pool() -> Pool<Sqlite> {
         .connect("sqlite::memory:")
         .await
         .unwrap();
+    database_support::prepare_config(&pool).await;
     mcpmate::config::server::init::initialize_server_tables(&pool)
         .await
         .unwrap();
@@ -94,6 +95,7 @@ async fn failed_outbox_delivery_remains_pending_for_retry() {
         .connect("sqlite::memory:")
         .await
         .unwrap();
+    database_support::prepare_config(&pool).await;
     SqliteCapabilityCatalog::new(pool.clone())
         .ensure_schema()
         .await
@@ -130,6 +132,7 @@ async fn identical_catalog_observation_does_not_touch_surface_governance() {
         .connect("sqlite::memory:")
         .await
         .unwrap();
+    database_support::prepare_config(&pool).await;
     let catalog = SqliteCapabilityCatalog::new(pool.clone());
     catalog.ensure_schema().await.unwrap();
     let first = record("stable definition");
@@ -581,3 +584,5 @@ async fn durable_worker_materializes_and_records_a_success_receipt() {
     assert_eq!(pending_missing, 1);
     assert_eq!(obsolete_versions, 1);
 }
+#[path = "support/database.rs"]
+mod database_support;

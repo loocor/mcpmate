@@ -1,4 +1,17 @@
 use mcpmate_secrets::store::SecretOriginInput;
+use sqlx::{Pool, Sqlite};
+
+pub async fn prepare_config_database(pool: &Pool<Sqlite>) {
+    mcpmate_migrations::prepare_config_database(pool, mcpmate_migrations::DatabaseSource::InMemory)
+        .await
+        .expect("prepare test config database");
+}
+
+pub async fn prepare_audit_database(pool: &Pool<Sqlite>) {
+    mcpmate_migrations::prepare_audit_database(pool, mcpmate_migrations::DatabaseSource::InMemory)
+        .await
+        .expect("prepare test audit database");
+}
 
 /// Build a `SecretOriginInput` for an OAuth-managed secret slot.
 pub fn oauth_secret_origin(

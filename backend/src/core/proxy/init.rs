@@ -411,20 +411,8 @@ mod tests {
             .execute(&pool)
             .await
             .expect("enable foreign keys");
+        crate::test_helpers::prepare_config_database(&pool).await;
         run_initialization(&pool).await.expect("initialize schema");
-        sqlx::query(
-            r#"
-            CREATE TABLE secure_store_provider_config (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                provider_mode TEXT NOT NULL DEFAULT 'operating_system',
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-            "#,
-        )
-        .execute(&pool)
-        .await
-        .expect("create test secret provider config");
         sqlx::query("INSERT INTO secure_store_provider_config (id, provider_mode) VALUES (1, 'local_file')")
             .execute(&pool)
             .await

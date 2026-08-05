@@ -100,6 +100,7 @@ async fn build_database_state(temp_dir: &TempDir) -> Arc<AppState> {
         .execute(&db_pool)
         .await
         .expect("enable foreign keys");
+    database_support::prepare_config(&db_pool).await;
     run_initialization(&db_pool).await.expect("initialize schema");
     mcpmate::core::capability::naming::initialize(db_pool.clone());
     mcpmate::core::capability::resolver::clear_cache().await;
@@ -1417,3 +1418,5 @@ async fn inspector_tool_call_events_ws_unknown_call_closes() {
     let _ = ws.close(None).await;
     server.abort();
 }
+#[path = "support/database.rs"]
+mod database_support;

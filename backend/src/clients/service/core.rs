@@ -1336,6 +1336,7 @@ mod render_definition_tests {
                 .await
                 .expect("sqlite pool"),
         );
+        crate::test_helpers::prepare_config_database(pool.as_ref()).await;
         initialize_client_table(pool.as_ref()).await.expect("init client table");
 
         let template_root = TemplateRoot::new(temp_dir.path().join("client-templates"));
@@ -1400,6 +1401,7 @@ mod render_definition_tests {
             .connect("sqlite::memory:")
             .await
             .expect("sqlite pool");
+        crate::test_helpers::prepare_config_database(&pool).await;
         crate::config::client::init::initialize_client_table(&pool)
             .await
             .expect("init client table");
@@ -1477,6 +1479,7 @@ mod render_definition_tests {
             .connect("sqlite::memory:")
             .await
             .expect("sqlite pool");
+        crate::test_helpers::prepare_config_database(&pool).await;
         crate::config::client::init::initialize_client_table(&pool)
             .await
             .expect("init client table");
@@ -1506,6 +1509,7 @@ mod render_definition_tests {
             .connect("sqlite::memory:")
             .await
             .expect("sqlite pool");
+        crate::test_helpers::prepare_config_database(&pool).await;
         crate::config::client::init::initialize_client_table(&pool)
             .await
             .expect("init client table");

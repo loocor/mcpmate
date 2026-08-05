@@ -108,6 +108,7 @@ async fn open_database(path: PathBuf) -> Arc<Database> {
         .connect_with(options)
         .await
         .expect("open test database");
+    database_support::prepare_config(&pool).await;
     run_initialization(&pool).await.expect("initialize test database");
     mcpmate::core::capability::naming::initialize(pool.clone());
     mcpmate::core::capability::resolver::clear_cache().await;
@@ -2629,3 +2630,5 @@ async fn isolated_restart_reset_parity_preserves_catalog_and_target_only_recover
         ]
     );
 }
+#[path = "support/database.rs"]
+mod database_support;

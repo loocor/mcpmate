@@ -18,6 +18,7 @@ async fn fixture() -> (sqlx::SqlitePool, ClientConfigService, CatalogRecord) {
         .connect("sqlite::memory:")
         .await
         .expect("create database");
+    database_support::prepare_config(&pool).await;
     mcpmate::config::server::init::initialize_server_tables(&pool)
         .await
         .expect("initialize servers");
@@ -194,3 +195,5 @@ async fn retired_same_kind_refs_remain_as_intent_but_are_excluded_from_the_activ
     .expect("count published retired refs");
     assert_eq!(published_refs, 0);
 }
+#[path = "support/database.rs"]
+mod database_support;

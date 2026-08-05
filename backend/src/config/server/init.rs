@@ -6,7 +6,7 @@ use crate::common::constants::database::tables;
 /// Verify server storage and perform recurring startup cleanup.
 /// Durable schema is owned by `mcpmate-migrations`.
 pub async fn initialize_server_tables(pool: &Pool<Sqlite>) -> Result<()> {
-    mcpmate_migrations::migrate_config(pool).await?;
+    mcpmate_migrations::verify_config_database(pool).await?;
     verify_server_tables(pool).await?;
     cleanup_pending_import_servers(pool).await
 }
@@ -86,6 +86,7 @@ mod tests {
     #[tokio::test]
     async fn initialize_server_tables_removes_pending_import_records() {
         let pool = setup_pool().await;
+        crate::test_helpers::prepare_config_database(&pool).await;
         initialize_server_tables(&pool).await.expect("initialize tables");
         upsert_server(&pool, &build_server("serv_visible", "visible-server", false))
             .await
@@ -99,21 +100,5 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(remaining_names, vec!["visible-server".to_string()]);
-    }
-
-    #[tokio::test]
-    async fn initialize_server_tables_adds_observed_identity_columns_to_existing_meta_table() {
-        let pool = setup_pool().await;
-        sqlx::query("CREATE TABLE server_meta (id TEXT PRIMARY KEY, server_id TEXT NOT NULL UNIQUE, server_name TEXT NOT NULL, registry_version TEXT, registry_meta_json TEXT, extras_json TEXT)")
-            .execute(&pool).await.unwrap();
-        initialize_server_tables(&pool)
-            .await
-            .expect("upgrade existing server tables");
-        let columns = sqlx::query_scalar::<_, String>("SELECT name FROM pragma_table_info('server_meta')")
-            .fetch_all(&pool)
-            .await
-            .unwrap();
-        assert!(columns.iter().any(|column| column == "upstream_name"));
-        assert!(columns.iter().any(|column| column == "upstream_title"));
     }
 }

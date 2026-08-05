@@ -2351,6 +2351,7 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .expect("sqlite pool");
+        crate::test_helpers::prepare_config_database(&pool).await;
         crate::config::initialization::run_initialization(&pool)
             .await
             .expect("initialize database");
@@ -2989,6 +2990,7 @@ mod tests {
             .execute(&pool)
             .await
             .expect("enable foreign keys");
+        crate::test_helpers::prepare_config_database(&pool).await;
         initialize_client_table(&pool).await.expect("init client table");
         initialize_system_settings(&pool)
             .await

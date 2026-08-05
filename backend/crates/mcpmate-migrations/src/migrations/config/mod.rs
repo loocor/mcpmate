@@ -1,0 +1,28 @@
+mod v0002_add_llm_provider_default;
+mod v0004_upgrade_server_columns;
+mod v0006_normalize_client_configuration;
+mod v0008_validate_secure_store;
+mod v0010_create_capability_catalog;
+
+use super::Migration;
+
+pub(super) const LLM_PROVIDER_SCHEMA: &str = include_str!("v0001_create_llm_provider.sql");
+pub(super) const SERVER_SCHEMA: &str = include_str!("v0003_create_server_configuration.sql");
+pub(super) const CLIENT_SCHEMA: &str = include_str!("v0005_create_client_configuration.sql");
+pub(super) const SECURE_STORE_SCHEMA: &str = include_str!("v0007_create_secure_store.sql");
+pub(super) const PROFILE_SCHEMA: &str = include_str!("v0009_create_profile_authoring.sql");
+
+pub(crate) fn all() -> Vec<Migration> {
+    vec![
+        Migration::sql(1, "create llm provider", LLM_PROVIDER_SCHEMA),
+        v0002_add_llm_provider_default::migration(),
+        Migration::sql(3, "create server configuration", SERVER_SCHEMA),
+        v0004_upgrade_server_columns::migration(),
+        Migration::sql(5, "create client configuration", CLIENT_SCHEMA),
+        v0006_normalize_client_configuration::migration(),
+        Migration::sql(7, "create secure store storage", SECURE_STORE_SCHEMA),
+        v0008_validate_secure_store::migration(),
+        Migration::sql(9, "create profile authoring storage", PROFILE_SCHEMA),
+        v0010_create_capability_catalog::migration(),
+    ]
+}

@@ -69,6 +69,7 @@ async fn build_test_context() -> (TempDir, Arc<AppState>, Arc<LocalSecretStore>)
         .execute(&db_pool)
         .await
         .expect("enable foreign keys");
+    database_support::prepare_config(&db_pool).await;
     run_initialization(&db_pool).await.expect("initialize schema");
 
     let database = Arc::new(Database {
@@ -124,6 +125,7 @@ async fn build_passphrase_test_context(master_password: &str) -> (TempDir, Arc<A
         .execute(&db_pool)
         .await
         .expect("enable foreign keys");
+    database_support::prepare_config(&db_pool).await;
     run_initialization(&db_pool).await.expect("initialize schema");
 
     let database = Arc::new(Database {
@@ -886,6 +888,7 @@ async fn build_locked_passphrase_context(master_password: &str) -> (TempDir, Arc
         .execute(&db_pool)
         .await
         .expect("enable foreign keys");
+    database_support::prepare_config(&db_pool).await;
     run_initialization(&db_pool).await.expect("initialize schema");
 
     let database = Arc::new(Database {
@@ -1047,6 +1050,7 @@ async fn provider_mode_persists_across_restart_simulation() {
         .execute(&db_pool)
         .await
         .expect("enable foreign keys");
+    database_support::prepare_config(&db_pool).await;
     run_initialization(&db_pool).await.expect("initialize schema");
 
     let database = Arc::new(Database {
@@ -1269,3 +1273,5 @@ async fn list_secrets_reports_historical_usage_count() {
     assert_eq!(secret["used_by_count"], 0);
     assert_eq!(secret["historical_usage_count"], 1);
 }
+#[path = "support/database.rs"]
+mod database_support;

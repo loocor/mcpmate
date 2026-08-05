@@ -34,6 +34,9 @@ impl AuditStore {
     }
 
     pub async fn initialize(&self) -> Result<()> {
+        mcpmate_migrations::verify_audit_database(&self.pool)
+            .await
+            .context("Migrate audit database before creating the audit store")?;
         sqlx::query("SELECT 1 FROM audit_policy LIMIT 1")
             .execute(&self.pool)
             .await
@@ -533,6 +536,15 @@ mod tests {
             .connect_with(options)
             .await
             .expect("connect");
+        mcpmate_migrations::prepare_audit_database(
+            &pool,
+            mcpmate_migrations::DatabaseSource::File {
+                path: &path,
+                existed_before_open: false,
+            },
+        )
+        .await
+        .expect("prepare audit database");
         let store = AuditStore::new(pool);
         store.initialize().await.expect("initialize audit store");
         store

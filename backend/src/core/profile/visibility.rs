@@ -1136,6 +1136,7 @@ mod tests {
             .await
             .expect("sqlite pool");
 
+        crate::test_helpers::prepare_config_database(&pool).await;
         initialize_server_tables(&pool).await.expect("init server tables");
         initialize_client_table(&pool).await.expect("init client table");
         crate::config::database::initialize_capability_catalog(&pool)

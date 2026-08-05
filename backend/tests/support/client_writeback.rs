@@ -10,6 +10,8 @@ use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
 use tempfile::TempDir;
 
+use super::database;
+
 pub const CLIENT_ID: &str = "writeback-client";
 
 pub struct ClientWritebackFixture {
@@ -31,6 +33,7 @@ impl ClientWritebackFixture {
             .connect("sqlite::memory:")
             .await
             .expect("create database");
+        database::prepare_config(&pool).await;
         mcpmate::config::client::init::initialize_client_table(&pool)
             .await
             .expect("initialize clients");
