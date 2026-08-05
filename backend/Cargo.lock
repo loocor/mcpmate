@@ -2649,6 +2649,7 @@ dependencies = [
  "lru",
  "mcpmate-capability-store",
  "mcpmate-llm",
+ "mcpmate-migrations",
  "mcpmate-secrets",
  "mockall",
  "nanoid",
@@ -2729,6 +2730,17 @@ dependencies = [
  "serde_json",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "mcpmate-migrations"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "sha2",
+ "sqlx",
+ "tokio",
 ]
 
 [[package]]

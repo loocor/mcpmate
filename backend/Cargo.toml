@@ -39,6 +39,7 @@ windows-sys = { version = "0.59.0", features = ["Win32_Foundation", "Win32_Stora
 anyhow = "1.0"
 async-trait = "0.1"
 mcpmate-capability-store = { path = "crates/mcpmate-capability-store" }
+mcpmate-migrations = { path = "crates/mcpmate-migrations" }
 mcpmate-llm = { path = "crates/mcpmate-llm" }
 mcpmate-secrets = { path = "crates/mcpmate-secrets" }
 is-terminal = "0.4"
