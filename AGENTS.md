@@ -30,7 +30,7 @@
 - Log significant findings, regressions, or retest evidence back into the active GitHub Project item so the current working record stays authoritative.
 - Pre-freeze stance: before Loocor declares API/data compatibility freeze, schema and configuration breaking changes may use clean rebuilds with companion updates in the same PR. Persistent SQLite schema or one-time data changes use the embedded migration contract below; do not add unrelated compatibility layers or fallbacks.
 - Do not add fallback behavior unless the design or product requirements explicitly call for it. If fallback semantics are ambiguous, stop and ask rather than inventing one.
-- `backend/crates/mcpmate-migrations` is the sole owner of durable SQLite schema migration. Before designing a persistent schema or one-time data change, read its `README.md`; add the change through its versioned migration ledger, never through `ensure_schema`, `ensure_column`, or ad-hoc DDL in a business module.
+- `backend/crates/mcpmate-migrations` is the sole owner of durable SQLite schema migration. Before designing a persistent schema or one-time data change, read its `README.md`; add the change through its versioned migration ledger, never through `ensure_schema`, `ensure_column`, or ad-hoc DDL in a business module. Only physical database initialization may execute pending migrations; business modules remain read-only verifiers of the migrated contract.
 
 ## GitHub Project Workflow
 - Use the GitHub Project **MCPMate** as the canonical task center for roadmap planning, development slices, release/distribution work, marketing follow-up, and cross-repository coordination.
