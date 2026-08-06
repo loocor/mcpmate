@@ -375,8 +375,7 @@ async fn resolve_target_review(
         )
         .await
         .map_err(store_error)?;
-    let source_revision_set = load_catalog_revision_set(&mut transaction).await?;
-    let trigger = MaterializationTrigger::new("review_resolution", &decision_id, source_revision_set, &request.actor);
+    let trigger = MaterializationTrigger::for_consumer("review_resolution", &decision_id, &request.actor);
     let commit = MaterializationCoordinator::new(pool.clone())
         .compile_consumer_in_transaction(&mut transaction, &item.item.consumer_id, &trigger)
         .await
@@ -441,18 +440,6 @@ async fn resolve_target_review(
         binding_generation: next_generation,
         effective_surface_changed: commit.effective_surface_changed,
     })))
-}
-
-async fn load_catalog_revision_set(
-    transaction: &mut sqlx::Transaction<'_, Sqlite>
-) -> Result<std::collections::HashMap<String, i64>, ApiError> {
-    sqlx::query_as::<_, (String, i64)>(
-        "SELECT server_id, catalog_revision FROM capability_server_snapshots ORDER BY server_id",
-    )
-    .fetch_all(&mut **transaction)
-    .await
-    .map(|rows| rows.into_iter().collect())
-    .map_err(database_error)
 }
 
 #[derive(Clone)]
@@ -597,7 +584,6 @@ async fn resolve_intent_review(
             .map_err(store_error)?;
     }
 
-    let source_revision_set = load_catalog_revision_set(&mut transaction).await?;
     let coordinator = MaterializationCoordinator::new(pool.clone());
     let mut effective_surface_changed = false;
     let mut response_generation = binding.generation;
@@ -608,12 +594,7 @@ async fn resolve_intent_review(
                 &mut transaction,
                 consumer_id,
                 &default_config_mode,
-                &MaterializationTrigger::new(
-                    "intent_resolution",
-                    &decision_id,
-                    source_revision_set.clone(),
-                    &request.actor,
-                ),
+                &MaterializationTrigger::for_consumer("intent_resolution", &decision_id, &request.actor),
             )
             .await
             .map_err(store_error)?;

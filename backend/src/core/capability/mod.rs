@@ -6,6 +6,7 @@
 pub(crate) mod aggregate;
 pub mod change_policy;
 pub(crate) mod connection_provider;
+pub mod dependency;
 pub mod descriptions;
 pub mod domain;
 pub mod facade;

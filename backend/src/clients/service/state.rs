@@ -5,7 +5,7 @@ use crate::clients::models::{
     FirstContactBehavior,
 };
 use crate::core::capability::materializer::{
-    MaterializationCoordinator, MaterializationTrigger, SurfaceAuthoringLoader, revoke_managed_surface_in_transaction,
+    MaterializationCoordinator, MaterializationTrigger, revoke_managed_surface_in_transaction,
 };
 use mcpmate_capability_store::CatalogError;
 use std::collections::HashMap;
@@ -287,18 +287,14 @@ impl ClientConfigService {
         .execute(&mut *transaction)
         .await
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
-        let source_revision_set = SurfaceAuthoringLoader::load_catalog_revision_set_in_transaction(&mut transaction)
-            .await
-            .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
         let materialization = self
             .materialize_managed_surface_in_transaction(
                 &mut transaction,
                 identifier,
                 &default_config_mode,
-                &MaterializationTrigger::new(
+                &MaterializationTrigger::for_consumer(
                     "consumer_approval",
                     format!("approve:{identifier}"),
-                    source_revision_set,
                     "client_management",
                 ),
             )

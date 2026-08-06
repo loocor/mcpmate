@@ -306,18 +306,9 @@ async fn complete_configuration_mode_transition(
         )));
     }
 
-    let source_revision_set = sqlx::query_as::<_, (String, i64)>(
-        "SELECT server_id, catalog_revision FROM capability_server_snapshots ORDER BY server_id",
-    )
-    .fetch_all(&mut *transaction)
-    .await
-    .map_err(|error| ConfigError::DataAccessError(error.to_string()))?
-    .into_iter()
-    .collect();
-    let trigger = crate::core::capability::materializer::MaterializationTrigger::new(
+    let trigger = crate::core::capability::materializer::MaterializationTrigger::for_consumer(
         "default_config_mode_transition",
         transition_id,
-        source_revision_set,
         "system_settings",
     );
     crate::core::capability::materializer::converge_inherited_consumers_for_default_mode_in_transaction(

@@ -176,15 +176,7 @@ async fn publish_for_mode(
     pool: &sqlx::SqlitePool,
     mode: &str,
 ) {
-    let revisions = sqlx::query_as::<_, (String, i64)>(
-        "SELECT server_id, catalog_revision FROM capability_server_snapshots ORDER BY server_id",
-    )
-    .fetch_all(pool)
-    .await
-    .expect("load revisions")
-    .into_iter()
-    .collect::<HashMap<_, _>>();
-    let trigger = MaterializationTrigger::new("test_setup", mode, revisions, "test");
+    let trigger = MaterializationTrigger::for_consumer("test_setup", mode, "test");
     let mut transaction = pool.begin().await.expect("begin setup publication");
     MaterializationCoordinator::new(pool.clone())
         .compile_consumer_in_transaction_with_default(&mut transaction, "client-a", mode, &trigger)

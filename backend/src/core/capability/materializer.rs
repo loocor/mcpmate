@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use mcpmate_capability_store::{
     BUILTIN_CAPABILITY_SOURCE_ID, CapabilityChangeEvent, CapabilityId, CapabilityKind, CapabilityObservation,
@@ -13,6 +13,7 @@ use sqlx::{Pool, Row, Sqlite, Transaction};
 use uuid::Uuid;
 
 use super::change_policy::{ChangeClass, NewRefPolicy, PolicyAction, RelationshipLevel, policy_action};
+use super::dependency::CatalogDependencyRevisions;
 use super::mode_policy::{
     DirectExposurePolicy, EffectiveConfigMode, ProfileScopePolicy, SurfaceParticipation,
     resolve_surface_composition_policy,
@@ -155,6 +156,7 @@ pub struct MaterializationInput {
     pub relationships: Vec<AuthoringRelationship>,
     pub catalog_targets: Vec<CatalogTarget>,
     pub decisions: Vec<ReviewDecisionState>,
+    pub dependency_server_ids: BTreeSet<String>,
 }
 
 impl MaterializationInput {
@@ -163,12 +165,14 @@ impl MaterializationInput {
         relationships: Vec<AuthoringRelationship>,
         catalog_targets: Vec<CatalogTarget>,
         decisions: Vec<ReviewDecisionState>,
+        dependency_server_ids: BTreeSet<String>,
     ) -> Self {
         Self {
             consumer_id: consumer_id.into(),
             relationships,
             catalog_targets,
             decisions,
+            dependency_server_ids,
         }
     }
 }
@@ -583,6 +587,14 @@ impl SurfaceAuthoringLoader {
                 )?);
             }
         }
+        let dependency_server_ids = Self::load_dependency_server_ids_in_transaction(
+            transaction,
+            consumer_id,
+            &profiles,
+            composition_policy.direct_exposure,
+            &relationships,
+        )
+        .await?;
 
         let review_rows = sqlx::query(
             r#"
@@ -622,6 +634,7 @@ impl SurfaceAuthoringLoader {
             relationships,
             catalog_targets,
             decisions,
+            dependency_server_ids,
         ))
     }
 
@@ -810,6 +823,84 @@ impl SurfaceAuthoringLoader {
         Ok(relationships)
     }
 
+    async fn load_dependency_server_ids_in_transaction(
+        transaction: &mut Transaction<'_, Sqlite>,
+        consumer_id: &str,
+        profiles: &[ProfileAuthoringOwner],
+        direct_exposure_policy: DirectExposurePolicy,
+        relationships: &[AuthoringRelationship],
+    ) -> Result<BTreeSet<String>> {
+        let mut server_ids = BTreeSet::new();
+        let relationship_ref_ids = relationships
+            .iter()
+            .map(|relationship| relationship.ref_id.as_str())
+            .collect::<BTreeSet<_>>();
+        if !relationship_ref_ids.is_empty() {
+            let ref_ids_json = serde_json::to_string(&relationship_ref_ids)?;
+            let relationship_servers = sqlx::query_as::<_, (String, String)>(
+                r#"
+                    SELECT ref_id, server_id
+                    FROM capability_refs
+                    WHERE ref_id IN (SELECT value FROM json_each(?))
+                    ORDER BY ref_id
+                    "#,
+            )
+            .bind(ref_ids_json)
+            .fetch_all(&mut **transaction)
+            .await?
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+            for ref_id in relationship_ref_ids {
+                let server_id = relationship_servers
+                    .get(ref_id)
+                    .ok_or_else(|| CatalogError::SurfaceNotFound {
+                        entity: "capability ref",
+                        id: ref_id.to_string(),
+                    })?;
+                server_ids.insert(server_id.clone());
+            }
+        }
+        for profile in profiles {
+            server_ids.extend(
+                sqlx::query_scalar::<_, String>(
+                    r#"
+                    SELECT relationship.server_id
+                    FROM profile_server_relationships relationship
+                    JOIN server_config server
+                      ON server.id = relationship.server_id
+                     AND server.enabled = 1
+                    WHERE relationship.profile_id = ?
+                      AND relationship.enabled = 1
+                    ORDER BY relationship.server_id
+                    "#,
+                )
+                .bind(&profile.profile_id)
+                .fetch_all(&mut **transaction)
+                .await?,
+            );
+        }
+        if direct_exposure_policy == DirectExposurePolicy::ServerLevel {
+            server_ids.extend(
+                sqlx::query_scalar::<_, String>(
+                    r#"
+                    SELECT exposure.server_id
+                    FROM direct_exposure_servers exposure
+                    JOIN server_config server
+                      ON server.id = exposure.server_id
+                     AND server.enabled = 1
+                     AND server.unify_direct_exposure_eligible = 1
+                    WHERE exposure.consumer_id = ?
+                    ORDER BY exposure.server_id
+                    "#,
+                )
+                .bind(consumer_id)
+                .fetch_all(&mut **transaction)
+                .await?,
+            );
+        }
+        Ok(server_ids)
+    }
+
     pub async fn load_catalog_targets_in_transaction(
         transaction: &mut Transaction<'_, Sqlite>,
         relationships: &[AuthoringRelationship],
@@ -912,22 +1003,30 @@ fn parse_new_ref_policy(value: &str) -> Result<NewRefPolicy> {
 pub struct MaterializationTrigger {
     pub kind: String,
     pub id: String,
-    pub source_revision_set: HashMap<String, i64>,
+    pub catalog_dependency_revisions: CatalogDependencyRevisions,
     pub actor: String,
     pub review_baseline_manifest_id: Option<mcpmate_capability_store::SurfaceManifestId>,
 }
 
 impl MaterializationTrigger {
-    pub fn new(
+    pub fn for_consumer(
         kind: impl Into<String>,
         id: impl Into<String>,
-        source_revision_set: HashMap<String, i64>,
+        actor: impl Into<String>,
+    ) -> Self {
+        Self::from_dependencies(kind, id, CatalogDependencyRevisions::default(), actor)
+    }
+
+    pub fn from_dependencies(
+        kind: impl Into<String>,
+        id: impl Into<String>,
+        catalog_dependency_revisions: CatalogDependencyRevisions,
         actor: impl Into<String>,
     ) -> Self {
         Self {
             kind: kind.into(),
             id: id.into(),
-            source_revision_set,
+            catalog_dependency_revisions,
             actor: actor.into(),
             review_baseline_manifest_id: None,
         }
@@ -939,6 +1038,15 @@ impl MaterializationTrigger {
     ) -> Self {
         self.review_baseline_manifest_id = Some(manifest_id);
         self
+    }
+
+    fn with_catalog_dependency_revisions(
+        &self,
+        catalog_dependency_revisions: CatalogDependencyRevisions,
+    ) -> Self {
+        let mut trigger = self.clone();
+        trigger.catalog_dependency_revisions = catalog_dependency_revisions;
+        trigger
     }
 }
 
@@ -981,7 +1089,7 @@ impl MaterializationCoordinator {
         output: &MaterializationOutput,
         trigger: &MaterializationTrigger,
     ) -> Result<MaterializationCommit> {
-        self.verify_catalog_revision_set_in_transaction(transaction, &trigger.source_revision_set)
+        self.verify_catalog_dependency_revisions_in_transaction(transaction, &trigger.catalog_dependency_revisions)
             .await?;
         let consumer_id = &output.proposed_manifest.consumer_id;
         if output.publishable_manifest.consumer_id != *consumer_id {
@@ -1034,7 +1142,7 @@ impl MaterializationCoordinator {
             output.proposed_manifest.manifest_id.clone(),
             &trigger.kind,
             &trigger.id,
-            serde_json::to_value(&trigger.source_revision_set)?,
+            serde_json::to_value(&trigger.catalog_dependency_revisions)?,
             json!({
                 "proposedEntries": output.proposed_manifest.entries.len(),
                 "publishableEntries": output.publishable_manifest.entries.len(),
@@ -1213,8 +1321,11 @@ impl MaterializationCoordinator {
         let input =
             SurfaceAuthoringLoader::load_consumer_input_in_transaction(transaction, consumer_id, default_config_mode)
                 .await?;
+        let trigger = self
+            .derive_consumer_trigger_in_transaction(transaction, consumer_id, &input, trigger)
+            .await?;
         let output = SurfaceMaterializer::compile(input)?;
-        self.persist_in_transaction(transaction, &output, trigger).await
+        self.persist_in_transaction(transaction, &output, &trigger).await
     }
 
     pub async fn compile_consumer_with_changes_in_transaction(
@@ -1232,8 +1343,25 @@ impl MaterializationCoordinator {
             changes,
         )
         .await?;
+        let trigger = self
+            .derive_consumer_trigger_in_transaction(transaction, consumer_id, &input, trigger)
+            .await?;
         let output = SurfaceMaterializer::compile(input)?;
-        self.persist_in_transaction(transaction, &output, trigger).await
+        self.persist_in_transaction(transaction, &output, &trigger).await
+    }
+
+    async fn derive_consumer_trigger_in_transaction(
+        &self,
+        transaction: &mut Transaction<'_, Sqlite>,
+        consumer_id: &str,
+        input: &MaterializationInput,
+        trigger: &MaterializationTrigger,
+    ) -> Result<MaterializationTrigger> {
+        let mut server_ids = input.dependency_server_ids.clone();
+        server_ids.extend(trigger.catalog_dependency_revisions.server_ids().map(str::to_string));
+        let catalog_dependency_revisions =
+            CatalogDependencyRevisions::derive_in_transaction(transaction, consumer_id, &server_ids, None).await?;
+        Ok(trigger.with_catalog_dependency_revisions(catalog_dependency_revisions))
     }
 
     async fn load_default_config_mode(&self) -> Result<String> {
@@ -1252,6 +1380,22 @@ impl MaterializationCoordinator {
         .await?
         .into_iter()
         .collect::<HashMap<_, _>>();
+        if actual != *expected {
+            return Err(CatalogError::ConcurrencyConflict {
+                entity: "capability catalog revision set",
+                id: "current".to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    async fn verify_catalog_dependency_revisions_in_transaction(
+        &self,
+        transaction: &mut Transaction<'_, Sqlite>,
+        expected: &CatalogDependencyRevisions,
+    ) -> Result<()> {
+        let actual =
+            CatalogDependencyRevisions::load_current_for_expected_servers_in_transaction(transaction, expected).await?;
         if actual != *expected {
             return Err(CatalogError::ConcurrencyConflict {
                 entity: "capability catalog revision set",
@@ -1293,12 +1437,12 @@ fn surface_proposal_id(
     proposed_manifest_id: &mcpmate_capability_store::SurfaceManifestId,
     publishable_manifest_id: &mcpmate_capability_store::SurfaceManifestId,
 ) -> String {
-    let mut source_revision_set = trigger
-        .source_revision_set
+    let source_revision_set = trigger
+        .catalog_dependency_revisions
+        .0
         .iter()
         .map(|(server_id, revision)| (server_id.as_str(), *revision))
         .collect::<Vec<_>>();
-    source_revision_set.sort_unstable_by(|left, right| left.0.cmp(right.0));
     let canonical = json!({
         "consumerId": consumer_id,
         "triggerKind": trigger.kind,
@@ -1334,7 +1478,10 @@ async fn materialize_managed_surfaces_in_transaction(
     consumer_ids: &[String],
     default_config_mode: &str,
     republish_existing: bool,
-    trigger: &MaterializationTrigger,
+    trigger_kind: &str,
+    trigger_id: &str,
+    trigger_actor: &str,
+    trigger_server_id: Option<&str>,
     changes: &HashMap<CapabilityRefId, ChangeClass>,
 ) -> Result<Vec<(String, MaterializationCommit)>> {
     let coordinator = MaterializationCoordinator::new(pool.clone());
@@ -1353,9 +1500,22 @@ async fn materialize_managed_surfaces_in_transaction(
                 changes.clone(),
             )
             .await?;
+            let catalog_dependency_revisions = CatalogDependencyRevisions::derive_in_transaction(
+                transaction,
+                consumer_id,
+                &input.dependency_server_ids,
+                trigger_server_id,
+            )
+            .await?;
+            let trigger = MaterializationTrigger::from_dependencies(
+                trigger_kind,
+                trigger_id,
+                catalog_dependency_revisions,
+                trigger_actor,
+            );
             let output = SurfaceMaterializer::compile(input)?;
             let commit = coordinator
-                .persist_in_transaction(transaction, &output, trigger)
+                .persist_in_transaction(transaction, &output, &trigger)
                 .await?;
             commits.push((consumer_id.clone(), commit));
         }
@@ -1382,16 +1542,18 @@ async fn materialize_managed_surfaces(
 ) -> Result<Vec<(String, MaterializationCommit)>> {
     let default_config_mode = load_default_config_mode(pool).await?;
     let consumer_ids = load_managed_consumer_ids(pool, &default_config_mode).await?;
-    let source_revision_set = SurfaceAuthoringLoader::load_catalog_revision_set(pool).await?;
-    let trigger = MaterializationTrigger::new(trigger_kind, Uuid::new_v4().to_string(), source_revision_set, "startup");
     let mut transaction = pool.begin().await?;
+    let trigger_id = Uuid::new_v4().to_string();
     let commits = materialize_managed_surfaces_in_transaction(
         pool,
         &mut transaction,
         &consumer_ids,
         &default_config_mode,
         republish_existing,
-        &trigger,
+        trigger_kind,
+        &trigger_id,
+        "startup",
+        None,
         changes,
     )
     .await?;
@@ -1412,16 +1574,18 @@ pub async fn bootstrap_managed_consumer_surface_if_missing(
     actor: &str,
 ) -> Result<Option<MaterializationCommit>> {
     let default_config_mode = load_default_config_mode(pool).await?;
-    let source_revision_set = SurfaceAuthoringLoader::load_catalog_revision_set(pool).await?;
-    let trigger = MaterializationTrigger::new(trigger_kind, trigger_id.into(), source_revision_set, actor);
     let mut transaction = pool.begin().await?;
+    let trigger_id = trigger_id.into();
     let commits = materialize_managed_surfaces_in_transaction(
         pool,
         &mut transaction,
         &[consumer_id.to_string()],
         &default_config_mode,
         false,
-        &trigger,
+        trigger_kind,
+        &trigger_id,
+        actor,
+        None,
         &HashMap::new(),
     )
     .await?;
@@ -1503,21 +1667,17 @@ pub async fn synchronize_builtin_catalog_and_bootstrap_managed_surfaces(
     for ref_id in &reconciliation.delta.reappeared_refs {
         changes.insert(ref_id.clone(), ChangeClass::Reappeared);
     }
-    let source_revision_set =
-        SurfaceAuthoringLoader::load_catalog_revision_set_in_transaction(&mut transaction).await?;
-    let trigger = MaterializationTrigger::new(
-        "builtin_catalog_startup_sync",
-        Uuid::new_v4().to_string(),
-        source_revision_set,
-        "startup",
-    );
+    let trigger_id = Uuid::new_v4().to_string();
     let materializations = materialize_managed_surfaces_in_transaction(
         pool,
         &mut transaction,
         &consumer_ids,
         &default_config_mode,
         reconciliation.commit.changed,
-        &trigger,
+        "builtin_catalog_startup_sync",
+        &trigger_id,
+        "startup",
+        Some(BUILTIN_CAPABILITY_SOURCE_ID),
         &changes,
     )
     .await?;

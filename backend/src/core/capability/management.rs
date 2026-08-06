@@ -93,13 +93,10 @@ impl ServerSurfaceManagement {
             field: "server status",
             value: server_id.to_string(),
         })?;
-        let source_revision_set =
-            SurfaceAuthoringLoader::load_catalog_revision_set_in_transaction(&mut transaction).await?;
         let consumer_ids = load_server_consumer_ids(&mut transaction, server_id, &default_config_mode).await?;
-        let trigger = MaterializationTrigger::new(
+        let trigger = MaterializationTrigger::for_consumer(
             "server_status_save",
             format!("{server_id}:{}", Uuid::new_v4()),
-            source_revision_set,
             actor,
         );
         let mut materializations = Vec::with_capacity(consumer_ids.len());
@@ -162,10 +159,9 @@ impl ServerSurfaceManagement {
                 id: server_id.to_string(),
             });
         }
-        let trigger = MaterializationTrigger::new(
+        let trigger = MaterializationTrigger::for_consumer(
             "server_direct_exposure_eligibility_save",
             format!("{server_id}:{}", Uuid::new_v4()),
-            source_revision_set,
             actor,
         );
         let mut materializations = Vec::with_capacity(consumer_ids.len());
@@ -341,12 +337,8 @@ impl ProfileSurfaceManagement {
                 id: profile_id.to_string(),
             });
         }
-        let trigger = MaterializationTrigger::new(
-            "profile_delete",
-            format!("{profile_id}:{}", Uuid::new_v4()),
-            source_revision_set,
-            actor,
-        );
+        let trigger =
+            MaterializationTrigger::for_consumer("profile_delete", format!("{profile_id}:{}", Uuid::new_v4()), actor);
         let mut materializations = Vec::with_capacity(consumer_ids.len());
         for consumer_id in consumer_ids {
             let commit = coordinator
@@ -441,12 +433,8 @@ impl ProfileSurfaceManagement {
         let consumer_ids =
             SurfaceAuthoringLoader::load_activated_consumer_ids_in_transaction(&mut transaction, &default_config_mode)
                 .await?;
-        let trigger = MaterializationTrigger::new(
-            "profile_activation_save",
-            Uuid::new_v4().to_string(),
-            source_revision_set,
-            actor,
-        );
+        let trigger =
+            MaterializationTrigger::for_consumer("profile_activation_save", Uuid::new_v4().to_string(), actor);
         let mut materializations = Vec::with_capacity(consumer_ids.len());
         for consumer_id in consumer_ids {
             let commit = coordinator
@@ -629,7 +617,6 @@ impl ProfileSurfaceManagement {
             &mut transaction,
             profile_id,
             &default_config_mode,
-            source_revision_set,
             actor,
             "profile_capability_save",
         )
@@ -792,7 +779,6 @@ impl ProfileSurfaceManagement {
             &mut transaction,
             profile_id,
             &default_config_mode,
-            source_revision_set,
             actor,
             "profile_server_save",
         )
@@ -887,7 +873,6 @@ impl ProfileSurfaceManagement {
             &mut transaction,
             profile_id,
             &default_config_mode,
-            source_revision_set,
             actor,
             "profile_server_save",
         )
@@ -901,7 +886,6 @@ impl ProfileSurfaceManagement {
         transaction: &mut sqlx::Transaction<'_, Sqlite>,
         profile_id: &str,
         default_config_mode: &str,
-        source_revision_set: HashMap<String, i64>,
         actor: &str,
         trigger_kind: &str,
     ) -> Result<Vec<ConsumerMaterialization>> {
@@ -911,12 +895,8 @@ impl ProfileSurfaceManagement {
             default_config_mode,
         )
         .await?;
-        let trigger = MaterializationTrigger::new(
-            trigger_kind,
-            format!("{profile_id}:{}", Uuid::new_v4()),
-            source_revision_set,
-            actor,
-        );
+        let trigger =
+            MaterializationTrigger::for_consumer(trigger_kind, format!("{profile_id}:{}", Uuid::new_v4()), actor);
         let mut commits = Vec::with_capacity(consumer_ids.len());
         for consumer_id in consumer_ids {
             let commit = coordinator

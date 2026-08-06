@@ -183,6 +183,29 @@ async fn add_sibling_tool(
     sibling_record
 }
 
+async fn commit_empty_server_observation(
+    pool: &sqlx::SqlitePool,
+    server_id: &str,
+) {
+    let initialize: InitializeResult = serde_json::from_value(json!({
+        "protocolVersion": "2025-11-25",
+        "capabilities": {},
+        "serverInfo": {"name": server_id, "version": "1.0.0"}
+    }))
+    .unwrap();
+    SqliteCapabilityCatalog::new(pool.clone())
+        .commit_observation(CapabilityObservation::new(
+            server_id,
+            server_id,
+            "config-v1",
+            initialize,
+            Vec::new(),
+            Vec::new(),
+        ))
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn hosted_profile_surface_ignores_preserved_unify_direct_exposure_intent() {
     let (pool, profile_record) = fixture().await;
@@ -750,12 +773,13 @@ async fn profile_server_replace_preserves_retained_server_state_and_enables_new_
     .execute(&pool)
     .await
     .unwrap();
+    commit_empty_server_observation(&pool, "server-b").await;
     ProfileSurfaceManagement::mutate_servers(
         &pool,
         "profile-a",
         &["server-a".to_string()],
         ProfileRelationshipAction::Enable,
-        HashMap::from([("server-a".to_string(), 1)]),
+        HashMap::from([("server-a".to_string(), 1), ("server-b".to_string(), 1)]),
         "test",
     )
     .await
@@ -765,7 +789,7 @@ async fn profile_server_replace_preserves_retained_server_state_and_enables_new_
         "profile-a",
         &["server-a".to_string()],
         ProfileRelationshipAction::Disable,
-        HashMap::from([("server-a".to_string(), 1)]),
+        HashMap::from([("server-a".to_string(), 1), ("server-b".to_string(), 1)]),
         "test",
     )
     .await
@@ -775,7 +799,7 @@ async fn profile_server_replace_preserves_retained_server_state_and_enables_new_
         &pool,
         "profile-a",
         &["server-a".to_string(), "server-b".to_string()],
-        HashMap::from([("server-a".to_string(), 1)]),
+        HashMap::from([("server-a".to_string(), 1), ("server-b".to_string(), 1)]),
         "test",
     )
     .await
@@ -848,6 +872,7 @@ async fn profile_server_replace_is_atomic() {
     .execute(&pool)
     .await
     .unwrap();
+    commit_empty_server_observation(&pool, "server-b").await;
     sqlx::query(
         "INSERT INTO profile_server_relationships (profile_id, server_id, new_ref_policy) VALUES ('profile-a', 'server-a', 'follow')",
     )
@@ -859,7 +884,7 @@ async fn profile_server_replace_is_atomic() {
         &pool,
         "profile-a",
         &["server-b".to_string(), "missing".to_string()],
-        HashMap::from([("server-a".to_string(), 1)]),
+        HashMap::from([("server-a".to_string(), 1), ("server-b".to_string(), 1)]),
         "test",
     )
     .await;
@@ -876,7 +901,7 @@ async fn profile_server_replace_is_atomic() {
         &pool,
         "profile-a",
         &["server-b".to_string()],
-        HashMap::from([("server-a".to_string(), 1)]),
+        HashMap::from([("server-a".to_string(), 1), ("server-b".to_string(), 1)]),
         "test",
     )
     .await
@@ -916,6 +941,128 @@ async fn startup_bootstrap_creates_initial_publications_for_managed_consumers() 
             .await
             .unwrap();
     assert_eq!(binding_count, 1);
+}
+
+#[tokio::test]
+async fn startup_bootstrap_persists_distinct_dependencies_for_each_consumer() {
+    let pool = init_management_pool().await;
+    for server_id in ["server-empty", "server-capability"] {
+        sqlx::query(
+            "INSERT INTO server_config (id, name, server_type, command, enabled, unify_direct_exposure_eligible) \
+             VALUES (?, ?, 'stdio', '', 1, 1)",
+        )
+        .bind(server_id)
+        .bind(server_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let capability = CatalogRecord::materialize(
+        "server-capability",
+        "analyze",
+        "server_capability__analyze",
+        CapabilityPayload::Tool(Tool::new(
+            "analyze",
+            "Analyze input",
+            std::sync::Arc::new(json!({"type": "object"}).as_object().unwrap().clone()),
+        )),
+    )
+    .unwrap();
+    let initialize: InitializeResult = serde_json::from_value(json!({
+        "protocolVersion": "2025-11-25",
+        "capabilities": {"tools": {"listChanged": true}},
+        "serverInfo": {"name": "fixture", "version": "1.0.0"}
+    }))
+    .unwrap();
+    let catalog = SqliteCapabilityCatalog::new(pool.clone());
+    catalog
+        .commit_observation(CapabilityObservation::new(
+            "server-empty",
+            "Empty Server",
+            "empty-v1",
+            initialize.clone(),
+            vec![KindObservation::new(
+                CapabilityKind::Tools,
+                DeclarationState::Supported,
+                InventoryState::Complete,
+            )],
+            Vec::new(),
+        ))
+        .await
+        .unwrap();
+    catalog
+        .commit_observation(CapabilityObservation::new(
+            "server-capability",
+            "Capability Server",
+            "capability-v1",
+            initialize,
+            vec![KindObservation::new(
+                CapabilityKind::Tools,
+                DeclarationState::Supported,
+                InventoryState::Complete,
+            )],
+            vec![capability.clone()],
+        ))
+        .await
+        .unwrap();
+    for (consumer_id, route_mode) in [
+        ("client-server-intent", "server_level"),
+        ("client-capability-intent", "capability_level"),
+    ] {
+        sqlx::query(
+            r#"
+            INSERT INTO client (
+                id, identifier, name, config_mode, approval_status,
+                capability_source, selected_profile_ids, unify_route_mode
+            ) VALUES (?, ?, ?, 'unify', 'approved', 'activated', '[]', ?)
+            "#,
+        )
+        .bind(consumer_id)
+        .bind(consumer_id)
+        .bind(consumer_id)
+        .bind(route_mode)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO direct_exposure_servers (consumer_id, server_id, new_ref_policy) \
+         VALUES ('client-server-intent', 'server-empty', 'follow')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO direct_exposure_refs (consumer_id, ref_id, enabled) \
+         VALUES ('client-capability-intent', ?, 1)",
+    )
+    .bind(capability.ref_id.as_str())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let commits = bootstrap_managed_surfaces(&pool).await.unwrap();
+
+    assert_eq!(commits.len(), 2);
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT consumer_id, source_revision_set FROM surface_proposals \
+         WHERE trigger_kind = 'startup_bootstrap' ORDER BY consumer_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows.into_iter()
+            .map(|(consumer_id, revisions)| (
+                consumer_id,
+                serde_json::from_str::<serde_json::Value>(&revisions).unwrap(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("client-capability-intent".to_string(), json!({"server-capability": 1}),),
+            ("client-server-intent".to_string(), json!({"server-empty": 1}),),
+        ]
+    );
 }
 
 #[tokio::test]
@@ -1033,7 +1180,7 @@ async fn builtin_catalog_sync_republishes_existing_unify_surface_with_only_ucan_
 }
 
 #[tokio::test]
-async fn global_server_disable_uses_current_catalog_revision_for_affected_surfaces() {
+async fn global_server_disable_scopes_current_catalog_revisions_to_affected_surfaces() {
     let (pool, _) = fixture().await;
     sqlx::query(
         "INSERT INTO server_config (id, name, server_type, command, enabled) VALUES ('server-b', 'Server B', 'stdio', '', 1)",
@@ -1105,7 +1252,7 @@ async fn global_server_disable_uses_current_catalog_revision_for_affected_surfac
     .unwrap();
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&source_revision_set).unwrap(),
-        json!({"server-a": 1, "server-b": 2})
+        json!({"server-a": 1})
     );
 }
 

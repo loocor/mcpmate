@@ -1274,6 +1274,17 @@ impl ClientConfigService {
             .begin()
             .await
             .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+        MaterializationCoordinator::new(self.db_pool.as_ref().clone())
+            .verify_catalog_revision_set_in_transaction(&mut transaction, &source_revision_set)
+            .await
+            .map_err(|error| match error {
+                mcpmate_capability_store::CatalogError::ConcurrencyConflict { .. } => {
+                    ConfigError::ConcurrencyConflict {
+                        details: error.to_string(),
+                    }
+                }
+                _ => ConfigError::DataAccessError(error.to_string()),
+            })?;
         self.ensure_capability_client_in_transaction(&mut transaction, identifier, &name, &prepared_client)
             .await?;
         if let Some(prepared_profile) = &prepared_custom_profile {
@@ -1320,10 +1331,9 @@ impl ClientConfigService {
                 &mut transaction,
                 &consumer_id,
                 &default_config_mode,
-                &MaterializationTrigger::new(
+                &MaterializationTrigger::for_consumer(
                     "management_save",
                     format!("client-capability-config:{consumer_id}"),
-                    source_revision_set,
                     "client_management",
                 ),
             )
@@ -1337,17 +1347,6 @@ impl ClientConfigService {
                 _ => ConfigError::DataAccessError(error.to_string()),
             })?
         } else {
-            MaterializationCoordinator::new(self.db_pool.as_ref().clone())
-                .verify_catalog_revision_set_in_transaction(&mut transaction, &source_revision_set)
-                .await
-                .map_err(|error| match error {
-                    mcpmate_capability_store::CatalogError::ConcurrencyConflict { .. } => {
-                        ConfigError::ConcurrencyConflict {
-                            details: error.to_string(),
-                        }
-                    }
-                    _ => ConfigError::DataAccessError(error.to_string()),
-                })?;
             revoke_managed_surface_in_transaction(
                 self.db_pool.as_ref(),
                 &mut transaction,
