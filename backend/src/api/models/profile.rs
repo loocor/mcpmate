@@ -95,8 +95,8 @@ pub struct ProfileManageReq {
     #[schemars(description = "Management action to perform")]
     pub action: ProfileAction,
 
-    #[schemars(description = "Exact capability catalog revision set displayed to the administrator")]
-    pub source_revision_set: BTreeMap<String, i64>,
+    #[schemars(description = "Exact authoring generation for every target Profile")]
+    pub expected_authoring_generations: BTreeMap<String, i64>,
 
     #[schemars(description = "Whether to trigger client configuration synchronization")]
     #[serde(default)]
@@ -115,8 +115,27 @@ pub struct ProfileComponentManageReq {
     #[schemars(description = "Management action to perform on component(s)")]
     pub action: ProfileComponentAction,
 
-    #[schemars(description = "Exact catalog revision set displayed before this management save")]
+    #[schemars(description = "Expected Profile authoring generation")]
+    pub expected_authoring_generation: i64,
+
+    #[schemars(description = "Exact revisions for the Servers related to the selected capabilities")]
     pub source_revision_set: super::CatalogRevisionSet,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(description = "Request for Profile Server relationship management")]
+pub struct ProfileServerManageReq {
+    #[schemars(description = "Profile identifier")]
+    pub profile_id: String,
+
+    #[schemars(description = "Server identifiers")]
+    pub component_ids: Vec<String>,
+
+    #[schemars(description = "Management action")]
+    pub action: ProfileComponentAction,
+
+    #[schemars(description = "Expected Profile authoring generation")]
+    pub expected_authoring_generation: i64,
 }
 
 /// Request for profile deletion
@@ -126,8 +145,8 @@ pub struct ProfileDeleteReq {
     #[schemars(description = "Profile ID")]
     pub id: String,
 
-    #[schemars(description = "Exact capability catalog revision set displayed before deletion")]
-    pub source_revision_set: super::CatalogRevisionSet,
+    #[schemars(description = "Expected Profile authoring generation")]
+    pub expected_authoring_generation: i64,
 }
 
 // Response Models (with Resp suffix)
@@ -142,9 +161,6 @@ pub struct ProfileListData {
 
     #[schemars(description = "ISO 8601 timestamp of response")]
     pub timestamp: String,
-
-    #[schemars(description = "Exact capability catalog revision set represented by this profile list")]
-    pub source_revision_set: BTreeMap<String, i64>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -164,9 +180,6 @@ pub struct ProfileDetailsData {
 
     #[schemars(description = "Number of enabled prompts in profile")]
     pub prompts_count: usize,
-
-    #[schemars(description = "Exact capability catalog revision set represented by these details")]
-    pub source_revision_set: BTreeMap<String, i64>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -219,8 +232,8 @@ pub struct ProfileServersListData {
     #[schemars(description = "Total number of servers in profile")]
     pub total: usize,
 
-    #[schemars(description = "Catalog revision set represented by this management payload")]
-    pub source_revision_set: super::CatalogRevisionSet,
+    #[schemars(description = "Profile authoring generation represented by this payload")]
+    pub authoring_generation: i64,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -240,6 +253,9 @@ pub struct ProfileToolsListData {
 
     #[schemars(description = "Catalog revision set represented by this management payload")]
     pub source_revision_set: super::CatalogRevisionSet,
+
+    #[schemars(description = "Profile authoring generation represented by this payload")]
+    pub authoring_generation: i64,
 }
 
 api_resp!(
@@ -265,6 +281,9 @@ pub struct ProfileResourcesListData {
 
     #[schemars(description = "Catalog revision set represented by this management payload")]
     pub source_revision_set: super::CatalogRevisionSet,
+
+    #[schemars(description = "Profile authoring generation represented by this payload")]
+    pub authoring_generation: i64,
 }
 
 api_resp!(
@@ -290,6 +309,9 @@ pub struct ProfileResourceTemplatesListData {
 
     #[schemars(description = "Catalog revision set represented by this management payload")]
     pub source_revision_set: super::CatalogRevisionSet,
+
+    #[schemars(description = "Profile authoring generation represented by this payload")]
+    pub authoring_generation: i64,
 }
 
 api_resp!(
@@ -315,6 +337,9 @@ pub struct ProfilePromptsListData {
 
     #[schemars(description = "Catalog revision set represented by this management payload")]
     pub source_revision_set: super::CatalogRevisionSet,
+
+    #[schemars(description = "Profile authoring generation represented by this payload")]
+    pub authoring_generation: i64,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -381,50 +406,36 @@ pub struct ProfileData {
     pub is_active: bool,
     /// Whether the profile is the default one
     pub is_default: bool,
+    /// Monotonic Profile authoring generation.
+    pub authoring_generation: i64,
     /// Allowed operations on this profile
     pub allowed_operations: Vec<String>,
 }
 
-/// Create Profile request
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ProfileAuthoringViewData {
+    pub profile: ProfileData,
+    pub server_ids: Vec<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct ProfileCreateReq {
-    /// Name of the profile
+pub struct ProfileAuthoringSaveReq {
+    pub id: Option<String>,
+    pub expected_authoring_generation: Option<i64>,
     pub name: String,
-    /// Description of the profile
     pub description: Option<String>,
-    /// Type of the profile (host_app, scenario, shared)
     pub profile_type: String,
-    /// Whether multiple profile can be selected simultaneously
-    pub multi_select: Option<bool>,
-    /// Priority of the profile (higher priority wins in case of conflicts)
-    pub priority: Option<i32>,
-    /// Whether the profile is currently active
-    pub is_active: Option<bool>,
-    /// Whether the profile is the default one
-    pub is_default: Option<bool>,
-    /// Clone from existing profile (optional)
+    pub multi_select: bool,
+    pub priority: i32,
+    pub is_active: bool,
+    pub is_default: bool,
+    pub server_ids: Vec<String>,
     pub clone_from_id: Option<String>,
 }
 
-/// Update Profile request
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct ProfileUpdateReq {
-    /// Profile ID to update
-    pub id: String,
-    /// Name of the profile
-    pub name: Option<String>,
-    /// Description of the profile
-    pub description: Option<String>,
-    /// Type of the profile (host_app, scenario, shared)
-    pub profile_type: Option<String>,
-    /// Whether multiple profile can be selected simultaneously
-    pub multi_select: Option<bool>,
-    /// Priority of the profile (higher priority wins in case of conflicts)
-    pub priority: Option<i32>,
-    /// Whether the profile is currently active
-    pub is_active: Option<bool>,
-    /// Whether the profile is the default one
-    pub is_default: Option<bool>,
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ProfileAuthoringSaveData {
+    pub profile: ProfileData,
 }
 
 /// Operation response
@@ -563,6 +574,16 @@ api_resp!(ProfileDetailsResp, ProfileDetailsData, "Profile details API response"
 
 api_resp!(ProfileManageResp, ProfileManageData, "Profile management API response");
 api_resp!(ProfileResp, ProfileData, "Profile API response");
+api_resp!(
+    ProfileAuthoringViewResp,
+    ProfileAuthoringViewData,
+    "Profile authoring view API response"
+);
+api_resp!(
+    ProfileAuthoringSaveResp,
+    ProfileAuthoringSaveData,
+    "Profile authoring save API response"
+);
 api_resp!(
     ProfileServersListResp,
     ProfileServersListData,

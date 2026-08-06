@@ -52,7 +52,7 @@ async fn import_config(
         database,
         None,
         items,
-        crate::config::server::ImportOptions::dashboard_import(false, None),
+        crate::config::server::ImportOptions::dashboard_import(false),
     )
     .await?;
 

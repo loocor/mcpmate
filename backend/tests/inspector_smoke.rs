@@ -434,9 +434,7 @@ async fn seed_enabled_tool_server(
     .execute(pool)
     .await
     .expect("insert enabled server");
-    mcpmate::config::profile::add_server_to_profile(pool, &profile_id, server_id, true)
-        .await
-        .expect("insert enabled profile server");
+    database_support::insert_profile_server_relationship(pool, &profile_id, server_id, true).await;
 }
 
 async fn open_native_session(
@@ -744,9 +742,7 @@ async fn proxy_aggregate_list_keeps_successful_servers_when_one_server_fails() {
         .execute(pool)
         .await
         .expect("insert healthy profile");
-    mcpmate::config::profile::add_server_to_profile(pool, "profile-healthy", &healthy_server_id, true)
-        .await
-        .expect("insert healthy profile server");
+    database_support::insert_profile_server_relationship(pool, "profile-healthy", &healthy_server_id, true).await;
     seed_enabled_tool_server(
         &state,
         "aggregate-partial-failure",
@@ -809,9 +805,7 @@ async fn proxy_aggregate_list_rejects_empty_results_from_partial_inventory() {
         .execute(pool)
         .await
         .expect("insert empty profile");
-    mcpmate::config::profile::add_server_to_profile(pool, "profile-empty", empty_server_id, true)
-        .await
-        .expect("insert empty profile server");
+    database_support::insert_profile_server_relationship(pool, "profile-empty", empty_server_id, true).await;
     seed_enabled_tool_server(
         &state,
         "aggregate-partial-empty-failure",
@@ -919,6 +913,13 @@ async fn inspector_create_server_is_immediately_usable_without_restart() {
     let fixture = write_stdio_fixture(&temp_dir);
     let python = which::which("python3").expect("python3 is required for stdio MCP fixture");
     let state = build_database_state(&temp_dir).await;
+    let database = state.database.as_ref().expect("database state");
+    sqlx::query(
+        "INSERT INTO profile (id, name, type, is_active) VALUES ('install-profile', 'Install Profile', 'user', 1)",
+    )
+    .execute(&database.pool)
+    .await
+    .expect("insert unrelated Profile");
 
     let app = Router::new()
         .route(CREATE_SERVER_PATH, post(server::create_server))
@@ -927,7 +928,7 @@ async fn inspector_create_server_is_immediately_usable_without_restart() {
         .route(RESOURCE_READ_PATH, get(inspector::resource_read))
         .route(TEMPLATE_LIST_PATH, get(inspector::templates_list))
         .route(TEMPLATE_READ_PATH, post(inspector::template_read))
-        .with_state(state);
+        .with_state(state.clone());
 
     let create_req = json_post_request(
         CREATE_SERVER_PATH,
@@ -946,6 +947,15 @@ async fn inspector_create_server_is_immediately_usable_without_restart() {
         data_str(&create_body, "/data/protocol_version"),
         protocol::CURRENT_VERSION
     );
+    let profile_state: (i64, i64) = sqlx::query_as(
+        "SELECT authoring_generation,
+                (SELECT COUNT(*) FROM profile_server_relationships WHERE profile_id = profile.id)
+         FROM profile WHERE id = 'install-profile'",
+    )
+    .fetch_one(&database.pool)
+    .await
+    .expect("load unaffected Profile authoring state");
+    assert_eq!(profile_state, (0, 0));
 
     let tools_req = get_request(format!(
         "{TOOL_LIST_PATH}?server_id={server_id}&mode=proxy&refresh=true"

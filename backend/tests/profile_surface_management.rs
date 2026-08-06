@@ -253,7 +253,7 @@ async fn profile_activation_republishes_activated_consumers_in_the_same_operatio
         &pool,
         &["profile-a".to_string()],
         ProfileActivationAction::Activate,
-        HashMap::from([("server-a".to_string(), 1)]),
+        HashMap::from([("profile-a".to_string(), 0)]),
         "test",
     )
     .await
@@ -280,7 +280,7 @@ async fn profile_activation_republishes_activated_consumers_in_the_same_operatio
         &pool,
         &["profile-a".to_string()],
         ProfileActivationAction::Deactivate,
-        HashMap::from([("server-a".to_string(), 1)]),
+        HashMap::from([("profile-a".to_string(), 1)]),
         "test",
     )
     .await
@@ -314,6 +314,7 @@ async fn profile_capability_save_is_atomic_and_requires_the_displayed_revision_s
         "profile-a",
         &[record.ref_id.to_string(), unknown_ref],
         ProfileRelationshipAction::Disable,
+        0,
         HashMap::from([("server-a".to_string(), 1)]),
         "test",
     )
@@ -332,7 +333,8 @@ async fn profile_capability_save_is_atomic_and_requires_the_displayed_revision_s
         "profile-a",
         &[record.ref_id.to_string()],
         ProfileRelationshipAction::Disable,
-        HashMap::new(),
+        1,
+        HashMap::from([("server-a".to_string(), 1)]),
         "test",
     )
     .await;
@@ -346,6 +348,7 @@ async fn profile_capability_save_is_atomic_and_requires_the_displayed_revision_s
         "profile-a",
         &[record.ref_id.to_string()],
         ProfileRelationshipAction::Disable,
+        0,
         HashMap::from([("server-a".to_string(), 1)]),
         "test",
     )
@@ -378,6 +381,7 @@ async fn profile_capability_override_can_disable_and_reenable_a_server_level_ref
         "profile-a",
         &[record.ref_id.to_string()],
         ProfileRelationshipAction::Disable,
+        0,
         HashMap::from([("server-a".to_string(), 1)]),
         "test",
     )
@@ -422,6 +426,7 @@ async fn profile_capability_override_can_disable_and_reenable_a_server_level_ref
         "profile-a",
         &[record.ref_id.to_string()],
         ProfileRelationshipAction::Enable,
+        1,
         HashMap::from([("server-a".to_string(), 1)]),
         "test",
     )
@@ -452,25 +457,26 @@ async fn profile_capability_override_can_disable_and_reenable_a_server_level_ref
 }
 
 #[tokio::test]
-async fn profile_server_toggle_updates_all_capabilities_without_removing_membership() {
+async fn generation_aware_profile_operation_associates_snapshot_ready_server_and_supports_toggles() {
     let (pool, record) = fixture().await;
-    ProfileSurfaceManagement::mutate_servers(
+    let association_materializations = ProfileSurfaceManagement::mutate_servers(
         &pool,
         "profile-a",
         &["server-a".to_string()],
         ProfileRelationshipAction::Enable,
-        HashMap::from([("server-a".to_string(), 1)]),
+        0,
         "test",
     )
     .await
     .unwrap();
+    assert_eq!(association_materializations.len(), 1);
 
     ProfileSurfaceManagement::mutate_servers(
         &pool,
         "profile-a",
         &["server-a".to_string()],
         ProfileRelationshipAction::Disable,
-        HashMap::from([("server-a".to_string(), 1)]),
+        1,
         "test",
     )
     .await
@@ -510,7 +516,7 @@ async fn profile_server_toggle_updates_all_capabilities_without_removing_members
         "profile-a",
         &["server-a".to_string()],
         ProfileRelationshipAction::Enable,
-        HashMap::from([("server-a".to_string(), 1)]),
+        2,
         "test",
     )
     .await
@@ -566,7 +572,7 @@ async fn enabling_a_profile_server_adds_and_enables_all_current_capability_refs(
         "profile-a",
         &["server-a".to_string()],
         ProfileRelationshipAction::Enable,
-        HashMap::from([("server-a".to_string(), 1)]),
+        0,
         "test",
     )
     .await
@@ -589,7 +595,7 @@ async fn disabling_the_last_profile_capability_disables_its_server() {
         "profile-a",
         &["server-a".to_string()],
         ProfileRelationshipAction::Enable,
-        HashMap::from([("server-a".to_string(), 1)]),
+        0,
         "test",
     )
     .await
@@ -600,6 +606,7 @@ async fn disabling_the_last_profile_capability_disables_its_server() {
         "profile-a",
         &[record.ref_id.to_string()],
         ProfileRelationshipAction::Disable,
+        1,
         HashMap::from([("server-a".to_string(), 1)]),
         "test",
     )
@@ -643,6 +650,7 @@ async fn enabling_a_profile_capability_enables_its_server_without_enabling_sibli
         "profile-a",
         &[record.ref_id.to_string()],
         ProfileRelationshipAction::Enable,
+        0,
         HashMap::from([("server-a".to_string(), 2)]),
         "test",
     )
@@ -688,6 +696,7 @@ async fn reenabling_a_capability_on_an_enabled_server_preserves_derived_siblings
         "profile-a",
         &[record.ref_id.to_string()],
         ProfileRelationshipAction::Disable,
+        0,
         HashMap::from([("server-a".to_string(), 2)]),
         "test",
     )
@@ -698,6 +707,7 @@ async fn reenabling_a_capability_on_an_enabled_server_preserves_derived_siblings
         "profile-a",
         &[record.ref_id.to_string()],
         ProfileRelationshipAction::Enable,
+        1,
         HashMap::from([("server-a".to_string(), 2)]),
         "test",
     )
@@ -742,6 +752,7 @@ async fn disabling_one_of_multiple_enabled_capabilities_keeps_its_server_enabled
         "profile-a",
         &[record.ref_id.to_string()],
         ProfileRelationshipAction::Disable,
+        0,
         HashMap::from([("server-a".to_string(), 2)]),
         "test",
     )
@@ -779,7 +790,7 @@ async fn profile_server_replace_preserves_retained_server_state_and_enables_new_
         "profile-a",
         &["server-a".to_string()],
         ProfileRelationshipAction::Enable,
-        HashMap::from([("server-a".to_string(), 1), ("server-b".to_string(), 1)]),
+        0,
         "test",
     )
     .await
@@ -789,7 +800,7 @@ async fn profile_server_replace_preserves_retained_server_state_and_enables_new_
         "profile-a",
         &["server-a".to_string()],
         ProfileRelationshipAction::Disable,
-        HashMap::from([("server-a".to_string(), 1), ("server-b".to_string(), 1)]),
+        1,
         "test",
     )
     .await
@@ -799,7 +810,7 @@ async fn profile_server_replace_preserves_retained_server_state_and_enables_new_
         &pool,
         "profile-a",
         &["server-a".to_string(), "server-b".to_string()],
-        HashMap::from([("server-a".to_string(), 1), ("server-b".to_string(), 1)]),
+        2,
         "test",
     )
     .await
@@ -823,20 +834,16 @@ async fn profile_delete_republishes_affected_consumers_in_the_same_operation() {
         "profile-a",
         &[record.ref_id.to_string()],
         ProfileRelationshipAction::Enable,
+        0,
         HashMap::from([("server-a".to_string(), 1)]),
         "test",
     )
     .await
     .unwrap();
 
-    let deleted = ProfileSurfaceManagement::delete_profile(
-        &pool,
-        "profile-a",
-        HashMap::from([("server-a".to_string(), 1)]),
-        "test",
-    )
-    .await
-    .unwrap();
+    let deleted = ProfileSurfaceManagement::delete_profile(&pool, "profile-a", 1, "test")
+        .await
+        .unwrap();
 
     assert_eq!(deleted.profile_name, "Profile A");
     assert_eq!(deleted.materializations.len(), 1);
@@ -884,7 +891,7 @@ async fn profile_server_replace_is_atomic() {
         &pool,
         "profile-a",
         &["server-b".to_string(), "missing".to_string()],
-        HashMap::from([("server-a".to_string(), 1), ("server-b".to_string(), 1)]),
+        0,
         "test",
     )
     .await;
@@ -897,15 +904,9 @@ async fn profile_server_replace_is_atomic() {
     .unwrap();
     assert_eq!(unchanged, vec!["server-a"]);
 
-    ProfileSurfaceManagement::replace_servers(
-        &pool,
-        "profile-a",
-        &["server-b".to_string()],
-        HashMap::from([("server-a".to_string(), 1), ("server-b".to_string(), 1)]),
-        "test",
-    )
-    .await
-    .unwrap();
+    ProfileSurfaceManagement::replace_servers(&pool, "profile-a", &["server-b".to_string()], 0, "test")
+        .await
+        .unwrap();
     let replaced: Vec<String> = sqlx::query_scalar(
         "SELECT server_id FROM profile_server_relationships WHERE profile_id = 'profile-a' ORDER BY server_id",
     )
@@ -926,6 +927,274 @@ async fn profile_server_replace_is_atomic() {
     .await
     .unwrap();
     assert_eq!(removed_capability_count, 0);
+}
+
+#[tokio::test]
+async fn server_operations_use_only_profile_authoring_generation() {
+    let (pool, _) = fixture().await;
+
+    ProfileSurfaceManagement::mutate_servers(
+        &pool,
+        "profile-a",
+        &["server-a".to_string()],
+        ProfileRelationshipAction::Enable,
+        0,
+        "test",
+    )
+    .await
+    .unwrap();
+    let generation: i64 = sqlx::query_scalar("SELECT authoring_generation FROM profile WHERE id = 'profile-a'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(generation, 1);
+
+    let stale = ProfileSurfaceManagement::mutate_servers(
+        &pool,
+        "profile-a",
+        &["server-a".to_string()],
+        ProfileRelationshipAction::Disable,
+        0,
+        "test",
+    )
+    .await;
+    assert!(matches!(
+        stale,
+        Err(mcpmate_capability_store::CatalogError::ConcurrencyConflict {
+            entity: "profile authoring generation",
+            ..
+        })
+    ));
+}
+
+#[tokio::test]
+async fn capability_operations_require_exact_dependencies_and_profile_authoring_generation() {
+    let (pool, record) = fixture().await;
+
+    ProfileSurfaceManagement::mutate_capabilities(
+        &pool,
+        "profile-a",
+        &[record.ref_id.to_string()],
+        ProfileRelationshipAction::Disable,
+        0,
+        HashMap::from([("server-a".to_string(), 1)]),
+        "test",
+    )
+    .await
+    .unwrap();
+    let generation: i64 = sqlx::query_scalar("SELECT authoring_generation FROM profile WHERE id = 'profile-a'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(generation, 1);
+
+    for invalid_dependencies in [
+        HashMap::new(),
+        HashMap::from([("server-a".to_string(), 1), ("unrelated".to_string(), 1)]),
+    ] {
+        let invalid = ProfileSurfaceManagement::mutate_capabilities(
+            &pool,
+            "profile-a",
+            &[record.ref_id.to_string()],
+            ProfileRelationshipAction::Enable,
+            1,
+            invalid_dependencies,
+            "test",
+        )
+        .await;
+        assert!(matches!(
+            invalid,
+            Err(mcpmate_capability_store::CatalogError::InvalidSurfaceValue {
+                field: "profile catalog dependency revisions",
+                ..
+            })
+        ));
+    }
+    let generation_after_invalid: i64 =
+        sqlx::query_scalar("SELECT authoring_generation FROM profile WHERE id = 'profile-a'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(generation_after_invalid, 1);
+
+    add_sibling_tool(&pool, &record).await;
+    let drift = ProfileSurfaceManagement::mutate_capabilities(
+        &pool,
+        "profile-a",
+        &[record.ref_id.to_string()],
+        ProfileRelationshipAction::Enable,
+        1,
+        HashMap::from([("server-a".to_string(), 1)]),
+        "test",
+    )
+    .await;
+    assert!(matches!(
+        drift,
+        Err(mcpmate_capability_store::CatalogError::ConcurrencyConflict {
+            entity: "profile catalog dependency revisions",
+            ..
+        })
+    ));
+    let generation_after_drift: i64 =
+        sqlx::query_scalar("SELECT authoring_generation FROM profile WHERE id = 'profile-a'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(generation_after_drift, 1);
+}
+
+#[tokio::test]
+async fn delete_requires_current_profile_authoring_generation() {
+    let (pool, _) = fixture().await;
+
+    let stale = ProfileSurfaceManagement::delete_profile(&pool, "profile-a", 1, "test").await;
+    assert!(matches!(
+        stale,
+        Err(mcpmate_capability_store::CatalogError::ConcurrencyConflict {
+            entity: "profile authoring generation",
+            ..
+        })
+    ));
+    let retained: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM profile WHERE id = 'profile-a')")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(retained);
+
+    ProfileSurfaceManagement::delete_profile(&pool, "profile-a", 0, "test")
+        .await
+        .unwrap();
+    let deleted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM profile WHERE id = 'profile-a')")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(!deleted);
+}
+
+#[tokio::test]
+async fn activation_advances_target_and_automatically_deactivated_authoring_generations() {
+    let (pool, _) = fixture().await;
+    sqlx::query(
+        "INSERT INTO profile (id, name, description, type, role, is_active, multi_select)
+         VALUES ('profile-b', 'Profile B', '', 'shared', 'user', 0, 0)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    ProfileSurfaceManagement::set_profiles_active(
+        &pool,
+        &["profile-b".to_string()],
+        ProfileActivationAction::Activate,
+        HashMap::from([("profile-b".to_string(), 0)]),
+        "test",
+    )
+    .await
+    .unwrap();
+    let generations: Vec<(String, bool, i64)> =
+        sqlx::query_as("SELECT id, is_active, authoring_generation FROM profile ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        generations,
+        vec![("profile-a".to_string(), false, 1), ("profile-b".to_string(), true, 1),]
+    );
+
+    ProfileSurfaceManagement::set_profiles_active(
+        &pool,
+        &["profile-b".to_string()],
+        ProfileActivationAction::Deactivate,
+        HashMap::from([("profile-b".to_string(), 1)]),
+        "test",
+    )
+    .await
+    .unwrap();
+    let generation: (bool, i64) =
+        sqlx::query_as("SELECT is_active, authoring_generation FROM profile WHERE id = 'profile-b'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(generation, (false, 2));
+}
+
+#[tokio::test]
+async fn batch_activation_validates_once_and_advances_each_profile_once() {
+    let (pool, _) = fixture().await;
+    sqlx::query("UPDATE profile SET multi_select = 0 WHERE id = 'profile-a'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO profile (id, name, description, type, role, is_active, multi_select)
+         VALUES ('profile-b', 'Profile B', '', 'shared', 'user', 1, 0)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let result = ProfileSurfaceManagement::set_profiles_active(
+        &pool,
+        &["profile-a".to_string(), "profile-b".to_string()],
+        ProfileActivationAction::Activate,
+        HashMap::from([("profile-a".to_string(), 0), ("profile-b".to_string(), 0)]),
+        "test",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.mutations.len(), 2);
+    let profiles: Vec<(String, bool, i64)> =
+        sqlx::query_as("SELECT id, is_active, authoring_generation FROM profile ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        profiles,
+        vec![("profile-a".to_string(), false, 1), ("profile-b".to_string(), true, 1)]
+    );
+}
+
+#[tokio::test]
+async fn batch_activation_reports_the_non_first_stale_profile() {
+    let (pool, _) = fixture().await;
+    sqlx::query(
+        "INSERT INTO profile (id, name, description, type, role, is_active, multi_select, authoring_generation)
+         VALUES ('profile-b', 'Profile B', '', 'shared', 'user', 0, 1, 2)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let result = ProfileSurfaceManagement::set_profiles_active(
+        &pool,
+        &["profile-a".to_string(), "profile-b".to_string()],
+        ProfileActivationAction::Activate,
+        HashMap::from([("profile-a".to_string(), 0), ("profile-b".to_string(), 1)]),
+        "test",
+    )
+    .await;
+    let error = match result {
+        Ok(_) => panic!("stale non-first Profile must reject the whole batch"),
+        Err(error) => error,
+    };
+
+    assert!(matches!(
+        error,
+        mcpmate_capability_store::CatalogError::ConcurrencyConflict {
+            entity: "profile authoring generation",
+            ref id,
+        } if id == "profile-b"
+    ));
+    let unchanged: Vec<(String, bool, i64)> =
+        sqlx::query_as("SELECT id, is_active, authoring_generation FROM profile ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        unchanged,
+        vec![("profile-a".to_string(), true, 0), ("profile-b".to_string(), false, 2)]
+    );
 }
 
 #[tokio::test]

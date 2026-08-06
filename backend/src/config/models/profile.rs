@@ -29,6 +29,8 @@ pub struct Profile {
     pub is_active: bool,
     /// Whether the profile is the default one
     pub is_default: bool,
+    /// Monotonic generation for Profile authoring concurrency control.
+    pub authoring_generation: i64,
     /// When the profile was created
     pub created_at: Option<DateTime<Utc>>,
     /// When the profile was last updated
@@ -51,6 +53,7 @@ impl Profile {
             priority: 0,
             is_active: false,
             is_default: false,
+            authoring_generation: 0,
             created_at: None,
             updated_at: None,
         }
@@ -72,6 +75,7 @@ impl Profile {
             priority: 0,
             is_active: false,
             is_default: false,
+            authoring_generation: 0,
             created_at: None,
             updated_at: None,
         }

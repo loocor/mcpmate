@@ -1560,7 +1560,7 @@ mod tests {
         client::init::{initialize_client_table, initialize_system_settings},
         database::Database,
         models::Profile,
-        profile::{self, init::initialize_profile_tables},
+        profile::init::initialize_profile_tables,
         server::init::initialize_server_tables,
     };
     use crate::core::{models::Config, pool::UpstreamConnectionPool, profile::ConfigApplicationStateManager};
@@ -1867,7 +1867,7 @@ mod tests {
         name: &str,
     ) -> String {
         let profile = Profile::new(name.to_string(), ProfileType::Shared);
-        profile::upsert_profile(pool, &profile).await.expect("upsert profile")
+        crate::test_helpers::insert_profile(pool, &profile).await
     }
 
     async fn insert_active_shared_profile(
@@ -1878,9 +1878,7 @@ mod tests {
         profile.is_active = true;
         profile.is_default = true;
         profile.multi_select = true;
-        profile::upsert_profile(pool, &profile)
-            .await
-            .expect("upsert active profile")
+        crate::test_helpers::insert_profile(pool, &profile).await
     }
 
     async fn insert_unify_server(
@@ -2846,12 +2844,11 @@ mod tests {
             priority: 0,
             is_active: false,
             is_default: false,
+            authoring_generation: 0,
             created_at: None,
             updated_at: None,
         };
-        profile::upsert_profile(&context.db_pool, &profile)
-            .await
-            .expect("insert hosted profile");
+        crate::test_helpers::insert_profile(&context.db_pool, &profile).await;
         let _ = update_capability_config(
             State(context.app_state.clone()),
             Json(ClientCapabilityConfigReq {

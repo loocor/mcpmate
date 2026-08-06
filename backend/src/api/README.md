@@ -41,10 +41,11 @@ This project adopts a consistent “list/details/create/update/delete/manage” 
 
 ### 2. Profile Management
 
-- List and details
+- List, details, and authoring
   - `GET /mcp/profile/list`, `GET /mcp/profile/details?id=...`
+  - `GET /mcp/profile/authoring/view?id=...`, `POST /mcp/profile/authoring/save`
 - Mutations
-  - `POST /mcp/profile/create`, `POST /mcp/profile/update`, `DELETE /mcp/profile/delete`
+  - `DELETE /mcp/profile/delete`
   - `POST /mcp/profile/manage` (activate/deactivate)
 - Components
   - `GET /mcp/profile/servers|tools|resources|prompts/list`

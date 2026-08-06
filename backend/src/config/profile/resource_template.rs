@@ -1,17 +1,21 @@
+#[cfg(test)]
 use std::str::FromStr;
 
 use anyhow::{Context, Result};
-use mcpmate_capability_store::{CapabilityKind, CapabilityRefId, EffectiveCapabilityDefinition};
-use sqlx::{Pool, Sqlite};
+#[cfg(test)]
+use mcpmate_capability_store::CapabilityRefId;
+use mcpmate_capability_store::{CapabilityKind, EffectiveCapabilityDefinition};
+use sqlx::{Pool, Sqlite, Transaction};
 
+#[cfg(test)]
+use crate::config::profile::capability_ref::upsert_profile_capability_ref;
 use crate::config::{
     models::ProfileResource,
-    profile::capability_ref::{
-        load_capability_server_name, load_profile_capability_refs, upsert_profile_capability_ref,
-    },
+    profile::capability_ref::{load_profile_capability_refs, load_profile_capability_refs_in_transaction},
 };
 
-pub async fn add_resource_template_to_profile(
+#[cfg(test)]
+pub(crate) async fn add_resource_template_to_profile(
     pool: &Pool<Sqlite>,
     profile_id: &str,
     server_id: &str,
@@ -23,30 +27,29 @@ pub async fn add_resource_template_to_profile(
     Ok(ref_id.to_string())
 }
 
-pub async fn remove_resource_template_from_profile(
-    pool: &Pool<Sqlite>,
-    profile_id: &str,
-    server_id: &str,
-    ref_id: &str,
-) -> Result<bool> {
-    let ref_id = parse_owned_ref(pool, server_id, ref_id).await?;
-    let result = sqlx::query("DELETE FROM profile_capability_refs WHERE profile_id = ? AND ref_id = ?")
-        .bind(profile_id)
-        .bind(ref_id.as_str())
-        .execute(pool)
-        .await
-        .context("Failed to remove Resource Template capability ref from Profile")?;
-    Ok(result.rows_affected() == 1)
-}
-
 pub async fn get_resource_templates_for_profile(
     pool: &Pool<Sqlite>,
     profile_id: &str,
 ) -> Result<Vec<ProfileResource>> {
     let relationships = load_profile_capability_refs(pool, profile_id, Some(CapabilityKind::ResourceTemplates)).await?;
+    resource_templates_from_relationships(relationships)
+}
+
+pub async fn get_resource_templates_for_profile_in_transaction(
+    transaction: &mut Transaction<'_, Sqlite>,
+    profile_id: &str,
+) -> Result<Vec<ProfileResource>> {
+    let relationships =
+        load_profile_capability_refs_in_transaction(transaction, profile_id, Some(CapabilityKind::ResourceTemplates))
+            .await?;
+    resource_templates_from_relationships(relationships)
+}
+
+fn resource_templates_from_relationships(
+    relationships: Vec<crate::config::profile::capability_ref::ProfileCapabilityRef>
+) -> Result<Vec<ProfileResource>> {
     let mut templates = Vec::with_capacity(relationships.len());
     for relationship in relationships {
-        let server_name = load_capability_server_name(pool, &relationship.server_id).await?;
         let EffectiveCapabilityDefinition::ResourceTemplate(template) = relationship.definition else {
             anyhow::bail!(
                 "Capability ref '{}' does not contain a Resource Template definition",
@@ -57,7 +60,7 @@ pub async fn get_resource_templates_for_profile(
             id: Some(relationship.ref_id.to_string()),
             profile_id: relationship.profile_id,
             server_id: relationship.server_id,
-            server_name,
+            server_name: relationship.server_name,
             resource_uri: relationship.origin_key,
             unique_uri: relationship.external_key,
             description: template.description,
@@ -78,25 +81,6 @@ pub async fn get_enabled_resource_templates_for_profile(
         .into_iter()
         .filter(|template| template.enabled && template.state == "active")
         .collect())
-}
-
-pub async fn update_resource_template_enabled_status(
-    pool: &Pool<Sqlite>,
-    profile_id: &str,
-    server_id: &str,
-    ref_id: &str,
-    enabled: bool,
-) -> Result<bool> {
-    let ref_id = parse_owned_ref(pool, server_id, ref_id).await?;
-    let result = sqlx::query("UPDATE profile_capability_refs SET enabled = ? WHERE profile_id = ? AND ref_id = ?")
-        .bind(enabled)
-        .bind(profile_id)
-        .bind(ref_id.as_str())
-        .execute(pool)
-        .await
-        .context("Failed to update Resource Template capability ref")?;
-    let updated = result.rows_affected() == 1;
-    Ok(updated)
 }
 
 pub fn build_enabled_resource_templates_query(additional_where: Option<&str>) -> String {
@@ -157,6 +141,7 @@ pub async fn resource_matches_enabled_templates(
     }))
 }
 
+#[cfg(test)]
 async fn parse_owned_ref(
     pool: &Pool<Sqlite>,
     server_id: &str,

@@ -3,7 +3,7 @@
 
 use super::{common::*, get_profile_or_error};
 use crate::api::models::profile::{
-    ProfileComponentAction, ProfileComponentListReq, ProfileComponentManageReq, ProfileServerManageData,
+    ProfileComponentAction, ProfileComponentListReq, ProfileServerManageData, ProfileServerManageReq,
     ProfileServerManageResp, ProfileServerResp, ProfileServersListData, ProfileServersListResp,
 };
 use crate::audit::{AuditAction, AuditStatus};
@@ -25,40 +25,35 @@ pub async fn servers_list(
     Query(request): Query<ProfileComponentListReq>,
 ) -> Result<Json<ProfileServersListResp>, ApiError> {
     let db = get_database(&state).await?;
-
-    // Verify profile exists
-    let profile = crate::config::profile::get_profile(&db.pool, &request.profile_id)
+    let mut transaction = db.pool.begin().await.map_err(profile_projection_error)?;
+    let profile: crate::config::models::Profile = sqlx::query_as("SELECT * FROM profile WHERE id = ?")
+        .bind(&request.profile_id)
+        .fetch_optional(&mut *transaction)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get profile: {e}")))?;
-
-    let profile = match profile {
-        Some(s) => s,
-        None => {
-            return Err(ApiError::NotFound(format!(
-                "Profile with ID '{}' not found",
-                request.profile_id
-            )));
-        }
-    };
-
-    // Get servers in the profile
-    let server_configs = crate::config::profile::get_profile_servers(&db.pool, &request.profile_id)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get profile servers: {e}")))?;
-
-    // Convert to response format (simplified for now)
-    let mut servers = Vec::new();
-    for server_config in server_configs {
-        // Get server details from server_config table
-        if let Ok(Some(server)) = crate::config::server::get_server_by_id(&db.pool, &server_config.server_id).await {
-            servers.push(ProfileServerResp {
-                id: server_config.server_id.clone(),
-                name: server.name,
-                enabled: server_config.enabled,
-                allowed_operations: vec!["enable".to_string(), "disable".to_string()],
-            });
-        }
-    }
+        .map_err(profile_projection_error)?
+        .ok_or_else(|| ApiError::NotFound(format!("Profile with ID '{}' not found", request.profile_id)))?;
+    let server_rows = sqlx::query_as::<_, (String, String, bool)>(
+        r#"
+        SELECT relationship.server_id, server.name, relationship.enabled
+        FROM profile_server_relationships relationship
+        JOIN server_config server ON server.id = relationship.server_id
+        WHERE relationship.profile_id = ?
+        ORDER BY relationship.server_id
+        "#,
+    )
+    .bind(&request.profile_id)
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(profile_projection_error)?;
+    let mut servers = server_rows
+        .into_iter()
+        .map(|(id, name, enabled)| ProfileServerResp {
+            id,
+            name,
+            enabled,
+            allowed_operations: vec!["enable".to_string(), "disable".to_string()],
+        })
+        .collect::<Vec<_>>();
 
     // Apply enabled filter if requested
     if request.enabled_only.unwrap_or(false) {
@@ -66,21 +61,20 @@ pub async fn servers_list(
     }
 
     let total = servers.len();
+    transaction.commit().await.map_err(profile_projection_error)?;
     let response = ProfileServersListData {
         profile_id: request.profile_id,
         profile_name: profile.name,
         servers,
         total,
-        source_revision_set: crate::core::capability::materializer::SurfaceAuthoringLoader::load_catalog_revision_set(
-            &db.pool,
-        )
-        .await
-        .map_err(|error| ApiError::InternalError(error.to_string()))?
-        .into_iter()
-        .collect(),
+        authoring_generation: profile.authoring_generation,
     };
 
     Ok(Json(ProfileServersListResp::success(response)))
+}
+
+fn profile_projection_error(error: sqlx::Error) -> ApiError {
+    ApiError::InternalError(format!("Failed to load Profile server projection: {error}"))
 }
 
 /// Manage server operations (enable/disable) in profile
@@ -88,7 +82,7 @@ pub async fn servers_list(
 /// **Endpoint:** `POST /mcp/profile/servers/manage`
 pub async fn server_manage(
     State(state): State<Arc<AppState>>,
-    Json(request): Json<ProfileComponentManageReq>,
+    Json(request): Json<ProfileServerManageReq>,
 ) -> Result<Json<ProfileServerManageResp>, ApiError> {
     let started_at = std::time::Instant::now();
     let db = get_database(&state).await?;
@@ -112,7 +106,7 @@ pub async fn server_manage(
                 &db.pool,
                 &request.profile_id,
                 &request.component_ids,
-                request.source_revision_set.clone().into_iter().collect(),
+                request.expected_authoring_generation,
                 "profile_management",
             )
             .await
@@ -135,13 +129,24 @@ pub async fn server_manage(
                 &request.profile_id,
                 &request.component_ids,
                 relationship_action,
-                request.source_revision_set.clone().into_iter().collect(),
+                request.expected_authoring_generation,
                 "profile_management",
             )
             .await
         }
-    }
-    .map_err(map_catalog_error)?;
+    };
+    let materializations = match materializations {
+        Ok(materializations) => materializations,
+        Err(error) => {
+            return Err(super::map_profile_management_error(
+                &db.pool,
+                &request.profile_id,
+                request.component_ids.clone(),
+                error,
+            )
+            .await);
+        }
+    };
 
     invalidate_profile_cache(&state).await;
     super::emit_surface_publication_audits(
@@ -195,11 +200,4 @@ pub async fn server_manage(
     .await;
 
     Ok(Json(ProfileServerManageResp::success(response)))
-}
-
-fn map_catalog_error(error: mcpmate_capability_store::CatalogError) -> ApiError {
-    match error {
-        mcpmate_capability_store::CatalogError::ConcurrencyConflict { .. } => ApiError::Conflict(error.to_string()),
-        _ => ApiError::InternalError(error.to_string()),
-    }
 }

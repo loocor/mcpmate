@@ -708,6 +708,7 @@ async fn durable_worker_materializes_and_records_a_success_receipt() {
         "profile-a",
         &[first.ref_id.to_string()],
         ProfileRelationshipAction::Enable,
+        0,
         std::collections::HashMap::from([("server-a".to_string(), 1)]),
         "test",
     )

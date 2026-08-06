@@ -20,8 +20,7 @@ use tracing;
 
 use crate::{
     common::paths::global_paths,
-    common::profile::ProfileType,
-    config::{import, initialization, models},
+    config::{import, initialization},
     core::capability::naming,
 };
 
@@ -216,68 +215,7 @@ impl Database {
 
     /// Initialize the database with some default values
     pub async fn initialize_defaults(&self) -> Result<()> {
-        use crate::config::profile::{
-            self, DEFAULT_ANCHOR_INITIAL_NAME, DEFAULT_ANCHOR_ROLE, DEFAULT_PROFILE_DESCRIPTION,
-        };
-
-        // Ensure the default anchor profile exists
-        let default_profile = profile::get_default_profile(&self.pool).await?;
-
-        if let Some(mut profile) = default_profile {
-            let profile_id = profile
-                .id
-                .clone()
-                .ok_or_else(|| anyhow::anyhow!("Default profile has no ID"))?;
-
-            let mut needs_update = false;
-
-            if profile.role != DEFAULT_ANCHOR_ROLE {
-                tracing::info!(
-                    "Setting profile '{}' (ID {}) to default anchor role",
-                    profile.name,
-                    profile_id
-                );
-                profile.role = DEFAULT_ANCHOR_ROLE;
-                needs_update = true;
-            }
-
-            if !profile.is_active || !profile.is_default || !profile.multi_select {
-                tracing::info!("Normalizing default anchor profile flags for '{}'", profile_id);
-                profile.is_active = true;
-                profile.is_default = true;
-                profile.multi_select = true;
-                needs_update = true;
-            }
-
-            if profile.profile_type != ProfileType::Shared {
-                tracing::info!("Normalizing default anchor profile type to shared for '{}'", profile_id);
-                profile.profile_type = ProfileType::Shared;
-                needs_update = true;
-            }
-
-            if needs_update {
-                profile::update_profile(&self.pool, &profile).await?;
-            }
-        } else {
-            tracing::info!("Creating default anchor profile '{}'", DEFAULT_ANCHOR_INITIAL_NAME);
-
-            // Create a new default profile
-            let mut new_profile = models::Profile::new_with_description(
-                DEFAULT_ANCHOR_INITIAL_NAME.to_string(),
-                Some(DEFAULT_PROFILE_DESCRIPTION.to_string()),
-                ProfileType::Shared,
-            );
-
-            // Set active and default flags
-            new_profile.is_active = true;
-            new_profile.is_default = true;
-            new_profile.multi_select = true;
-            new_profile.role = DEFAULT_ANCHOR_ROLE;
-
-            // Insert the default profile
-            let id = profile::upsert_profile(&self.pool, &new_profile).await?;
-            tracing::info!("Created default profile with ID {}", id);
-        };
+        crate::config::profile::normalize_default_anchor_profile(&self.pool).await?;
         // Publish DatabaseChanged event
         crate::core::events::EventBus::global().publish(crate::core::events::Event::DatabaseChanged);
 
@@ -402,5 +340,48 @@ mod tests {
             .expect_err("typed load should preserve corrupt catalog errors");
 
         assert!(matches!(error, mcpmate_capability_store::CatalogError::Json(_)));
+    }
+
+    #[tokio::test]
+    async fn default_anchor_normalization_advances_generation_once() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        crate::test_helpers::prepare_config_database(&pool).await;
+        sqlx::query(
+            r#"
+            INSERT INTO profile (
+                id, name, description, type, role, multi_select,
+                priority, is_active, is_default, authoring_generation
+            ) VALUES (
+                'default-anchor', 'Default', '', 'host_app', 'user', 0,
+                0, 0, 1, 4
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let database = Database {
+            pool: pool.clone(),
+            path: PathBuf::new(),
+            capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
+        };
+
+        database.initialize_defaults().await.unwrap();
+
+        let normalized: (String, String, bool, bool, bool, i64) = sqlx::query_as(
+            "SELECT type, role, multi_select, is_active, is_default, authoring_generation
+             FROM profile WHERE id = 'default-anchor'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            normalized,
+            ("shared".to_string(), "default_anchor".to_string(), true, true, true, 5)
+        );
     }
 }

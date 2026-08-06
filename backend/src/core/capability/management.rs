@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use mcpmate_capability_store::{CapabilityKind, CatalogError, Result};
 use sqlx::{Pool, Row, Sqlite};
@@ -28,6 +28,7 @@ pub struct ProfileCapabilityMutation {
     pub kind: CapabilityKind,
 }
 
+#[derive(Debug)]
 pub struct ConsumerMaterialization {
     pub consumer_id: String,
     pub commit: MaterializationCommit,
@@ -79,9 +80,9 @@ impl ServerSurfaceManagement {
         enabled: bool,
         actor: &str,
     ) -> Result<ServerStatusManagementResult> {
-        let default_config_mode = load_default_config_mode(pool).await?;
         let coordinator = MaterializationCoordinator::new(pool.clone());
-        let mut transaction = pool.begin().await?;
+        let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
+        let default_config_mode = load_default_config_mode(pool).await?;
         let server_name: String = sqlx::query_scalar(
             "UPDATE server_config SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? RETURNING name",
         )
@@ -127,9 +128,9 @@ impl ServerSurfaceManagement {
         source_revision_set: HashMap<String, i64>,
         actor: &str,
     ) -> Result<ServerDirectExposureManagementResult> {
-        let default_config_mode = load_default_config_mode(pool).await?;
         let coordinator = MaterializationCoordinator::new(pool.clone());
-        let mut transaction = pool.begin().await?;
+        let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
+        let default_config_mode = load_default_config_mode(pool).await?;
         coordinator
             .verify_catalog_revision_set_in_transaction(&mut transaction, &source_revision_set)
             .await?;
@@ -295,16 +296,13 @@ impl ProfileSurfaceManagement {
     pub async fn delete_profile(
         pool: &Pool<Sqlite>,
         profile_id: &str,
-        source_revision_set: HashMap<String, i64>,
+        expected_authoring_generation: i64,
         actor: &str,
     ) -> Result<ProfileDeletionManagementResult> {
-        let default_config_mode = load_default_config_mode(pool).await?;
         let coordinator = MaterializationCoordinator::new(pool.clone());
-        let mut transaction = pool.begin().await?;
-        coordinator
-            .verify_catalog_revision_set_in_transaction(&mut transaction, &source_revision_set)
-            .await?;
-        let row = sqlx::query("SELECT name, is_default, role FROM profile WHERE id = ?")
+        let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
+        let default_config_mode = load_default_config_mode(pool).await?;
+        let row = sqlx::query("SELECT name, is_default, role, authoring_generation FROM profile WHERE id = ?")
             .bind(profile_id)
             .fetch_optional(&mut *transaction)
             .await?
@@ -315,6 +313,13 @@ impl ProfileSurfaceManagement {
         let profile_name: String = row.try_get("name")?;
         let is_default: bool = row.try_get("is_default")?;
         let role: String = row.try_get("role")?;
+        let current_authoring_generation: i64 = row.try_get("authoring_generation")?;
+        if current_authoring_generation != expected_authoring_generation {
+            return Err(CatalogError::ConcurrencyConflict {
+                entity: "profile authoring generation",
+                id: profile_id.to_string(),
+            });
+        }
         if is_default || role == "default_anchor" {
             return Err(CatalogError::InvalidSurfaceValue {
                 field: "profile deletion",
@@ -327,8 +332,9 @@ impl ProfileSurfaceManagement {
             &default_config_mode,
         )
         .await?;
-        let deleted = sqlx::query("DELETE FROM profile WHERE id = ?")
+        let deleted = sqlx::query("DELETE FROM profile WHERE id = ? AND authoring_generation = ?")
             .bind(profile_id)
+            .bind(expected_authoring_generation)
             .execute(&mut *transaction)
             .await?;
         if deleted.rows_affected() != 1 {
@@ -362,7 +368,7 @@ impl ProfileSurfaceManagement {
         pool: &Pool<Sqlite>,
         profile_ids: &[String],
         action: ProfileActivationAction,
-        source_revision_set: HashMap<String, i64>,
+        expected_authoring_generations: HashMap<String, i64>,
         actor: &str,
     ) -> Result<ProfileActivationManagementResult> {
         let unique_profile_ids = profile_ids.iter().collect::<HashSet<_>>();
@@ -372,63 +378,128 @@ impl ProfileSurfaceManagement {
                 value: "duplicate profile id".to_string(),
             });
         }
+        let expected_profile_ids = expected_authoring_generations.keys().collect::<HashSet<_>>();
+        if expected_profile_ids != unique_profile_ids {
+            return Err(CatalogError::InvalidSurfaceValue {
+                field: "profile authoring generations",
+                value: "expected generation keys must exactly match Profile ids".to_string(),
+            });
+        }
 
-        let default_config_mode = load_default_config_mode(pool).await?;
         let coordinator = MaterializationCoordinator::new(pool.clone());
-        let mut transaction = pool.begin().await?;
-        coordinator
-            .verify_catalog_revision_set_in_transaction(&mut transaction, &source_revision_set)
-            .await?;
+        let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
+        let default_config_mode = load_default_config_mode(pool).await?;
 
-        let mut mutations = Vec::with_capacity(profile_ids.len());
+        struct ActivationState {
+            id: String,
+            name: String,
+            multi_select: bool,
+            is_default: bool,
+            role: String,
+            was_active: bool,
+            is_active: bool,
+            generation: i64,
+        }
+
+        let rows = sqlx::query(
+            "SELECT id, name, multi_select, is_default, role, is_active, authoring_generation FROM profile ORDER BY id",
+        )
+        .fetch_all(&mut *transaction)
+        .await?;
+        let mut states = rows
+            .into_iter()
+            .map(|row| -> std::result::Result<_, sqlx::Error> {
+                let is_active = row.try_get("is_active")?;
+                Ok(ActivationState {
+                    id: row.try_get("id")?,
+                    name: row.try_get("name")?,
+                    multi_select: row.try_get("multi_select")?,
+                    is_default: row.try_get("is_default")?,
+                    role: row.try_get("role")?,
+                    was_active: is_active,
+                    is_active,
+                    generation: row.try_get("authoring_generation")?,
+                })
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
         for profile_id in profile_ids {
-            let row = sqlx::query("SELECT name, multi_select, role FROM profile WHERE id = ?")
-                .bind(profile_id)
-                .fetch_optional(&mut *transaction)
-                .await?
-                .ok_or_else(|| CatalogError::InvalidSurfaceValue {
+            let state = states.iter().find(|state| state.id == *profile_id).ok_or_else(|| {
+                CatalogError::InvalidSurfaceValue {
                     field: "profile activation",
                     value: profile_id.clone(),
-                })?;
-            let name: String = row.try_get("name")?;
-            let multi_select: bool = row.try_get("multi_select")?;
-            let role: String = row.try_get("role")?;
-            let is_active = action == ProfileActivationAction::Activate;
-            if !is_active && role == "default_anchor" {
+                }
+            })?;
+            if state.generation != expected_authoring_generations[profile_id] {
+                return Err(CatalogError::ConcurrencyConflict {
+                    entity: "profile authoring generation",
+                    id: profile_id.clone(),
+                });
+            }
+            if action == ProfileActivationAction::Deactivate && state.role == "default_anchor" {
                 return Err(CatalogError::InvalidSurfaceValue {
                     field: "profile activation",
                     value: "default anchor cannot be deactivated".to_string(),
                 });
             }
-            if is_active && !multi_select {
-                sqlx::query(
-                    r#"
-                    UPDATE profile
-                    SET is_active = 0, updated_at = CURRENT_TIMESTAMP
-                    WHERE id != ? AND is_default = 0
-                    "#,
-                )
-                .bind(profile_id)
-                .execute(&mut *transaction)
-                .await?;
+        }
+
+        for profile_id in profile_ids {
+            let target_index = states
+                .iter()
+                .position(|state| state.id == *profile_id)
+                .expect("requested Profiles were prevalidated");
+            if action == ProfileActivationAction::Activate && !states[target_index].multi_select {
+                for state in &mut states {
+                    if !state.is_default && state.id != *profile_id {
+                        state.is_active = false;
+                    }
+                }
             }
-            let updated = sqlx::query("UPDATE profile SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-                .bind(is_active)
-                .bind(profile_id)
-                .execute(&mut *transaction)
-                .await?;
+            states[target_index].is_active = action == ProfileActivationAction::Activate;
+        }
+
+        let requested_ids = profile_ids.iter().cloned().collect::<HashSet<_>>();
+        for state in &states {
+            if !requested_ids.contains(&state.id) && state.was_active == state.is_active {
+                continue;
+            }
+            let updated = sqlx::query(
+                r#"
+                UPDATE profile
+                SET is_active = ?,
+                    authoring_generation = authoring_generation + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND authoring_generation = ?
+                "#,
+            )
+            .bind(state.is_active)
+            .bind(&state.id)
+            .bind(state.generation)
+            .execute(&mut *transaction)
+            .await?;
             if updated.rows_affected() != 1 {
                 return Err(CatalogError::ConcurrencyConflict {
-                    entity: "profile activation",
-                    id: profile_id.clone(),
+                    entity: "profile authoring generation",
+                    id: state.id.clone(),
                 });
             }
-            mutations.push(ProfileActivationMutation {
-                profile_id: profile_id.clone(),
-                name,
-                is_active,
-            });
         }
+
+        let mutations = profile_ids
+            .iter()
+            .map(|profile_id| {
+                let state = states
+                    .iter()
+                    .find(|state| state.id == *profile_id)
+                    .expect("requested Profiles were prevalidated");
+                ProfileActivationMutation {
+                    profile_id: profile_id.clone(),
+                    name: state.name.clone(),
+                    is_active: state.is_active,
+                }
+            })
+            .collect();
 
         let consumer_ids =
             SurfaceAuthoringLoader::load_activated_consumer_ids_in_transaction(&mut transaction, &default_config_mode)
@@ -459,6 +530,7 @@ impl ProfileSurfaceManagement {
         profile_id: &str,
         ref_ids: &[String],
         action: ProfileRelationshipAction,
+        expected_authoring_generation: i64,
         source_revision_set: HashMap<String, i64>,
         actor: &str,
     ) -> Result<ProfileCapabilityManagementResult> {
@@ -470,12 +542,11 @@ impl ProfileSurfaceManagement {
             });
         }
 
-        let default_config_mode = load_default_config_mode(pool).await?;
         let coordinator = MaterializationCoordinator::new(pool.clone());
-        let mut transaction = pool.begin().await?;
-        coordinator
-            .verify_catalog_revision_set_in_transaction(&mut transaction, &source_revision_set)
-            .await?;
+        let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
+        let default_config_mode = load_default_config_mode(pool).await?;
+        verify_profile_capability_dependencies(&mut transaction, ref_ids, &source_revision_set).await?;
+        advance_profile_generation_in_transaction(&mut transaction, profile_id, expected_authoring_generation).await?;
 
         let mut mutations = Vec::with_capacity(ref_ids.len());
         for ref_id in ref_ids {
@@ -633,7 +704,7 @@ impl ProfileSurfaceManagement {
         profile_id: &str,
         server_id: &str,
         action: ProfileRelationshipAction,
-        source_revision_set: HashMap<String, i64>,
+        expected_authoring_generation: i64,
         actor: &str,
     ) -> Result<Vec<ConsumerMaterialization>> {
         Self::mutate_servers(
@@ -641,7 +712,7 @@ impl ProfileSurfaceManagement {
             profile_id,
             &[server_id.to_string()],
             action,
-            source_revision_set,
+            expected_authoring_generation,
             actor,
         )
         .await
@@ -652,7 +723,7 @@ impl ProfileSurfaceManagement {
         profile_id: &str,
         server_ids: &[String],
         action: ProfileRelationshipAction,
-        source_revision_set: HashMap<String, i64>,
+        expected_authoring_generation: i64,
         actor: &str,
     ) -> Result<Vec<ConsumerMaterialization>> {
         let unique_server_ids = server_ids.iter().collect::<HashSet<_>>();
@@ -662,12 +733,10 @@ impl ProfileSurfaceManagement {
                 value: "duplicate server id".to_string(),
             });
         }
-        let default_config_mode = load_default_config_mode(pool).await?;
         let coordinator = MaterializationCoordinator::new(pool.clone());
-        let mut transaction = pool.begin().await?;
-        coordinator
-            .verify_catalog_revision_set_in_transaction(&mut transaction, &source_revision_set)
-            .await?;
+        let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
+        let default_config_mode = load_default_config_mode(pool).await?;
+        advance_profile_generation_in_transaction(&mut transaction, profile_id, expected_authoring_generation).await?;
         for server_id in server_ids {
             let server_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_config WHERE id = ?)")
                 .bind(server_id)
@@ -717,7 +786,7 @@ impl ProfileSurfaceManagement {
                     if updated.rows_affected() != 1 {
                         return Err(CatalogError::ConcurrencyConflict {
                             entity: "profile server relationship",
-                            id: format!("{profile_id}/{server_id}"),
+                            id: profile_id.to_string(),
                         });
                     }
                     sqlx::query(
@@ -767,7 +836,7 @@ impl ProfileSurfaceManagement {
                     if deleted.rows_affected() != 1 {
                         return Err(CatalogError::ConcurrencyConflict {
                             entity: "profile server relationship",
-                            id: format!("{profile_id}/{server_id}"),
+                            id: profile_id.to_string(),
                         });
                     }
                 }
@@ -791,7 +860,7 @@ impl ProfileSurfaceManagement {
         pool: &Pool<Sqlite>,
         profile_id: &str,
         server_ids: &[String],
-        source_revision_set: HashMap<String, i64>,
+        expected_authoring_generation: i64,
         actor: &str,
     ) -> Result<Vec<ConsumerMaterialization>> {
         let unique_server_ids = server_ids.iter().collect::<HashSet<_>>();
@@ -801,22 +870,10 @@ impl ProfileSurfaceManagement {
                 value: "duplicate server id".to_string(),
             });
         }
-        let default_config_mode = load_default_config_mode(pool).await?;
         let coordinator = MaterializationCoordinator::new(pool.clone());
-        let mut transaction = pool.begin().await?;
-        coordinator
-            .verify_catalog_revision_set_in_transaction(&mut transaction, &source_revision_set)
-            .await?;
-        let profile_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM profile WHERE id = ?)")
-            .bind(profile_id)
-            .fetch_one(&mut *transaction)
-            .await?;
-        if !profile_exists {
-            return Err(CatalogError::InvalidSurfaceValue {
-                field: "profile",
-                value: profile_id.to_string(),
-            });
-        }
+        let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
+        let default_config_mode = load_default_config_mode(pool).await?;
+        advance_profile_generation_in_transaction(&mut transaction, profile_id, expected_authoring_generation).await?;
         for server_id in server_ids {
             let server_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM server_config WHERE id = ?)")
                 .bind(server_id)
@@ -906,4 +963,83 @@ impl ProfileSurfaceManagement {
         }
         Ok(commits)
     }
+}
+
+pub(crate) async fn advance_profile_generation_in_transaction(
+    transaction: &mut sqlx::Transaction<'_, Sqlite>,
+    profile_id: &str,
+    expected_authoring_generation: i64,
+) -> Result<i64> {
+    let next_generation: Option<i64> = sqlx::query_scalar(
+        r#"
+        UPDATE profile
+        SET authoring_generation = authoring_generation + 1,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND authoring_generation = ?
+        RETURNING authoring_generation
+        "#,
+    )
+    .bind(profile_id)
+    .bind(expected_authoring_generation)
+    .fetch_optional(&mut **transaction)
+    .await?;
+    match next_generation {
+        Some(generation) => Ok(generation),
+        None => {
+            let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM profile WHERE id = ?)")
+                .bind(profile_id)
+                .fetch_one(&mut **transaction)
+                .await?;
+            if exists {
+                Err(CatalogError::ConcurrencyConflict {
+                    entity: "profile authoring generation",
+                    id: profile_id.to_string(),
+                })
+            } else {
+                Err(CatalogError::InvalidSurfaceValue {
+                    field: "profile",
+                    value: profile_id.to_string(),
+                })
+            }
+        }
+    }
+}
+
+async fn verify_profile_capability_dependencies(
+    transaction: &mut sqlx::Transaction<'_, Sqlite>,
+    ref_ids: &[String],
+    expected: &HashMap<String, i64>,
+) -> Result<()> {
+    let mut related_server_ids = BTreeSet::new();
+    for ref_id in ref_ids {
+        if let Some(server_id) =
+            sqlx::query_scalar::<_, String>("SELECT server_id FROM capability_refs WHERE ref_id = ?")
+                .bind(ref_id)
+                .fetch_optional(&mut **transaction)
+                .await?
+        {
+            related_server_ids.insert(server_id);
+        }
+    }
+    let expected_server_ids = expected.keys().cloned().collect::<BTreeSet<_>>();
+    if expected_server_ids != related_server_ids {
+        return Err(CatalogError::InvalidSurfaceValue {
+            field: "profile catalog dependency revisions",
+            value: "dependency Server ids must exactly match the selected capabilities".to_string(),
+        });
+    }
+    for server_id in &related_server_ids {
+        let current: Option<i64> =
+            sqlx::query_scalar("SELECT catalog_revision FROM capability_server_snapshots WHERE server_id = ?")
+                .bind(server_id)
+                .fetch_optional(&mut **transaction)
+                .await?;
+        if current != expected.get(server_id).copied() {
+            return Err(CatalogError::ConcurrencyConflict {
+                entity: "profile catalog dependency revisions",
+                id: related_server_ids.iter().cloned().collect::<Vec<_>>().join(","),
+            });
+        }
+    }
+    Ok(())
 }

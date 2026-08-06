@@ -24,6 +24,28 @@ pub struct ErrorDetails {
     pub status: u16,
 }
 
+/// Profile-scoped error response documented for authoring and component contracts.
+#[derive(schemars::JsonSchema, serde::Serialize)]
+pub struct ProfileApiErrorResp {
+    pub error: ProfileApiErrorDetails,
+}
+
+#[derive(schemars::JsonSchema, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileApiErrorDetails {
+    pub message: String,
+    pub status: u16,
+    pub code: Option<String>,
+    pub details: Option<ProfileApiErrorMetadata>,
+}
+
+#[derive(schemars::JsonSchema, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileApiErrorMetadata {
+    pub current_authoring_generation: Option<i64>,
+    pub dependency_server_ids: Option<Vec<String>>,
+}
+
 impl ResponseConverter {
     /// Convert Profile to ProfileResponse with consistent logic
     pub fn profile_to_response(profile: &crate::config::models::Profile) -> crate::api::models::profile::ProfileData {
@@ -53,6 +75,7 @@ impl ResponseConverter {
             priority: profile.priority,
             is_active: profile.is_active,
             is_default: profile.is_default,
+            authoring_generation: profile.authoring_generation,
             allowed_operations,
         }
     }

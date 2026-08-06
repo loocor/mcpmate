@@ -1,286 +1,88 @@
-// Management operations for Profile
-// Contains create, update, delete and status management operations
+// System-owned default Profile normalization.
 
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 
-use crate::{
-    common::profile::ProfileType,
-    config::{models::Profile, profile::is_default_anchor_profile},
-    generate_id,
-};
+use crate::{common::profile::ProfileType, generate_id};
 
 use super::{DEFAULT_ANCHOR_INITIAL_NAME, DEFAULT_ANCHOR_ROLE, DEFAULT_PROFILE_DESCRIPTION};
 
-/// Ensure the system default anchor profile exists and return its identifier.
+/// Ensure the system default anchor exists and satisfies its invariant contract.
 pub async fn ensure_default_anchor_profile_id(pool: &Pool<Sqlite>) -> Result<String> {
-    if let Some(profile) = super::get_default_profile(pool).await? {
-        if let Some(id) = profile.id.clone() {
-            return Ok(id);
-        }
-
-        // If the profile somehow lost its ID, re-upsert to restore persistence guarantees.
-        return upsert_profile(pool, &profile).await;
-    }
-
-    let mut profile = Profile::new_with_description(
-        DEFAULT_ANCHOR_INITIAL_NAME.to_string(),
-        Some(DEFAULT_PROFILE_DESCRIPTION.to_string()),
-        ProfileType::Shared,
-    );
-    profile.is_active = true;
-    profile.is_default = true;
-    profile.multi_select = true;
-    profile.role = DEFAULT_ANCHOR_ROLE;
-
-    upsert_profile(pool, &profile).await
+    normalize_default_anchor_profile(pool).await
 }
 
-use super::basic::get_profile;
-
-/// Create or update a profile in the database
-pub async fn upsert_profile(
-    pool: &Pool<Sqlite>,
-    profile: &Profile,
-) -> Result<String> {
-    tracing::debug!("Upserting profile '{}', type: {}", profile.name, profile.profile_type);
-
-    // Generate an ID for the profile if it doesn't have one
-    let profile_id = if let Some(id) = &profile.id {
-        id.clone()
-    } else {
-        generate_id!("prof")
-    };
-
-    let mut tx = pool.begin().await.context("Failed to begin transaction")?;
-
-    let result = sqlx::query(
-        r#"
-        INSERT INTO profile (id, name, description, type, role, multi_select, priority, is_active, is_default)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(name) DO UPDATE SET
-            description = excluded.description,
-            type = excluded.type,
-            role = excluded.role,
-            multi_select = excluded.multi_select,
-            priority = excluded.priority,
-            is_active = excluded.is_active,
-            is_default = excluded.is_default,
-            updated_at = CURRENT_TIMESTAMP
-        "#,
-    )
-    .bind(&profile_id)
-    .bind(&profile.name)
-    .bind(&profile.description)
-    .bind(profile.profile_type)
-    .bind(profile.role)
-    .bind(profile.multi_select)
-    .bind(profile.priority)
-    .bind(profile.is_active)
-    .bind(profile.is_default)
-    .execute(&mut *tx)
-    .await
-    .context("Failed to upsert profile")?;
-
-    let final_profile_id = if result.rows_affected() == 0 {
-        // If no rows were affected, get the existing ID
-
-        sqlx::query_scalar::<_, String>(
-            r#"
-            SELECT id FROM profile
-            WHERE name = ?
-            "#,
-        )
-        .bind(&profile.name)
-        .fetch_one(&mut *tx)
+/// Normalize the system-owned default anchor under one serialized write transaction.
+pub(crate) async fn normalize_default_anchor_profile(pool: &Pool<Sqlite>) -> Result<String> {
+    let mut transaction = pool
+        .begin_with("BEGIN IMMEDIATE")
         .await
-        .context("Failed to get profile ID")?
-    } else {
-        profile_id
-    };
-
-    tx.commit().await.context("Failed to commit transaction")?;
-
-    Ok(final_profile_id)
-}
-
-/// Update an existing profile by ID
-///
-/// This function is specifically designed for updating existing profile based on their ID,
-/// unlike upsert_profile which is designed for creation scenarios with name-based conflict detection.
-pub async fn update_profile(
-    pool: &Pool<Sqlite>,
-    profile: &Profile,
-) -> Result<()> {
-    let profile_id = profile
-        .id
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Profile ID is required for update operation"))?;
-
-    tracing::debug!("Updating profile '{}' with ID '{}'", profile.name, profile_id);
-
-    let result = sqlx::query(
+        .context("Failed to begin default anchor normalization")?;
+    let current = sqlx::query_as::<_, (String, String, String, bool, bool, bool, i64)>(
         r#"
-        UPDATE profile
-        SET name = ?, description = ?, type = ?, role = ?, multi_select = ?, priority = ?, is_active = ?, is_default = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
+        SELECT id, type, role, multi_select, is_active, is_default, authoring_generation
+        FROM profile
+        WHERE is_default = 1 OR role = 'default_anchor'
+        ORDER BY CASE WHEN role = 'default_anchor' THEN 0 ELSE 1 END, created_at
+        LIMIT 1
         "#,
     )
-    .bind(&profile.name)
-    .bind(&profile.description)
-    .bind(profile.profile_type)
-    .bind(profile.role)
-    .bind(profile.multi_select)
-    .bind(profile.priority)
-    .bind(profile.is_active)
-    .bind(profile.is_default)
-    .bind(profile_id)
-    .execute(pool)
+    .fetch_optional(&mut *transaction)
     .await
-    .context("Failed to update profile")?;
+    .context("Failed to load default anchor Profile")?;
 
-    if result.rows_affected() == 0 {
-        return Err(anyhow::anyhow!("Profile with ID '{}' not found", profile_id));
-    }
-
-    tracing::debug!(
-        "Successfully updated profile '{}' with ID '{}'",
-        profile.name,
-        profile_id
-    );
-
-    Ok(())
-}
-
-/// Set a profile as active or inactive
-///
-/// This function updates the active status of a profile in the database.
-/// If the status is updated, it also publishes a ProfileStatusChanged event.
-pub async fn set_profile_active(
-    pool: &Pool<Sqlite>,
-    profile_id: &str,
-    active: bool,
-) -> Result<()> {
-    tracing::debug!(
-        "Setting profile with ID {} as {}",
-        profile_id,
-        if active { "active" } else { "inactive" }
-    );
-
-    // Get the profile to check multi_select
-    let profile = get_profile(pool, profile_id).await?;
-    if profile.is_none() {
-        return Err(anyhow::anyhow!("Profile with ID {} not found", profile_id));
-    }
-    let profile = profile.unwrap();
-
-    // Disallow deactivating the default profile
-    if is_default_anchor_profile(&profile) && !active {
-        return Err(anyhow::anyhow!("The system default profile cannot be deactivated"));
-    }
-
-    let mut tx = pool.begin().await.context("Failed to begin transaction")?;
-
-    // If activating and multi_select is false, deactivate all other profile (except default)
-    if active && !profile.multi_select {
+    let profile_id = if let Some((id, profile_type, role, multi_select, is_active, is_default, generation)) = current {
+        let needs_update = profile_type != ProfileType::Shared.as_str()
+            || role != DEFAULT_ANCHOR_ROLE.as_str()
+            || !multi_select
+            || !is_active
+            || !is_default;
+        if needs_update {
+            let updated = sqlx::query(
+                r#"
+                UPDATE profile
+                SET type = 'shared',
+                    role = 'default_anchor',
+                    multi_select = 1,
+                    is_active = 1,
+                    is_default = 1,
+                    authoring_generation = authoring_generation + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND authoring_generation = ?
+                "#,
+            )
+            .bind(&id)
+            .bind(generation)
+            .execute(&mut *transaction)
+            .await
+            .context("Failed to normalize default anchor Profile")?;
+            if updated.rows_affected() != 1 {
+                return Err(anyhow::anyhow!("Default anchor Profile changed during normalization"));
+            }
+        }
+        id
+    } else {
+        let id = generate_id!("prof");
         sqlx::query(
             r#"
-            UPDATE profile
-            SET is_active = 0,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id != ? AND is_default = 0
+            INSERT INTO profile (
+                id, name, description, type, role, multi_select,
+                priority, is_active, is_default, authoring_generation
+            ) VALUES (?, ?, ?, 'shared', 'default_anchor', 1, 0, 1, 1, 0)
             "#,
         )
-        .bind(profile_id)
-        .execute(&mut *tx)
+        .bind(&id)
+        .bind(DEFAULT_ANCHOR_INITIAL_NAME)
+        .bind(DEFAULT_PROFILE_DESCRIPTION)
+        .execute(&mut *transaction)
         .await
-        .context("Failed to deactivate other profile")?;
-    }
+        .context("Failed to create default anchor Profile")?;
+        id
+    };
 
-    // Update the specified profile
-    sqlx::query(
-        r#"
-        UPDATE profile
-        SET is_active = ?,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-        "#,
-    )
-    .bind(active)
-    .bind(profile_id)
-    .execute(&mut *tx)
-    .await
-    .context("Failed to update profile active status")?;
-
-    tx.commit().await.context("Failed to commit transaction")?;
-
-    // Publish the event
-    crate::core::events::EventBus::global().publish(crate::core::events::Event::ProfileStatusChanged {
-        profile_id: profile_id.to_string(),
-        enabled: active,
-    });
-
-    tracing::info!(
-        "Published ProfileStatusChanged event for profile ID {} ({})",
-        profile_id,
-        active
-    );
-
-    Ok(())
-}
-
-/// Set a profile as the default
-pub async fn set_profile_default(
-    pool: &Pool<Sqlite>,
-    profile_id: &str,
-) -> Result<()> {
-    tracing::debug!("Setting profile with ID {} as default", profile_id);
-
-    let mut tx = pool.begin().await.context("Failed to begin transaction")?;
-
-    // Set the specified profile as default and ensure it remains active
-    sqlx::query(
-        r#"
-        UPDATE profile
-        SET is_default = 1,
-            is_active = 1,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-        "#,
-    )
-    .bind(profile_id)
-    .execute(&mut *tx)
-    .await
-    .context("Failed to set profile as default")?;
-
-    tx.commit().await.context("Failed to commit transaction")?;
-    Ok(())
-}
-
-/// Delete a profile from the database
-pub async fn delete_profile(
-    pool: &Pool<Sqlite>,
-    id: &str,
-) -> Result<bool> {
-    tracing::debug!("Deleting profile with ID {}", id);
-
-    // Prevent deleting the default profile at the data layer as well
-    if let Some(p) = get_profile(pool, id).await? {
-        if is_default_anchor_profile(&p) {
-            return Err(anyhow::anyhow!("Cannot delete the system default profile"));
-        }
-    }
-
-    let result = sqlx::query(
-        r#"
-        DELETE FROM profile
-        WHERE id = ?
-        "#,
-    )
-    .bind(id)
-    .execute(pool)
-    .await
-    .context("Failed to delete profile")?;
-
-    Ok(result.rows_affected() > 0)
+    transaction
+        .commit()
+        .await
+        .context("Failed to commit default anchor normalization")?;
+    Ok(profile_id)
 }

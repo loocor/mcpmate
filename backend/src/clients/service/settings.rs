@@ -9,9 +9,8 @@ use crate::clients::models::{
     UnifyDirectToolSurface, UnifyDirectToolSurfaceDiagnostic, UnifyRouteMode, canonical_config_transport_key,
 };
 use crate::clients::service::core::{ClientStateRow, PersistedTemplateConfig, RuntimeClientMetadata};
-use crate::common::profile::{ProfileRole, ProfileType};
+use crate::common::profile::ProfileType;
 use crate::config::database::Database;
-use crate::config::models::Profile;
 use crate::core::capability::materializer::{
     MaterializationCoordinator, MaterializationTrigger, revoke_managed_surface_in_transaction,
 };
@@ -2594,41 +2593,20 @@ impl ClientConfigService {
         &self,
         identifier: &str,
     ) -> ConfigResult<String> {
-        let profile_name = format!("{}_custom", identifier);
-
-        if let Some(profile) = crate::config::profile::get_profile_by_name(&self.db_pool, &profile_name)
+        let prepared = self.prepare_custom_profile(identifier).await?;
+        let mut transaction = self
+            .db_pool
+            .begin_with("BEGIN IMMEDIATE")
             .await
-            .map_err(|err| ConfigError::DataAccessError(err.to_string()))?
-        {
-            if profile.profile_type != ProfileType::HostApp {
-                return Err(ConfigError::DataAccessError(format!(
-                    "Profile '{}' already exists but is not host_app",
-                    profile_name
-                )));
-            }
-
-            return profile
-                .id
-                .ok_or_else(|| ConfigError::DataAccessError(format!("Profile '{}' is missing an id", profile_name)));
-        }
-
-        let profile = Profile {
-            id: None,
-            name: profile_name,
-            description: Some(format!("Custom profile for {}", identifier)),
-            profile_type: ProfileType::HostApp,
-            role: ProfileRole::User,
-            multi_select: false,
-            priority: 0,
-            is_active: false,
-            is_default: false,
-            created_at: None,
-            updated_at: None,
-        };
-
-        crate::config::profile::upsert_profile(&self.db_pool, &profile)
+            .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+        let profile_id = self
+            .ensure_custom_profile_in_transaction(&mut transaction, identifier, &prepared)
+            .await?;
+        transaction
+            .commit()
             .await
-            .map_err(|err| ConfigError::DataAccessError(err.to_string()))
+            .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+        Ok(profile_id)
     }
 
     async fn validate_selected_profile_ids(

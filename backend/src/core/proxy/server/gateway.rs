@@ -2372,9 +2372,7 @@ mod tests {
             crate::common::profile::ProfileType::Shared,
         );
         profile.is_active = true;
-        let profile_id = crate::config::profile::upsert_profile(&pool, &profile)
-            .await
-            .expect("insert subscription profile");
+        let profile_id = crate::test_helpers::insert_profile(&pool, &profile).await;
         crate::config::profile::add_server_to_profile(&pool, &profile_id, &server_id, true)
             .await
             .expect("add server to profile");

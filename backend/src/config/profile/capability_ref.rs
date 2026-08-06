@@ -6,7 +6,7 @@ use mcpmate_capability_store::{
     EffectiveCapabilityRecordV1,
 };
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, Pool, Sqlite};
+use sqlx::{Executor, FromRow, Pool, Sqlite, Transaction};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -30,6 +30,7 @@ pub struct ProfileCapabilityRef {
     pub ref_id: CapabilityRefId,
     pub enabled: bool,
     pub server_id: String,
+    pub server_name: String,
     pub kind: CapabilityKind,
     pub origin_key: String,
     pub state: CapabilityRefState,
@@ -45,6 +46,7 @@ struct ProfileCapabilityRefRow {
     ref_id: String,
     enabled: bool,
     server_id: String,
+    server_name: String,
     kind: String,
     origin_key: String,
     state: String,
@@ -53,7 +55,8 @@ struct ProfileCapabilityRefRow {
     canonical_record: Vec<u8>,
 }
 
-pub async fn upsert_profile_capability_ref(
+#[cfg(test)]
+pub(crate) async fn upsert_profile_capability_ref(
     pool: &Pool<Sqlite>,
     profile_id: &str,
     ref_id: &CapabilityRefId,
@@ -88,6 +91,25 @@ pub async fn load_profile_capability_refs(
     profile_id: &str,
     kind: Option<CapabilityKind>,
 ) -> Result<Vec<ProfileCapabilityRef>> {
+    load_profile_capability_refs_from(pool, profile_id, kind).await
+}
+
+pub async fn load_profile_capability_refs_in_transaction(
+    transaction: &mut Transaction<'_, Sqlite>,
+    profile_id: &str,
+    kind: Option<CapabilityKind>,
+) -> Result<Vec<ProfileCapabilityRef>> {
+    load_profile_capability_refs_from(&mut **transaction, profile_id, kind).await
+}
+
+async fn load_profile_capability_refs_from<'e, E>(
+    executor: E,
+    profile_id: &str,
+    kind: Option<CapabilityKind>,
+) -> Result<Vec<ProfileCapabilityRef>>
+where
+    E: Executor<'e, Database = Sqlite>,
+{
     let rows = sqlx::query_as::<_, ProfileCapabilityRefRow>(
         r#"
         WITH profile_refs AS (
@@ -122,10 +144,13 @@ pub async fn load_profile_capability_refs(
             GROUP BY ref_id
         )
         SELECT ? AS profile_id, effective.ref_id, effective.enabled,
-               cr.server_id, cr.kind, cr.origin_key, cr.state, cr.state_generation,
+               cr.server_id, COALESCE(server.name, snapshot.server_name, cr.server_id) AS server_name,
+               cr.kind, cr.origin_key, cr.state, cr.state_generation,
                versions.capability_id, versions.canonical_record
         FROM effective_refs effective
         JOIN capability_refs cr ON cr.ref_id = effective.ref_id
+        LEFT JOIN server_config server ON server.id = cr.server_id
+        LEFT JOIN capability_server_snapshots snapshot ON snapshot.server_id = cr.server_id
         LEFT JOIN capability_ref_current current ON current.ref_id = cr.ref_id
         JOIN capability_versions versions ON versions.capability_id = COALESCE(
             current.capability_id,
@@ -146,7 +171,7 @@ pub async fn load_profile_capability_refs(
     .bind(profile_id)
     .bind(kind.map(CapabilityKind::as_str))
     .bind(kind.map(CapabilityKind::as_str))
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await
     .context("Failed to load profile capability refs")?;
     rows.into_iter().map(ProfileCapabilityRef::try_from).collect()
@@ -179,6 +204,7 @@ impl TryFrom<ProfileCapabilityRefRow> for ProfileCapabilityRef {
             ref_id,
             enabled: row.enabled,
             server_id: row.server_id,
+            server_name: row.server_name,
             kind,
             origin_key: row.origin_key,
             state,

@@ -316,9 +316,7 @@ mod tests {
     ) -> String {
         let mut profile = Profile::new(name.to_string(), profile_type);
         profile.is_active = is_active;
-        profile::upsert_profile(service.db_pool.as_ref(), &profile)
-            .await
-            .expect("upsert profile")
+        crate::test_helpers::insert_profile(service.db_pool.as_ref(), &profile).await
     }
 
     #[tokio::test]

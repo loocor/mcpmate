@@ -19,7 +19,7 @@ use mcpmate::{
         database::Database,
         initialization::run_initialization,
         models::{Profile, Server},
-        profile as profile_config, server as server_config,
+        server as server_config,
     },
     core::{
         events::{Event, EventBus, EventDrivenCapabilityManager, EventHandlers},
@@ -504,13 +504,9 @@ async fn insert_active_profile(
 ) -> String {
     let mut profile = Profile::new("Capability Surface Profile".to_string(), ProfileType::Shared);
     profile.is_active = true;
-    let profile_id = profile_config::upsert_profile(&database.pool, &profile)
-        .await
-        .expect("insert active profile");
+    let profile_id = database_support::insert_profile(&database.pool, &profile).await;
     for server_id in server_ids {
-        profile_config::add_server_to_profile(&database.pool, &profile_id, server_id, true)
-            .await
-            .expect("add server to active profile");
+        database_support::insert_profile_server_relationship(&database.pool, &profile_id, server_id, true).await;
     }
     profile_id
 }
@@ -1581,7 +1577,7 @@ async fn import_kind_failure_records_one_scoped_observation() {
                 meta: None,
             },
         )]),
-        server_config::ImportOptions::dashboard_import(false, None),
+        server_config::ImportOptions::dashboard_import(false),
     )
     .await
     .expect("schedule imported capability sync");
@@ -1676,7 +1672,7 @@ async fn import_and_management_read_share_one_discovery_owner() {
                 meta: None,
             },
         )]),
-        server_config::ImportOptions::dashboard_import(false, None),
+        server_config::ImportOptions::dashboard_import(false),
     )
     .await
     .expect("schedule imported capability discovery");
@@ -1828,7 +1824,7 @@ async fn batch_import_starts_two_servers_without_serializing_discovery() {
         database.clone(),
         Some(&pool),
         items,
-        server_config::ImportOptions::dashboard_import(false, None),
+        server_config::ImportOptions::dashboard_import(false),
     )
     .await
     .expect("schedule batch capability discovery");

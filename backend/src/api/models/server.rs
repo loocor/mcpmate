@@ -937,6 +937,7 @@ pub struct ServerListData {
 ///
 /// Request parameters for creating a new MCP server configuration. The server type must strictly use standard formats.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 #[schemars(description = "Request parameters for creating a MCP server")]
 pub struct ServerCreateReq {
     /// Immutable MCPMate-managed server namespace
@@ -978,15 +979,6 @@ pub struct ServerCreateReq {
     /// Default HTTP headers for HTTP
     #[serde(default)]
     pub headers: Option<HashMap<String, String>>,
-
-    /// Optional target profiles to associate with this server at creation time
-    #[serde(default)]
-    #[schemars(description = "Optional list of profile IDs to associate this server with")]
-    pub profile_ids: Option<Vec<String>>,
-
-    /// Whether to enable the server in the associated profiles (if any)
-    #[schemars(description = "Whether to enable this server in the specified profiles")]
-    pub enabled: Option<bool>,
 
     #[serde(default)]
     #[schemars(description = "Whether this server is a hidden pre-import record")]
@@ -1079,7 +1071,7 @@ pub struct ServerUpdateReq {
 
 #[cfg(test)]
 mod server_update_request_tests {
-    use super::ServerUpdateReq;
+    use super::{ServerCreateReq, ServerUpdateReq, ServersImportReq};
 
     #[test]
     fn update_request_rejects_namespace_changes() {
@@ -1092,18 +1084,76 @@ mod server_update_request_tests {
             assert!(error.to_string().contains(&format!("unknown field `{field}`")));
         }
     }
+
+    #[test]
+    fn server_install_requests_reject_profile_association_fields() {
+        let create_payload = serde_json::json!({
+            "name": "server-a",
+            "server_type": "stdio",
+            "command": "server-a"
+        });
+        for (field, value) in [
+            ("profile_ids", serde_json::json!(["profile-a"])),
+            (
+                "expected_profile_authoring_generations",
+                serde_json::json!({"profile-a": 3}),
+            ),
+            ("enabled", serde_json::json!(true)),
+        ] {
+            let mut payload = create_payload.clone();
+            payload[field] = value;
+            let error = serde_json::from_value::<ServerCreateReq>(payload)
+                .expect_err("create-time Profile association is not part of the Server contract");
+            assert!(error.to_string().contains(&format!("unknown field `{field}`")));
+        }
+
+        for (field, value) in [
+            ("target_profile_id", serde_json::json!("profile-a")),
+            (
+                "expected_profile_authoring_generations",
+                serde_json::json!({"profile-a": 3}),
+            ),
+        ] {
+            let mut payload = serde_json::json!({"mcpServers": {}});
+            payload[field] = value;
+            let error = serde_json::from_value::<ServersImportReq>(payload)
+                .expect_err("import-time Profile association is not part of the Server contract");
+            assert!(error.to_string().contains(&format!("unknown field `{field}`")));
+        }
+    }
+
+    #[test]
+    fn server_install_schemas_exclude_profile_association_fields() {
+        let create_schema = serde_json::to_value(schemars::schema_for!(ServerCreateReq)).unwrap();
+        let create_properties = create_schema["properties"].as_object().unwrap();
+        for field in ["profile_ids", "expected_profile_authoring_generations", "enabled"] {
+            assert!(
+                !create_properties.contains_key(field),
+                "unexpected create schema field: {field}"
+            );
+        }
+        assert_eq!(create_schema["additionalProperties"], false);
+
+        let import_schema = serde_json::to_value(schemars::schema_for!(ServersImportReq)).unwrap();
+        let import_properties = import_schema["properties"].as_object().unwrap();
+        for field in ["target_profile_id", "expected_profile_authoring_generations"] {
+            assert!(
+                !import_properties.contains_key(field),
+                "unexpected import schema field: {field}"
+            );
+        }
+        assert_eq!(import_schema["additionalProperties"], false);
+    }
 }
 
 /// Import servers request
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 #[schemars(description = "Import servers request")]
 pub struct ServersImportReq {
     /// Map of MCP server name to configuration (required when `client_identifier` is absent)
     #[serde(rename = "mcpServers", default)]
     pub mcp_servers: HashMap<String, ServersImportConfig>,
-    /// Optional profile ID to auto-enable imported servers
-    #[serde(default)]
-    pub target_profile_id: Option<String>,
     /// Dry-run mode: validate and preview import without persisting changes (default: false)
     #[serde(default)]
     pub dry_run: bool,

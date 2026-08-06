@@ -11,11 +11,13 @@ use aide::axum::{
 use super::AppState;
 use crate::api::handlers::profile;
 use crate::api::models::profile::{
-    ProfileComponentListReq, ProfileComponentManageReq, ProfileCreateReq, ProfileDeleteReq, ProfileDetailsReq,
-    ProfileDetailsResp, ProfileListReq, ProfileListResp, ProfileManageReq, ProfileManageResp, ProfilePromptsListResp,
-    ProfileResourceTemplatesListResp, ProfileResourcesListResp, ProfileResp, ProfileServerManageResp,
-    ProfileServersListResp, ProfileToolsListResp, ProfileUpdateReq,
+    ProfileAuthoringSaveReq, ProfileAuthoringSaveResp, ProfileAuthoringViewResp, ProfileComponentListReq,
+    ProfileComponentManageReq, ProfileDeleteReq, ProfileDetailsReq, ProfileDetailsResp, ProfileIdReq, ProfileListReq,
+    ProfileListResp, ProfileManageReq, ProfileManageResp, ProfilePromptsListResp, ProfileResourceTemplatesListResp,
+    ProfileResourcesListResp, ProfileServerManageReq, ProfileServerManageResp, ProfileServersListResp,
+    ProfileToolsListResp,
 };
+use crate::api::models::resp::ProfileApiErrorResp;
 use crate::api::models::token_estimate::{CapabilityTokenLedgerResponse, TokenEstimateQuery, TokenEstimateResponse};
 use crate::{aide_wrapper_payload, aide_wrapper_query};
 
@@ -24,65 +26,68 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
     ApiRouter::new()
         .api_route("/mcp/profile/list", get_with(profile_list_aide, profile_list_docs))
         .api_route(
-            "/mcp/profile/create",
-            post_with(profile_create_aide, profile_create_docs),
+            "/mcp/profile/authoring/view",
+            get_with(profile_authoring_view_aide, profile_authoring_view_contract_docs),
         )
         .api_route(
             "/mcp/profile/details",
             get_with(profile_details_aide, profile_details_docs),
         )
         .api_route(
-            "/mcp/profile/update",
-            post_with(profile_update_aide, profile_update_docs),
+            "/mcp/profile/authoring/save",
+            post_with(profile_authoring_save_aide, profile_authoring_save_contract_docs),
         )
         .api_route(
             "/mcp/profile/delete",
-            delete_with(profile_delete_aide, profile_delete_docs),
+            delete_with(profile_delete_aide, profile_delete_contract_docs),
         )
         .api_route(
             "/mcp/profile/manage",
-            post_with(profile_manage_aide, profile_manage_docs),
+            post_with(profile_manage_aide, profile_manage_contract_docs),
         )
         .api_route(
             "/mcp/profile/servers/list",
-            get_with(servers_list_aide, servers_list_docs),
+            get_with(servers_list_aide, servers_list_contract_docs),
         )
         .api_route(
             "/mcp/profile/servers/manage",
-            post_with(server_manage_aide, server_manage_docs),
+            post_with(server_manage_aide, server_manage_contract_docs),
         )
-        .api_route("/mcp/profile/tools/list", get_with(tools_list_aide, tools_list_docs))
+        .api_route(
+            "/mcp/profile/tools/list",
+            get_with(tools_list_aide, tools_list_contract_docs),
+        )
         .api_route(
             "/mcp/profile/capabilities/manage",
-            post_with(component_manage_aide, component_manage_docs),
+            post_with(component_manage_aide, component_manage_contract_docs),
         )
         .api_route(
             "/mcp/profile/tools/manage",
-            post_with(component_manage_aide, component_manage_docs),
+            post_with(component_manage_aide, component_manage_contract_docs),
         )
         .api_route(
             "/mcp/profile/resources/list",
-            get_with(resources_list_aide, resources_list_docs),
+            get_with(resources_list_aide, resources_list_contract_docs),
         )
         .api_route(
             "/mcp/profile/resources/manage",
-            post_with(component_manage_aide, component_manage_docs),
+            post_with(component_manage_aide, component_manage_contract_docs),
         )
         .api_route(
             "/mcp/profile/resource-templates/list",
-            get_with(resource_templates_list_aide, resource_templates_list_docs),
+            get_with(resource_templates_list_aide, resource_templates_list_contract_docs),
         )
         .api_route(
             "/mcp/profile/resource-templates/manage",
-            post_with(component_manage_aide, component_manage_docs),
+            post_with(component_manage_aide, component_manage_contract_docs),
         )
         .api_route(
             "/mcp/profile/prompts/list",
-            get_with(prompts_list_aide, prompts_list_docs),
+            get_with(prompts_list_aide, prompts_list_contract_docs),
         )
         .api_route(
             "/mcp/profile/prompts/manage",
-            post_with(component_manage_aide, component_manage_docs),
+            post_with(component_manage_aide, component_manage_contract_docs),
         )
         .api_route(
             "/mcp/profile/token-estimate",
@@ -110,19 +115,18 @@ aide_wrapper_query!(
     "Get details for a specific profile"
 );
 
-// Generate aide-compatible wrappers for CRUD operations
-aide_wrapper_payload!(
-    profile::profile_create,
-    ProfileCreateReq,
-    ProfileResp,
-    "Create a new profile"
+aide_wrapper_query!(
+    profile::profile_authoring_view,
+    ProfileIdReq,
+    ProfileAuthoringViewResp,
+    "Load a Profile authoring view"
 );
 
 aide_wrapper_payload!(
-    profile::profile_update,
-    ProfileUpdateReq,
-    ProfileResp,
-    "Update an existing profile"
+    profile::profile_authoring_save,
+    ProfileAuthoringSaveReq,
+    ProfileAuthoringSaveResp,
+    "Atomically create or update Profile authoring state"
 );
 
 aide_wrapper_payload!(
@@ -179,7 +183,7 @@ aide_wrapper_query!(
 // Generate aide-compatible wrappers for server management
 aide_wrapper_payload!(
     profile::server_manage,
-    ProfileComponentManageReq,
+    ProfileServerManageReq,
     ProfileServerManageResp,
     "Manage server operations (enable/disable servers in profile)"
 );
@@ -206,3 +210,115 @@ aide_wrapper_query!(
     CapabilityTokenLedgerResponse,
     "Per-capability JSON payloads for client-side tokenizer (profile trimming)"
 );
+
+fn with_profile_not_found(op: aide::transform::TransformOperation) -> aide::transform::TransformOperation {
+    op.response::<404, axum::Json<ProfileApiErrorResp>>()
+}
+
+fn with_profile_conflict(op: aide::transform::TransformOperation) -> aide::transform::TransformOperation {
+    with_profile_not_found(op).response::<409, axum::Json<ProfileApiErrorResp>>()
+}
+
+fn profile_authoring_view_contract_docs(
+    op: aide::transform::TransformOperation
+) -> aide::transform::TransformOperation {
+    with_profile_not_found(profile_authoring_view_docs(op))
+}
+
+fn profile_authoring_save_contract_docs(
+    op: aide::transform::TransformOperation
+) -> aide::transform::TransformOperation {
+    with_profile_conflict(profile_authoring_save_docs(op))
+}
+
+fn profile_delete_contract_docs(op: aide::transform::TransformOperation) -> aide::transform::TransformOperation {
+    with_profile_conflict(profile_delete_docs(op))
+}
+
+fn profile_manage_contract_docs(op: aide::transform::TransformOperation) -> aide::transform::TransformOperation {
+    with_profile_conflict(profile_manage_docs(op))
+}
+
+fn servers_list_contract_docs(op: aide::transform::TransformOperation) -> aide::transform::TransformOperation {
+    with_profile_not_found(servers_list_docs(op))
+}
+
+fn server_manage_contract_docs(op: aide::transform::TransformOperation) -> aide::transform::TransformOperation {
+    with_profile_conflict(server_manage_docs(op))
+}
+
+fn tools_list_contract_docs(op: aide::transform::TransformOperation) -> aide::transform::TransformOperation {
+    with_profile_not_found(tools_list_docs(op))
+}
+
+fn resources_list_contract_docs(op: aide::transform::TransformOperation) -> aide::transform::TransformOperation {
+    with_profile_not_found(resources_list_docs(op))
+}
+
+fn resource_templates_list_contract_docs(
+    op: aide::transform::TransformOperation
+) -> aide::transform::TransformOperation {
+    with_profile_not_found(resource_templates_list_docs(op))
+}
+
+fn prompts_list_contract_docs(op: aide::transform::TransformOperation) -> aide::transform::TransformOperation {
+    with_profile_not_found(prompts_list_docs(op))
+}
+
+fn component_manage_contract_docs(op: aide::transform::TransformOperation) -> aide::transform::TransformOperation {
+    with_profile_conflict(component_manage_docs(op))
+}
+
+#[cfg(test)]
+mod tests {
+    use aide::{axum::ApiRouter, openapi::OpenApi};
+
+    use super::*;
+
+    #[test]
+    fn profile_openapi_exposes_typed_not_found_and_conflict_responses() {
+        let mut api = OpenApi::default();
+        let _router = ApiRouter::<Arc<AppState>>::new()
+            .api_route(
+                "/mcp/profile/authoring/save",
+                post_with(profile_authoring_save_aide, profile_authoring_save_contract_docs),
+            )
+            .api_route(
+                "/mcp/profile/delete",
+                delete_with(profile_delete_aide, profile_delete_contract_docs),
+            )
+            .api_route(
+                "/mcp/profile/capabilities/manage",
+                post_with(component_manage_aide, component_manage_contract_docs),
+            )
+            .finish_api_with(&mut api, |api| api);
+        let document = serde_json::to_value(api).unwrap();
+
+        for path in [
+            "/mcp/profile/authoring/save",
+            "/mcp/profile/delete",
+            "/mcp/profile/capabilities/manage",
+        ] {
+            let operation = if path == "/mcp/profile/delete" {
+                "delete"
+            } else {
+                "post"
+            };
+            for status in ["404", "409"] {
+                let schema =
+                    &document["paths"][path][operation]["responses"][status]["content"]["application/json"]["schema"];
+                assert!(schema.get("$ref").is_some(), "{path} {status} must use a typed schema");
+            }
+        }
+        let schemas = document["components"]["schemas"].as_object().unwrap();
+        let coded_error = schemas
+            .values()
+            .find(|schema| schema["properties"]["error"]["$ref"].is_string())
+            .expect("coded Profile error response schema");
+        let error_ref = coded_error["properties"]["error"]["$ref"].as_str().unwrap();
+        let error_name = error_ref.rsplit('/').next().unwrap();
+        let error = &schemas[error_name];
+        assert!(error["properties"]["code"].is_object());
+        assert!(error["properties"]["details"].is_object());
+    }
+}

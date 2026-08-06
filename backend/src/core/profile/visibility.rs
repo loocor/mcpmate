@@ -1167,9 +1167,7 @@ mod tests {
     ) -> String {
         let mut profile = Profile::new(name.to_string(), profile_type);
         profile.is_active = is_active;
-        profile::upsert_profile(&db.pool, &profile)
-            .await
-            .expect("upsert profile")
+        crate::test_helpers::insert_profile(&db.pool, &profile).await
     }
 
     async fn insert_server(

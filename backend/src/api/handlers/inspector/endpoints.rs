@@ -95,6 +95,8 @@ pub async fn tool_call(
                 ApiError::InternalError(m) => ("internal_error", m.as_str()),
                 ApiError::ServiceUnavailable(m) => ("service_unavailable", m.as_str()),
                 ApiError::Conflict(m) => ("conflict", m.as_str()),
+                ApiError::ProfileConflict(_) => ("conflict", "Profile authoring conflict"),
+                ApiError::InvalidProfileTarget(_) => ("invalid_target", "Profile target does not exist"),
                 ApiError::Forbidden(m) => ("forbidden", m.as_str()),
                 ApiError::Timeout(m) => ("timeout", m.as_str()),
                 ApiError::GatewayTimeout(m) => ("gateway_timeout", m.as_str()),
