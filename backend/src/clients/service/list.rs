@@ -142,6 +142,7 @@ mod tests {
                 .expect("sqlite pool"),
         );
 
+        crate::test_helpers::prepare_config_database(pool.as_ref()).await;
         initialize_server_tables(pool.as_ref())
             .await
             .expect("init server tables");

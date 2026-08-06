@@ -5,12 +5,16 @@ use mcpmate_capability_store::DerivedCapabilityCache;
 use sqlx::sqlite::SqlitePoolOptions;
 use tempfile::TempDir;
 
+#[path = "database.rs"]
+mod database;
+
 pub async fn open_database(temp_dir: &TempDir) -> Arc<Database> {
     let pool = SqlitePoolOptions::new()
         .max_connections(4)
         .connect("sqlite::memory:")
         .await
         .expect("open test database");
+    database::prepare_config(&pool).await;
     run_initialization(&pool).await.expect("initialize test database");
     Arc::new(Database {
         pool,

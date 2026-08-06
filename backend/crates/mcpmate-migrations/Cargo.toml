@@ -1,0 +1,18 @@
+[package]
+name = "mcpmate-migrations"
+version = "0.1.0"
+edition = "2024"
+description = "Versioned SQLite schema migrations for MCPMate"
+
+[dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+chrono = "0.4"
+fs2 = "0.4"
+sha2 = "0.10"
+sqlx = { version = "0.8.1", features = ["runtime-tokio", "sqlite"] }
+tokio = { version = "1.44", features = ["rt"] }
+
+[dev-dependencies]
+tempfile = "3.2"
+tokio = { version = "1.44", features = ["macros", "rt-multi-thread"] }

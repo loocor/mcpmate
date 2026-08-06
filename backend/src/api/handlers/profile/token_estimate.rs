@@ -270,6 +270,7 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .expect("create test database");
+        crate::test_helpers::prepare_config_database(&pool).await;
         crate::config::initialization::run_initialization(&pool)
             .await
             .expect("initialize database");

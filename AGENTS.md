@@ -28,9 +28,9 @@
 - Follow the lightweight rules in the active GitHub Project item: one PR should cover only 1–2 small tasks, and every stage must pass the MCP Inspector gate before it is marked complete.
 - Capture TODOs in code comments or checklists but resolve them within the same iteration; avoid carrying speculative work between stages.
 - Log significant findings, regressions, or retest evidence back into the active GitHub Project item so the current working record stays authoritative.
-- Pre-freeze stance: before Loocor declares API/data compatibility freeze, schema and configuration breaking changes may use clean rebuilds with companion updates in the same PR. Do not add migrations, compatibility layers, or fallbacks unless the active Project item explicitly requires them.
+- Pre-freeze stance: before Loocor declares API/data compatibility freeze, schema and configuration breaking changes may use clean rebuilds with companion updates in the same PR. Persistent SQLite schema or one-time data changes use the embedded migration contract below; do not add unrelated compatibility layers or fallbacks.
 - Do not add fallback behavior unless the design or product requirements explicitly call for it. If fallback semantics are ambiguous, stop and ask rather than inventing one.
-- Do not embed migration logic in the main program. When migration is needed, provide it as a separate tool or script so runtime code stays simple and focused.
+- `backend/crates/mcpmate-migrations` is the sole owner of durable SQLite schema migration. Before designing a persistent schema or one-time data change, read its `README.md`; add the change through its versioned migration ledger, never through `ensure_schema`, `ensure_column`, or ad-hoc DDL in a business module. Only physical database initialization may execute pending migrations; business modules remain read-only verifiers of the migrated contract.
 
 ## GitHub Project Workflow
 - Use the GitHub Project **MCPMate** as the canonical task center for roadmap planning, development slices, release/distribution work, marketing follow-up, and cross-repository coordination.

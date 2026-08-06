@@ -154,6 +154,7 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .unwrap();
+        crate::test_helpers::prepare_config_database(&pool).await;
         crate::config::server::init::initialize_server_tables(&pool)
             .await
             .unwrap();

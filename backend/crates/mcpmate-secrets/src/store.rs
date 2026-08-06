@@ -606,6 +606,18 @@ mod tests {
         SecretStoreRotationError,
     };
     use sqlx::{Row, sqlite::SqlitePoolOptions};
+
+    async fn prepared_pool() -> Pool<Sqlite> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        mcpmate_migrations::prepare_config_database(&pool, mcpmate_migrations::DatabaseSource::InMemory)
+            .await
+            .expect("prepare config schema");
+        pool
+    }
     use tempfile::TempDir;
 
     #[derive(Debug)]
@@ -725,11 +737,7 @@ mod tests {
     #[tokio::test]
     #[serial_test::serial]
     async fn initialization_with_failing_root_key_provider_does_not_fallback() {
-        let db_pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("sqlite pool");
+        let db_pool = prepared_pool().await;
 
         let err = LocalSecretStore::initialize_with_root_key_provider(db_pool, Arc::new(FailingRootKeyProvider))
             .await
@@ -742,11 +750,7 @@ mod tests {
     #[serial_test::serial]
     async fn initialization_with_existing_secrets_does_not_create_missing_local_root_key() {
         let temp_dir = TempDir::new().expect("temp dir");
-        let db_pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("sqlite pool");
+        let db_pool = prepared_pool().await;
         LocalSecretStore::ensure_schema(&db_pool).await.expect("ensure schema");
         sqlx::query(
             r#"
@@ -796,11 +800,7 @@ mod tests {
     #[serial_test::serial]
     async fn development_root_key_provider_metadata_is_stored_with_secret() {
         let temp_dir = TempDir::new().expect("temp dir");
-        let db_pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("sqlite pool");
+        let db_pool = prepared_pool().await;
         let store = LocalSecretStore::initialize_with_development_root_key(
             db_pool,
             temp_dir.path().join("secrets").join("local-root.key"),
@@ -827,11 +827,7 @@ mod tests {
     #[serial_test::serial]
     async fn create_secret_stores_origin_metadata() {
         let temp_dir = TempDir::new().expect("temp dir");
-        let db_pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("sqlite pool");
+        let db_pool = prepared_pool().await;
         let store = LocalSecretStore::initialize_with_development_root_key(
             db_pool,
             temp_dir.path().join("secrets").join("local-root.key"),
@@ -878,11 +874,7 @@ mod tests {
     #[serial_test::serial]
     async fn list_usages_skips_unknown_location_rows() {
         let temp_dir = TempDir::new().expect("temp dir");
-        let db_pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("sqlite pool");
+        let db_pool = prepared_pool().await;
         let store = LocalSecretStore::initialize_with_development_root_key(
             db_pool,
             temp_dir.path().join("secrets").join("local-root.key"),
@@ -954,11 +946,7 @@ mod tests {
     #[serial_test::serial]
     async fn delete_secret_without_force_blocks_unknown_location_rows() {
         let temp_dir = TempDir::new().expect("temp dir");
-        let db_pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("sqlite pool");
+        let db_pool = prepared_pool().await;
         let store = LocalSecretStore::initialize_with_development_root_key(
             db_pool,
             temp_dir.path().join("secrets").join("local-root.key"),
@@ -1014,11 +1002,7 @@ mod tests {
     #[serial_test::serial]
     async fn update_secret_rejects_kind_changes() {
         let temp_dir = TempDir::new().expect("temp dir");
-        let db_pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("sqlite pool");
+        let db_pool = prepared_pool().await;
         let store = LocalSecretStore::initialize_with_development_root_key(
             db_pool,
             temp_dir.path().join("secrets").join("local-root.key"),
@@ -1068,11 +1052,7 @@ mod tests {
     #[serial_test::serial]
     async fn create_secret_uses_per_record_envelope_keys() {
         let temp_dir = TempDir::new().expect("temp dir");
-        let db_pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("sqlite pool");
+        let db_pool = prepared_pool().await;
         let store = LocalSecretStore::initialize_with_development_root_key(
             db_pool.clone(),
             temp_dir.path().join("secrets").join("local-root.key"),
@@ -1117,11 +1097,7 @@ mod tests {
     #[serial_test::serial]
     async fn rotate_provider_rewraps_records_updates_metadata_and_persists_mode() {
         let temp_dir = TempDir::new().expect("temp dir");
-        let db_pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("sqlite pool");
+        let db_pool = prepared_pool().await;
         let provider_a = Arc::new(TestRootKeyProvider::new(
             temp_dir.path().join("secrets-a").join("local-root.key"),
             "provider-a",
@@ -1174,11 +1150,7 @@ mod tests {
     #[serial_test::serial]
     async fn rotate_provider_rejects_corrupted_current_record_without_mutation() {
         let temp_dir = TempDir::new().expect("temp dir");
-        let db_pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("sqlite pool");
+        let db_pool = prepared_pool().await;
         let provider_a = Arc::new(TestRootKeyProvider::new(
             temp_dir.path().join("secrets-a").join("local-root.key"),
             "provider-a",
@@ -1228,11 +1200,7 @@ mod tests {
     #[serial_test::serial]
     async fn rotate_provider_overwrites_stale_target_root_material() {
         let temp_dir = TempDir::new().expect("temp dir");
-        let db_pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("sqlite pool");
+        let db_pool = prepared_pool().await;
         let provider_a = Arc::new(TestRootKeyProvider::new(
             temp_dir.path().join("secrets-a").join("local-root.key"),
             "provider-a",
@@ -1269,11 +1237,7 @@ mod tests {
     #[serial_test::serial]
     async fn rotate_provider_returns_committed_store_without_target_reload() {
         let temp_dir = TempDir::new().expect("temp dir");
-        let db_pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("sqlite pool");
+        let db_pool = prepared_pool().await;
         let provider_a = Arc::new(TestRootKeyProvider::new(
             temp_dir.path().join("secrets-a").join("local-root.key"),
             "provider-a",
@@ -1310,11 +1274,7 @@ mod tests {
     #[serial_test::serial]
     async fn rotate_provider_target_failure_keeps_current_state() {
         let temp_dir = TempDir::new().expect("temp dir");
-        let db_pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("sqlite pool");
+        let db_pool = prepared_pool().await;
         let provider_a = Arc::new(TestRootKeyProvider::new(
             temp_dir.path().join("secrets-a").join("local-root.key"),
             "provider-a",
@@ -1345,11 +1305,7 @@ mod tests {
     #[serial_test::serial]
     async fn passphrase_rotation_rewraps_records() {
         let temp_dir = TempDir::new().expect("temp dir");
-        let db_pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("sqlite pool");
+        let db_pool = prepared_pool().await;
         let passphrase_path = temp_dir.path().join("secrets").join("passphrase-wrapped-key.json");
         let old_provider = Arc::new(crate::PassphraseRootKeyProvider::new(
             &passphrase_path,
@@ -1383,11 +1339,7 @@ mod tests {
     #[serial_test::serial]
     async fn passphrase_rotation_persistence_failure_restores_root_material() {
         let temp_dir = TempDir::new().expect("temp dir");
-        let db_pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("sqlite pool");
+        let db_pool = prepared_pool().await;
         let passphrase_path = temp_dir.path().join("secrets").join("passphrase-wrapped-key.json");
         let old_provider = Arc::new(crate::PassphraseRootKeyProvider::new(
             &passphrase_path,
@@ -1456,11 +1408,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let temp_dir = TempDir::new().expect("temp dir");
-        let db_pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("sqlite pool");
+        let db_pool = prepared_pool().await;
         let secrets_dir = temp_dir.path().join("secrets");
         let passphrase_path = secrets_dir.join("passphrase-wrapped-key.json");
         let old_provider = Arc::new(crate::PassphraseRootKeyProvider::new(

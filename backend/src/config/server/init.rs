@@ -1,346 +1,27 @@
-// Server database initialization
-// Contains functions for initializing server-related database tables
-
 use anyhow::Result;
 use sqlx::{Pool, Sqlite};
-use tracing;
 
 use crate::common::constants::database::tables;
 
-/// Initialize all server-related database tables
+/// Verify server storage and perform recurring startup cleanup.
+/// Durable schema is owned by `mcpmate-migrations`.
 pub async fn initialize_server_tables(pool: &Pool<Sqlite>) -> Result<()> {
-    tracing::debug!("Initializing server-related database tables");
-
-    create_server_config_table(pool).await?;
-    create_server_args_table(pool).await?;
-    create_server_env_table(pool).await?;
-    create_server_headers_table(pool).await?;
-    create_server_meta_table(pool).await?;
-    create_server_namespace_issue_table(pool).await?;
-    create_server_oauth_config_table(pool).await?;
-    create_server_oauth_tokens_table(pool).await?;
-
+    mcpmate_migrations::verify_config_database(pool).await?;
     verify_server_tables(pool).await?;
-    cleanup_pending_import_servers(pool).await?;
-
-    tracing::debug!("Server-related database tables initialized successfully");
-    Ok(())
-}
-
-async fn create_server_namespace_issue_table(pool: &Pool<Sqlite>) -> Result<()> {
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS server_namespace_issue (
-            server_id TEXT PRIMARY KEY,
-            issue_kind TEXT NOT NULL,
-            capability_kind TEXT,
-            external_identifier TEXT,
-            upstream_value TEXT,
-            conflicting_server_id TEXT,
-            conflicting_upstream_value TEXT,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (server_id) REFERENCES server_config (id) ON DELETE CASCADE,
-            FOREIGN KEY (conflicting_server_id) REFERENCES server_config (id) ON DELETE CASCADE
-        )
-        "#,
-    )
-    .execute(pool)
-    .await?;
-    Ok(())
+    cleanup_pending_import_servers(pool).await
 }
 
 async fn cleanup_pending_import_servers(pool: &Pool<Sqlite>) -> Result<()> {
-    let result = sqlx::query(
-        r#"
-        DELETE FROM server_config
-        WHERE pending_import = 1
-        "#,
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to clean pending_import server records: {}", e);
-        anyhow::anyhow!("Failed to clean pending_import server records: {}", e)
-    })?;
-
+    let result = sqlx::query("DELETE FROM server_config WHERE pending_import = 1")
+        .execute(pool)
+        .await?;
     let removed = result.rows_affected();
     if removed > 0 {
         tracing::info!(removed, "Removed stale pending_import server records during startup");
     }
-
     Ok(())
 }
 
-/// Create server_config table if it doesn't exist
-async fn create_server_config_table(pool: &Pool<Sqlite>) -> Result<()> {
-    use crate::common::constants::transport;
-
-    tracing::debug!("Creating server_config table if it doesn't exist");
-
-    let create_sql = format!(
-        r#"
-        CREATE TABLE IF NOT EXISTS server_config (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL UNIQUE,
-            server_type TEXT NOT NULL CHECK (
-                server_type IN ('{}', '{}', '{}')
-            ),
-            command TEXT,
-            url TEXT,
-            source TEXT,
-            enabled BOOLEAN NOT NULL DEFAULT 1,
-            unify_direct_exposure_eligible BOOLEAN NOT NULL DEFAULT 0,
-            pending_import BOOLEAN NOT NULL DEFAULT 0,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-        "#,
-        transport::STDIO,
-        transport::SSE,
-        transport::STREAMABLE_HTTP
-    );
-
-    sqlx::query(&create_sql).execute(pool).await.map_err(|e| {
-        tracing::error!("Failed to create server_config table: {}", e);
-        anyhow::anyhow!("Failed to create server_config table: {}", e)
-    })?;
-
-    tracing::debug!("server_config table created or already exists");
-    ensure_column(pool, "server_config", "pending_import", "BOOLEAN NOT NULL DEFAULT 0").await?;
-    ensure_column(
-        pool,
-        "server_config",
-        "unify_direct_exposure_eligible",
-        "BOOLEAN NOT NULL DEFAULT 0",
-    )
-    .await?;
-    ensure_column(pool, "server_config", "source", "TEXT").await?;
-    Ok(())
-}
-
-/// Create server_args table if it doesn't exist
-async fn create_server_args_table(pool: &Pool<Sqlite>) -> Result<()> {
-    tracing::debug!("Creating server_args table if it doesn't exist");
-
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS server_args (
-            id TEXT PRIMARY KEY,
-            server_id TEXT NOT NULL,
-            server_name TEXT NOT NULL,
-            arg_index INTEGER NOT NULL,
-            arg_value TEXT NOT NULL,
-            FOREIGN KEY (server_id) REFERENCES server_config (id) ON DELETE CASCADE,
-            UNIQUE(server_id, arg_index)
-        )
-        "#,
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to create server_args table: {}", e);
-        anyhow::anyhow!("Failed to create server_args table: {}", e)
-    })?;
-
-    tracing::debug!("server_args table created or already exists");
-    Ok(())
-}
-
-/// Create server_env table if it doesn't exist
-async fn create_server_env_table(pool: &Pool<Sqlite>) -> Result<()> {
-    tracing::debug!("Creating server_env table if it doesn't exist");
-
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS server_env (
-            id TEXT PRIMARY KEY,
-            server_id TEXT NOT NULL,
-            server_name TEXT NOT NULL,
-            env_key TEXT NOT NULL,
-            env_value TEXT NOT NULL,
-            FOREIGN KEY (server_id) REFERENCES server_config (id) ON DELETE CASCADE,
-            UNIQUE(server_id, env_key)
-        )
-        "#,
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to create server_env table: {}", e);
-        anyhow::anyhow!("Failed to create server_env table: {}", e)
-    })?;
-
-    tracing::debug!("server_env table created or already exists");
-    Ok(())
-}
-
-/// Create server_headers table (HTTP default headers) if it doesn't exist
-async fn create_server_headers_table(pool: &Pool<Sqlite>) -> Result<()> {
-    tracing::debug!("Creating server_headers table if it doesn't exist");
-
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS server_headers (
-            id TEXT PRIMARY KEY,
-            server_id TEXT NOT NULL,
-            header_key TEXT NOT NULL,
-            header_value TEXT NOT NULL,
-            FOREIGN KEY (server_id) REFERENCES server_config (id) ON DELETE CASCADE,
-            UNIQUE(server_id, header_key)
-        )
-        "#,
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to create server_headers table: {}", e);
-        anyhow::anyhow!("Failed to create server_headers table: {}", e)
-    })?;
-
-    tracing::debug!("server_headers table created or already exists");
-    Ok(())
-}
-
-/// Create server_meta table if it doesn't exist
-async fn create_server_meta_table(pool: &Pool<Sqlite>) -> Result<()> {
-    tracing::debug!("Creating server_meta table if it doesn't exist");
-
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS server_meta (
-            id TEXT PRIMARY KEY,
-            server_id TEXT NOT NULL,
-            server_name TEXT NOT NULL,
-            author TEXT,
-            category TEXT,
-            description TEXT,
-            extras_json TEXT,
-            icons_json TEXT,
-            protocol_version TEXT,
-            rating INTEGER,
-            recommended_scenario TEXT,
-            registry_meta_json TEXT,
-            registry_version TEXT,
-            repository TEXT,
-            upstream_name TEXT,
-            upstream_title TEXT,
-            server_version TEXT,
-            website TEXT,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (server_id) REFERENCES server_config (id) ON DELETE CASCADE,
-            UNIQUE(server_id)
-        )
-        "#,
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to create server_meta table: {}", e);
-        anyhow::anyhow!("Failed to create server_meta table: {}", e)
-    })?;
-
-    tracing::debug!("server_meta table created or already exists");
-
-    // Backfill new columns when upgrading an existing development database
-    ensure_column(pool, "server_meta", "registry_version", "TEXT").await?;
-    ensure_column(pool, "server_meta", "registry_meta_json", "TEXT").await?;
-    ensure_column(pool, "server_meta", "extras_json", "TEXT").await?;
-    ensure_column(pool, "server_meta", "upstream_name", "TEXT").await?;
-    ensure_column(pool, "server_meta", "upstream_title", "TEXT").await?;
-
-    Ok(())
-}
-
-async fn create_server_oauth_config_table(pool: &Pool<Sqlite>) -> Result<()> {
-    tracing::debug!("Creating server_oauth_config table if it doesn't exist");
-
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS server_oauth_config (
-            id TEXT PRIMARY KEY,
-            server_id TEXT NOT NULL UNIQUE,
-            authorization_endpoint TEXT NOT NULL,
-            token_endpoint TEXT NOT NULL,
-            client_id TEXT NOT NULL,
-            client_secret TEXT,
-            scopes TEXT,
-            redirect_uri TEXT NOT NULL,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (server_id) REFERENCES server_config (id) ON DELETE CASCADE
-        )
-        "#,
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to create server_oauth_config table: {}", e);
-        anyhow::anyhow!("Failed to create server_oauth_config table: {}", e)
-    })?;
-
-    Ok(())
-}
-
-async fn create_server_oauth_tokens_table(pool: &Pool<Sqlite>) -> Result<()> {
-    tracing::debug!("Creating server_oauth_tokens table if it doesn't exist");
-
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS server_oauth_tokens (
-            id TEXT PRIMARY KEY,
-            server_id TEXT NOT NULL UNIQUE,
-            access_token TEXT NOT NULL,
-            refresh_token TEXT,
-            token_type TEXT NOT NULL DEFAULT 'bearer',
-            expires_at TEXT,
-            scope TEXT,
-            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (server_id) REFERENCES server_config (id) ON DELETE CASCADE
-        )
-        "#,
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to create server_oauth_tokens table: {}", e);
-        anyhow::anyhow!("Failed to create server_oauth_tokens table: {}", e)
-    })?;
-
-    Ok(())
-}
-
-pub async fn ensure_column(
-    pool: &Pool<Sqlite>,
-    table: &str,
-    column: &str,
-    definition: &str,
-) -> Result<()> {
-    let stmt = format!(
-        "ALTER TABLE {table} ADD COLUMN {column} {definition}",
-        table = table,
-        column = column,
-        definition = definition
-    );
-    match sqlx::query(&stmt).execute(pool).await {
-        Ok(_) => {
-            tracing::debug!("Added column {}.{}", table, column);
-            Ok(())
-        }
-        Err(sqlx::Error::Database(db_err)) if db_err.message().contains("duplicate column name") => {
-            tracing::trace!("Column {}.{} already exists", table, column);
-            Ok(())
-        }
-        Err(e) => {
-            tracing::error!("Failed to add column {}.{}: {}", table, column, e);
-            Err(anyhow::anyhow!("Failed to add column {}.{}: {}", table, column, e))
-        }
-    }
-}
-
-/// Verify that all server tables were created successfully
 async fn verify_server_tables(pool: &Pool<Sqlite>) -> Result<()> {
     for table in [
         tables::SERVER_CONFIG,
@@ -355,20 +36,9 @@ async fn verify_server_tables(pool: &Pool<Sqlite>) -> Result<()> {
             "SELECT name FROM sqlite_master WHERE type='table' AND name='{table}'"
         ))
         .fetch_optional(pool)
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to verify {} table: {}", table, e);
-            anyhow::anyhow!("Failed to verify {} table: {}", table, e)
-        })?
-        .ok_or_else(|| {
-            let err = format!("{table} table not found after creation");
-            tracing::error!("{}", err);
-            anyhow::anyhow!(err)
-        })?;
-
-        tracing::debug!("Verified {} table exists", table);
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("{table} table not found after migration"))?;
     }
-
     Ok(())
 }
 
@@ -416,55 +86,19 @@ mod tests {
     #[tokio::test]
     async fn initialize_server_tables_removes_pending_import_records() {
         let pool = setup_pool().await;
+        crate::test_helpers::prepare_config_database(&pool).await;
         initialize_server_tables(&pool).await.expect("initialize tables");
-
         upsert_server(&pool, &build_server("serv_visible", "visible-server", false))
             .await
-            .expect("insert visible server");
+            .unwrap();
         upsert_server(&pool, &build_server("serv_pending", "pending-server", true))
             .await
-            .expect("insert pending server");
-
-        initialize_server_tables(&pool)
-            .await
-            .expect("reinitialize tables and cleanup pending records");
-
+            .unwrap();
+        initialize_server_tables(&pool).await.expect("reinitialize tables");
         let remaining_names = sqlx::query_scalar::<_, String>("SELECT name FROM server_config ORDER BY name ASC")
             .fetch_all(&pool)
             .await
-            .expect("list remaining servers");
-
+            .unwrap();
         assert_eq!(remaining_names, vec!["visible-server".to_string()]);
-    }
-
-    #[tokio::test]
-    async fn initialize_server_tables_adds_observed_identity_columns_to_existing_meta_table() {
-        let pool = setup_pool().await;
-        sqlx::query(
-            r#"
-            CREATE TABLE server_meta (
-                id TEXT PRIMARY KEY,
-                server_id TEXT NOT NULL UNIQUE,
-                server_name TEXT NOT NULL,
-                registry_version TEXT,
-                registry_meta_json TEXT,
-                extras_json TEXT
-            )
-            "#,
-        )
-        .execute(&pool)
-        .await
-        .expect("create legacy server_meta table");
-
-        initialize_server_tables(&pool)
-            .await
-            .expect("upgrade existing server tables");
-
-        let columns = sqlx::query_scalar::<_, String>("SELECT name FROM pragma_table_info('server_meta')")
-            .fetch_all(&pool)
-            .await
-            .expect("list server_meta columns");
-        assert!(columns.iter().any(|column| column == "upstream_name"));
-        assert!(columns.iter().any(|column| column == "upstream_title"));
     }
 }

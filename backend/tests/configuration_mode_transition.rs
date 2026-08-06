@@ -36,6 +36,7 @@ async fn fixture(explicit_mode: Option<&str>) -> Fixture {
         .connect("sqlite::memory:")
         .await
         .expect("create database");
+    database_support::prepare_config(&pool).await;
     mcpmate::config::server::init::initialize_server_tables(&pool)
         .await
         .expect("initialize servers");
@@ -520,3 +521,5 @@ async fn only_one_default_mode_transition_can_remain_pending() {
 
     assert!(error.as_database_error().is_some());
 }
+#[path = "support/database.rs"]
+mod database_support;

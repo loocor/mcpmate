@@ -5,6 +5,7 @@ use mcpmate_capability_store::{
     SurfaceManifestEntryInput, SurfaceProposal, SurfacePublication, SurfaceReviewDecisionDraft, SurfaceReviewFilter,
     SurfaceReviewItemDraft, SurfaceReviewOwner,
 };
+use mcpmate_migrations::{DatabaseSource, prepare_config_database};
 use rmcp::model::{InitializeResult, Tool};
 use serde_json::json;
 use sqlx::{Pool, Sqlite, sqlite::SqlitePoolOptions};
@@ -58,6 +59,9 @@ async fn test_store() -> (Pool<Sqlite>, SqliteCapabilityCatalog, SqliteSurfaceSt
         .connect("sqlite::memory:")
         .await
         .unwrap();
+    prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect("prepare config schema");
     let catalog = SqliteCapabilityCatalog::new(pool.clone());
     catalog.ensure_schema().await.unwrap();
     let store = SqliteSurfaceStore::new(pool.clone());

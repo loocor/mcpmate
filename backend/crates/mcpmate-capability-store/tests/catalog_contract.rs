@@ -1,9 +1,10 @@
 use mcpmate_capability_store::{
     CapabilityCatalog, CapabilityFailureObservation, CapabilityId, CapabilityKind, CapabilityObservation,
-    CapabilityPayload, CapabilityRefId, CapabilityRefState, CatalogRecord, DeclarationState, DerivedCapabilityCache,
-    EffectiveCapabilityRecordV1, InventoryState, KindFailureKind, KindObservation, ProjectionKey, ProjectionNameDomain,
-    ProjectionPayload, SnapshotState, SqliteCapabilityCatalog,
+    CapabilityPayload, CapabilityRefId, CapabilityRefState, CatalogError, CatalogRecord, DeclarationState,
+    DerivedCapabilityCache, EffectiveCapabilityRecordV1, InventoryState, KindFailureKind, KindObservation,
+    ProjectionKey, ProjectionNameDomain, ProjectionPayload, SnapshotState, SqliteCapabilityCatalog,
 };
+use mcpmate_migrations::{DatabaseSource, prepare_config_database};
 use rmcp::model::{InitializeResult, Prompt, Resource, ResourceTemplate, Tool};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -130,11 +131,30 @@ async fn test_pool() -> Pool<Sqlite> {
         .connect("sqlite::memory:")
         .await
         .unwrap();
+    prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect("prepare config schema");
     SqliteCapabilityCatalog::new(pool.clone())
         .ensure_schema()
         .await
         .unwrap();
     pool
+}
+
+#[tokio::test]
+async fn ensure_schema_rejects_a_missing_capability_table() {
+    let pool = test_pool().await;
+    sqlx::query("DROP TABLE capability_refs")
+        .execute(&pool)
+        .await
+        .expect("remove capability table");
+
+    let error = SqliteCapabilityCatalog::new(pool)
+        .ensure_schema()
+        .await
+        .expect_err("damaged capability schema must fail initialization");
+
+    assert!(matches!(error, CatalogError::IncompatibleSchema { .. }));
 }
 
 fn test_tool(name: &str) -> Tool {
@@ -1004,6 +1024,15 @@ async fn concurrent_writers_from_independent_pools_commit_consecutive_revisions(
             .await
             .unwrap(),
     );
+    prepare_config_database(
+        first.pool(),
+        DatabaseSource::File {
+            path: &directory.path().join("catalog.db"),
+            existed_before_open: false,
+        },
+    )
+    .await
+    .unwrap();
     first.ensure_schema().await.unwrap();
     let second = SqliteCapabilityCatalog::new(
         SqlitePoolOptions::new()
@@ -1062,6 +1091,15 @@ async fn concurrent_identical_writers_produce_one_change_and_one_noop() {
             .await
             .unwrap(),
     );
+    prepare_config_database(
+        first.pool(),
+        DatabaseSource::File {
+            path: &directory.path().join("catalog-noop.db"),
+            existed_before_open: false,
+        },
+    )
+    .await
+    .unwrap();
     first.ensure_schema().await.unwrap();
     let second = SqliteCapabilityCatalog::new(
         SqlitePoolOptions::new()
@@ -1143,6 +1181,9 @@ async fn remove_server_retires_refs_and_preserves_history_without_foreign_keys()
     );
 
     let catalog = SqliteCapabilityCatalog::new(pool.clone());
+    prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect("prepare config schema");
     catalog.ensure_schema().await.unwrap();
     catalog
         .commit_observation(CapabilityObservation::new(
@@ -1480,6 +1521,15 @@ async fn concurrent_readers_observe_atomic_server_local_revisions() {
         .connect_with(options)
         .await
         .expect("open concurrent catalog");
+    prepare_config_database(
+        &pool,
+        DatabaseSource::File {
+            path: &directory.path().join("concurrent-catalog.db"),
+            existed_before_open: false,
+        },
+    )
+    .await
+    .expect("prepare config schema");
     let catalog = Arc::new(SqliteCapabilityCatalog::new(pool));
     catalog.ensure_schema().await.expect("initialize catalog schema");
     let cache = Arc::new(DerivedCapabilityCache::new(32, 32));
@@ -1641,61 +1691,4 @@ async fn concurrent_readers_observe_atomic_server_local_revisions() {
         .await
         .expect("load fresh projection");
     assert_eq!(fresh_result.as_ref(), &fresh_projection);
-}
-
-#[tokio::test]
-async fn schema_initialization_rejects_legacy_capability_tables() {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
-        .await
-        .expect("connect legacy schema fixture");
-    sqlx::query("CREATE TABLE capability_records (id TEXT PRIMARY KEY)")
-        .execute(&pool)
-        .await
-        .expect("create legacy capability table");
-
-    let error = SqliteCapabilityCatalog::new(pool)
-        .ensure_schema()
-        .await
-        .expect_err("legacy schemas must require a clean rebuild");
-
-    assert!(matches!(
-        error,
-        mcpmate_capability_store::CatalogError::IncompatibleSchema { .. }
-    ));
-}
-
-#[tokio::test]
-async fn schema_initialization_rejects_an_unknown_capability_epoch() {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
-        .await
-        .expect("connect epoch fixture");
-    sqlx::query(
-        r#"
-        CREATE TABLE capability_schema_metadata (
-            singleton INTEGER PRIMARY KEY,
-            schema_epoch INTEGER NOT NULL
-        )
-        "#,
-    )
-    .execute(&pool)
-    .await
-    .expect("create schema metadata");
-    sqlx::query("INSERT INTO capability_schema_metadata (singleton, schema_epoch) VALUES (1, 999)")
-        .execute(&pool)
-        .await
-        .expect("seed unsupported epoch");
-
-    let error = SqliteCapabilityCatalog::new(pool)
-        .ensure_schema()
-        .await
-        .expect_err("unknown schema epochs must require a clean rebuild");
-
-    assert!(matches!(
-        error,
-        mcpmate_capability_store::CatalogError::IncompatibleSchema { .. }
-    ));
 }

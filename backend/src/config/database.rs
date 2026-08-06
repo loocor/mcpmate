@@ -96,8 +96,10 @@ impl Database {
     pub async fn new() -> Result<Self> {
         // Get database URL from environment or use default in user directory
         let database_url = get_database_url()?;
+        let connection_options =
+            sqlite_connect_options(&database_url).context("Failed to configure SQLite connection options")?;
         let db_path = if database_url.starts_with("sqlite:") {
-            PathBuf::from(database_url.strip_prefix("sqlite:").unwrap())
+            connection_options.get_filename().to_path_buf()
         } else {
             global_paths().database_path()
         };
@@ -145,8 +147,6 @@ impl Database {
 
         // Connect to the database
         tracing::debug!("Connecting to database with max 5 connections");
-        let connection_options =
-            sqlite_connect_options(&database_url).context("Failed to configure SQLite connection options")?;
         let pool = match SqlitePoolOptions::new()
             .max_connections(5)
             .connect_with(connection_options)
@@ -161,6 +161,18 @@ impl Database {
                 return Err(anyhow::anyhow!("Failed to connect to SQLite database: {}", e));
             }
         };
+
+        if let Some(backup_path) = mcpmate_migrations::prepare_config_database(
+            &pool,
+            mcpmate_migrations::DatabaseSource::File {
+                path: &db_path,
+                existed_before_open: db_exists,
+            },
+        )
+        .await?
+        {
+            tracing::info!(path = %backup_path.display(), "Created database backup before migration");
+        }
 
         // Initialize naming store as early as possible so other components can rely on it
         naming::initialize(pool.clone());
@@ -285,6 +297,17 @@ mod tests {
     use super::*;
     use sqlx::sqlite::SqlitePoolOptions;
 
+    #[test]
+    fn sqlite_connection_options_resolve_file_path() {
+        for (database_url, expected) in [
+            ("sqlite://data.db", Path::new("data.db")),
+            ("sqlite://data.db?mode=rwc", Path::new("data.db")),
+            ("sqlite://data%20set.db", Path::new("data set.db")),
+        ] {
+            assert_eq!(sqlite_connect_options(database_url).unwrap().get_filename(), expected);
+        }
+    }
+
     #[tokio::test]
     async fn main_database_connections_enable_wal_busy_timeout_and_foreign_keys() {
         let directory = tempfile::tempdir().unwrap();
@@ -324,6 +347,7 @@ mod tests {
             .await
             .unwrap();
 
+        crate::test_helpers::prepare_config_database(&pool).await;
         initialize_capability_catalog(&pool).await.unwrap();
 
         for table in [
@@ -350,6 +374,7 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .unwrap();
+        crate::test_helpers::prepare_config_database(&pool).await;
         initialize_capability_catalog(&pool).await.unwrap();
         sqlx::query(
             r#"

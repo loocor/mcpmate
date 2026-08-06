@@ -21,6 +21,7 @@ async fn init_management_pool() -> sqlx::SqlitePool {
         .connect("sqlite::memory:")
         .await
         .unwrap();
+    database_support::prepare_config(&pool).await;
     mcpmate::config::server::init::initialize_server_tables(&pool)
         .await
         .unwrap();
@@ -1166,3 +1167,5 @@ async fn direct_exposure_eligibility_and_affected_surfaces_commit_together() {
     .unwrap();
     assert_eq!(active_entry_count, 0);
 }
+#[path = "support/database.rs"]
+mod database_support;

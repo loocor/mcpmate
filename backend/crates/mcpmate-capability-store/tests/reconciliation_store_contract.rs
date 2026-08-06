@@ -4,6 +4,7 @@ use chrono::{Duration as ChronoDuration, Utc};
 use mcpmate_capability_store::{
     ReconciliationJobStatus, SqliteCapabilityCatalog, SqliteSurfaceStore, SurfaceOutboxEvent, SurfaceReconciliationJob,
 };
+use mcpmate_migrations::{DatabaseSource, prepare_config_database};
 use serde_json::json;
 use sqlx::sqlite::SqlitePoolOptions;
 
@@ -14,6 +15,9 @@ async fn jobs_are_idempotent_leased_recoverable_and_receipted() {
         .connect("sqlite::memory:?cache=shared")
         .await
         .unwrap();
+    prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect("prepare config schema");
     SqliteCapabilityCatalog::new(pool.clone())
         .ensure_schema()
         .await
@@ -107,6 +111,9 @@ async fn outbox_events_are_insert_or_verified_and_delivered_once() {
         .connect("sqlite::memory:")
         .await
         .unwrap();
+    prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect("prepare config schema");
     SqliteCapabilityCatalog::new(pool.clone())
         .ensure_schema()
         .await

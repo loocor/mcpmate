@@ -6,6 +6,7 @@ use mcpmate_capability_store::{
     CatalogSnapshot, DeclarationState, DerivedCapabilityCache, InventoryState, KindObservation,
     SqliteCapabilityCatalog,
 };
+use mcpmate_migrations::{DatabaseSource, prepare_config_database};
 use rmcp::model::{Implementation, InitializeResult, ProtocolVersion, ServerCapabilities, Tool};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 
@@ -81,6 +82,15 @@ async fn measures_sqlite_lru_and_serialization_at_configured_scale() {
         .connect_with(options)
         .await
         .expect("open scale database");
+    prepare_config_database(
+        &pool,
+        DatabaseSource::File {
+            path: &database_path,
+            existed_before_open: false,
+        },
+    )
+    .await
+    .expect("prepare config schema");
     let catalog = SqliteCapabilityCatalog::new(pool);
     catalog.ensure_schema().await.expect("create catalog schema");
 

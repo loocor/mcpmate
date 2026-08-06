@@ -70,6 +70,7 @@ async fn published_tool_surface() -> (
         .connect("sqlite::memory:")
         .await
         .unwrap();
+    database_support::prepare_config(&pool).await;
     let catalog = SqliteCapabilityCatalog::new(pool.clone());
     catalog.ensure_schema().await.unwrap();
     let initialize: InitializeResult = serde_json::from_value(json!({
@@ -207,6 +208,7 @@ async fn resource_reads_resolve_only_static_or_template_routes_pinned_by_the_act
         .connect("sqlite::memory:")
         .await
         .unwrap();
+    database_support::prepare_config(&pool).await;
     let catalog = SqliteCapabilityCatalog::new(pool.clone());
     catalog.ensure_schema().await.unwrap();
     let resource: Resource = serde_json::from_value(json!({
@@ -331,3 +333,5 @@ async fn resource_reads_resolve_only_static_or_template_routes_pinned_by_the_act
             .is_err()
     );
 }
+#[path = "support/database.rs"]
+mod database_support;
