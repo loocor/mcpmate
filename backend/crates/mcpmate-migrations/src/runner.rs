@@ -51,6 +51,11 @@ pub async fn verify_config_database(pool: &Pool<Sqlite>) -> Result<()> {
     verify_database(pool, DatabaseTarget::Config).await
 }
 
+pub async fn verify_capability_catalog_database(pool: &Pool<Sqlite>) -> Result<()> {
+    verify_config_database(pool).await?;
+    migrations::config::verify_capability_catalog(pool).await
+}
+
 pub async fn verify_audit_database(pool: &Pool<Sqlite>) -> Result<()> {
     verify_database(pool, DatabaseTarget::Audit).await
 }

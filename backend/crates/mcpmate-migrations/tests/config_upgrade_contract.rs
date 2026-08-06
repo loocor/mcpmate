@@ -131,6 +131,66 @@ async fn preserves_client_relationships_during_legacy_normalization() {
 }
 
 #[tokio::test]
+async fn normalizes_a_client_schema_missing_unify_route_mode() {
+    let pool = memory_support::pool().await;
+    sqlx::query(
+        "CREATE TABLE client (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            identifier TEXT NOT NULL UNIQUE,
+            config_path TEXT,
+            transport TEXT NOT NULL DEFAULT 'auto' CHECK (
+                transport IN ('auto', 'sse', 'stdio', 'streamable_http')
+            ),
+            connection_mode TEXT NOT NULL DEFAULT 'local_config_detected' CHECK (
+                connection_mode IN ('local_config_detected', 'manual')
+            ),
+            registration_origin TEXT NOT NULL DEFAULT 'manual' CHECK (
+                registration_origin IN ('manual', 'config_detection', 'runtime_initialize')
+            ),
+            runtime_observed INTEGER NOT NULL DEFAULT 0 CHECK (runtime_observed IN (0, 1)),
+            attachment_state TEXT NOT NULL DEFAULT 'not_applicable' CHECK (
+                attachment_state IN ('attached', 'detached', 'not_applicable')
+            )
+        )",
+    )
+    .execute(&pool)
+    .await
+    .expect("create pre-unify client table");
+    sqlx::query(
+        "INSERT INTO client (
+            id, name, identifier, config_path, connection_mode, registration_origin, runtime_observed
+         ) VALUES (
+            'client-1', 'Cursor', 'cursor', '/tmp/cursor.json', 'manual', 'runtime_initialize', 1
+         )",
+    )
+    .execute(&pool)
+    .await
+    .expect("insert pre-unify client");
+
+    prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect("migrate pre-unify config database");
+
+    let columns: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('client')")
+        .fetch_all(&pool)
+        .await
+        .expect("inspect migrated client columns");
+    assert!(columns.iter().any(|column| column == "unify_route_mode"));
+    let client: (String, String, bool, String) = sqlx::query_as(
+        "SELECT connection_mode, registration_origin, runtime_observed, unify_route_mode
+         FROM client WHERE identifier = 'cursor'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("load normalized pre-unify client");
+    assert_eq!(
+        client,
+        ("manual".into(), "runtime_initialize".into(), true, "broker_only".into(),)
+    );
+}
+
+#[tokio::test]
 async fn creates_a_distinct_backup_for_each_failed_upgrade_attempt() {
     let directory = tempdir().expect("create temporary directory");
     let database_path = directory.path().join("config.db");

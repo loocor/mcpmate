@@ -7,6 +7,47 @@ use super::{
     CLIENT_SCHEMA,
 };
 
+const CURRENT_CLIENT_COLUMNS: &[&str] = &[
+    "id",
+    "name",
+    "display_name",
+    "identifier",
+    "config_path",
+    "config_mode",
+    "transport",
+    "client_version",
+    "backup_policy",
+    "backup_limit",
+    "capability_source",
+    "unify_route_mode",
+    "governance_kind",
+    "connection_mode",
+    "registration_origin",
+    "runtime_observed",
+    "template_identifier",
+    "selected_profile_ids",
+    "custom_profile_id",
+    "approval_status",
+    "template_id",
+    "template_version",
+    "approval_metadata",
+    "config_format",
+    "protocol_revision",
+    "container_type",
+    "container_keys",
+    "storage_kind",
+    "storage_adapter",
+    "storage_path_strategy",
+    "merge_strategy",
+    "keep_original_config",
+    "managed_source",
+    "transports",
+    "config_file_parse",
+    "attachment_state",
+    "created_at",
+    "updated_at",
+];
+
 pub(super) fn migration() -> Migration {
     Migration::rust(
         6,
@@ -33,10 +74,15 @@ impl MigrationStep for NormalizeClientSchema {
                 .fetch_optional(&mut **transaction)
                 .await
                 .context("read client schema SQL")?;
+        let uses_current_connection_contract = create_sql
+            .as_deref()
+            .is_some_and(|sql| sql.contains("connection_mode IN ('local_config_detected', 'manual')"));
         let current = create_sql.as_deref().is_some_and(|sql| {
             sql.contains("streamable_http")
-                && sql.contains("connection_mode IN ('local_config_detected', 'manual')")
-                && columns.iter().any(|column| column == "attachment_state")
+                && uses_current_connection_contract
+                && CURRENT_CLIENT_COLUMNS
+                    .iter()
+                    .all(|required| columns.iter().any(|column| column == required))
         });
         if !current {
             let direct_exposure_refs = snapshot_table_if_exists(
@@ -90,12 +136,18 @@ impl MigrationStep for NormalizeClientSchema {
             } else {
                 "'activated'".to_string()
             };
-            let connection_mode = if columns.iter().any(|column| column == "config_path") {
+            let connection_mode = if uses_current_connection_contract {
+                "connection_mode".to_string()
+            } else if columns.iter().any(|column| column == "config_path") {
                 "CASE WHEN config_path IS NOT NULL AND TRIM(config_path) <> '' THEN 'local_config_detected' ELSE 'manual' END".to_string()
             } else {
                 "'manual'".to_string()
             };
-            let registration = if columns.iter().any(|column| column == "connection_mode") {
+            let registration = if uses_current_connection_contract
+                && columns.iter().any(|column| column == "registration_origin")
+            {
+                "registration_origin".to_string()
+            } else if columns.iter().any(|column| column == "connection_mode") {
                 if columns.iter().any(|column| column == "config_path") {
                     "CASE WHEN connection_mode = 'remote_http' THEN 'runtime_initialize' WHEN config_path IS NOT NULL AND TRIM(config_path) <> '' THEN 'config_detection' ELSE 'manual' END".to_string()
                 } else {
@@ -104,11 +156,14 @@ impl MigrationStep for NormalizeClientSchema {
             } else {
                 "'manual'".to_string()
             };
-            let observed = if columns.iter().any(|column| column == "connection_mode") {
-                "CASE WHEN connection_mode = 'remote_http' THEN 1 ELSE 0 END".to_string()
-            } else {
-                "0".to_string()
-            };
+            let observed =
+                if uses_current_connection_contract && columns.iter().any(|column| column == "runtime_observed") {
+                    "runtime_observed".to_string()
+                } else if columns.iter().any(|column| column == "connection_mode") {
+                    "CASE WHEN connection_mode = 'remote_http' THEN 1 ELSE 0 END".to_string()
+                } else {
+                    "0".to_string()
+                };
             let transports = if columns.iter().any(|column| column == "transports") {
                 "transports".to_string()
             } else if columns.iter().any(|column| column == "format_rules") {

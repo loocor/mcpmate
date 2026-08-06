@@ -5,6 +5,8 @@ mod v0008_validate_secure_store;
 mod v0010_create_capability_catalog;
 
 use super::Migration;
+use anyhow::Result;
+use sqlx::{Pool, Sqlite};
 
 pub(super) const LLM_PROVIDER_SCHEMA: &str = include_str!("v0001_create_llm_provider.sql");
 pub(super) const SERVER_SCHEMA: &str = include_str!("v0003_create_server_configuration.sql");
@@ -25,4 +27,8 @@ pub(crate) fn all() -> Vec<Migration> {
         Migration::sql(9, "create profile authoring storage", PROFILE_SCHEMA),
         v0010_create_capability_catalog::migration(),
     ]
+}
+
+pub(crate) async fn verify_capability_catalog(pool: &Pool<Sqlite>) -> Result<()> {
+    v0010_create_capability_catalog::verify(pool).await
 }

@@ -1,6 +1,8 @@
 pub(crate) mod audit;
 pub(crate) mod config;
 
+use std::borrow::Cow;
+
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use sha2::{Digest, Sha256};
@@ -78,9 +80,31 @@ impl Migration {
     pub(crate) fn checksum(&self) -> String {
         let mut digest = Sha256::new();
         for source in &self.checksum_sources {
+            let source = normalize_line_endings(source);
             digest.update((source.len() as u64).to_be_bytes());
             digest.update(source.as_bytes());
         }
         format!("{:x}", digest.finalize())
+    }
+}
+
+fn normalize_line_endings(source: &str) -> Cow<'_, str> {
+    if source.contains('\r') {
+        Cow::Owned(source.replace("\r\n", "\n").replace('\r', "\n"))
+    } else {
+        Cow::Borrowed(source)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Migration;
+
+    #[test]
+    fn checksum_is_stable_across_line_endings() {
+        let lf = Migration::sql(1, "line endings", "CREATE TABLE example (id TEXT);\n");
+        let crlf = Migration::sql(1, "line endings", "CREATE TABLE example (id TEXT);\r\n");
+
+        assert_eq!(lf.checksum(), crlf.checksum());
     }
 }

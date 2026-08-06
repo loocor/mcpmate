@@ -1,6 +1,6 @@
 use anyhow::{Result, bail};
 use async_trait::async_trait;
-use sqlx::{Connection, Sqlite, SqliteConnection, Transaction};
+use sqlx::{Connection, Pool, Sqlite, SqliteConnection, Transaction};
 
 use super::super::{Migration, MigrationStep};
 
@@ -45,6 +45,11 @@ pub(super) fn migration() -> Migration {
 }
 
 struct CreateCapabilityCatalog;
+
+pub(super) async fn verify(pool: &Pool<Sqlite>) -> Result<()> {
+    let mut transaction = pool.begin().await?;
+    validate_current_epoch_schema(&mut transaction).await
+}
 
 #[async_trait]
 impl MigrationStep for CreateCapabilityCatalog {

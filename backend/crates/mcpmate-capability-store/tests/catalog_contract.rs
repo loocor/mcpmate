@@ -1,8 +1,8 @@
 use mcpmate_capability_store::{
     CapabilityCatalog, CapabilityFailureObservation, CapabilityId, CapabilityKind, CapabilityObservation,
-    CapabilityPayload, CapabilityRefId, CapabilityRefState, CatalogRecord, DeclarationState, DerivedCapabilityCache,
-    EffectiveCapabilityRecordV1, InventoryState, KindFailureKind, KindObservation, ProjectionKey, ProjectionNameDomain,
-    ProjectionPayload, SnapshotState, SqliteCapabilityCatalog,
+    CapabilityPayload, CapabilityRefId, CapabilityRefState, CatalogError, CatalogRecord, DeclarationState,
+    DerivedCapabilityCache, EffectiveCapabilityRecordV1, InventoryState, KindFailureKind, KindObservation,
+    ProjectionKey, ProjectionNameDomain, ProjectionPayload, SnapshotState, SqliteCapabilityCatalog,
 };
 use mcpmate_migrations::{DatabaseSource, prepare_config_database};
 use rmcp::model::{InitializeResult, Prompt, Resource, ResourceTemplate, Tool};
@@ -139,6 +139,22 @@ async fn test_pool() -> Pool<Sqlite> {
         .await
         .unwrap();
     pool
+}
+
+#[tokio::test]
+async fn ensure_schema_rejects_a_missing_capability_table() {
+    let pool = test_pool().await;
+    sqlx::query("DROP TABLE capability_refs")
+        .execute(&pool)
+        .await
+        .expect("remove capability table");
+
+    let error = SqliteCapabilityCatalog::new(pool)
+        .ensure_schema()
+        .await
+        .expect_err("damaged capability schema must fail initialization");
+
+    assert!(matches!(error, CatalogError::IncompatibleSchema { .. }));
 }
 
 fn test_tool(name: &str) -> Tool {
