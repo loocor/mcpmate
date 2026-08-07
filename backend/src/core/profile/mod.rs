@@ -15,6 +15,7 @@
 //! - No direct database connection operations
 //! - Communicates with other modules through event mechanisms
 
+pub mod authoring;
 pub mod config;
 pub mod merge;
 pub mod service;

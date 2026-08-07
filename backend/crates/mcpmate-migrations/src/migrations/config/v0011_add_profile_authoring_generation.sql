@@ -1,0 +1,2 @@
+ALTER TABLE profile
+ADD COLUMN authoring_generation INTEGER NOT NULL DEFAULT 0;

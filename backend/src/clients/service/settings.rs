@@ -9,9 +9,8 @@ use crate::clients::models::{
     UnifyDirectToolSurface, UnifyDirectToolSurfaceDiagnostic, UnifyRouteMode, canonical_config_transport_key,
 };
 use crate::clients::service::core::{ClientStateRow, PersistedTemplateConfig, RuntimeClientMetadata};
-use crate::common::profile::{ProfileRole, ProfileType};
+use crate::common::profile::ProfileType;
 use crate::config::database::Database;
-use crate::config::models::Profile;
 use crate::core::capability::materializer::{
     MaterializationCoordinator, MaterializationTrigger, revoke_managed_surface_in_transaction,
 };
@@ -1274,6 +1273,17 @@ impl ClientConfigService {
             .begin()
             .await
             .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+        MaterializationCoordinator::new(self.db_pool.as_ref().clone())
+            .verify_catalog_revision_set_in_transaction(&mut transaction, &source_revision_set)
+            .await
+            .map_err(|error| match error {
+                mcpmate_capability_store::CatalogError::ConcurrencyConflict { .. } => {
+                    ConfigError::ConcurrencyConflict {
+                        details: error.to_string(),
+                    }
+                }
+                _ => ConfigError::DataAccessError(error.to_string()),
+            })?;
         self.ensure_capability_client_in_transaction(&mut transaction, identifier, &name, &prepared_client)
             .await?;
         if let Some(prepared_profile) = &prepared_custom_profile {
@@ -1320,10 +1330,9 @@ impl ClientConfigService {
                 &mut transaction,
                 &consumer_id,
                 &default_config_mode,
-                &MaterializationTrigger::new(
+                &MaterializationTrigger::for_consumer(
                     "management_save",
                     format!("client-capability-config:{consumer_id}"),
-                    source_revision_set,
                     "client_management",
                 ),
             )
@@ -1337,17 +1346,6 @@ impl ClientConfigService {
                 _ => ConfigError::DataAccessError(error.to_string()),
             })?
         } else {
-            MaterializationCoordinator::new(self.db_pool.as_ref().clone())
-                .verify_catalog_revision_set_in_transaction(&mut transaction, &source_revision_set)
-                .await
-                .map_err(|error| match error {
-                    mcpmate_capability_store::CatalogError::ConcurrencyConflict { .. } => {
-                        ConfigError::ConcurrencyConflict {
-                            details: error.to_string(),
-                        }
-                    }
-                    _ => ConfigError::DataAccessError(error.to_string()),
-                })?;
             revoke_managed_surface_in_transaction(
                 self.db_pool.as_ref(),
                 &mut transaction,
@@ -2595,41 +2593,20 @@ impl ClientConfigService {
         &self,
         identifier: &str,
     ) -> ConfigResult<String> {
-        let profile_name = format!("{}_custom", identifier);
-
-        if let Some(profile) = crate::config::profile::get_profile_by_name(&self.db_pool, &profile_name)
+        let prepared = self.prepare_custom_profile(identifier).await?;
+        let mut transaction = self
+            .db_pool
+            .begin_with("BEGIN IMMEDIATE")
             .await
-            .map_err(|err| ConfigError::DataAccessError(err.to_string()))?
-        {
-            if profile.profile_type != ProfileType::HostApp {
-                return Err(ConfigError::DataAccessError(format!(
-                    "Profile '{}' already exists but is not host_app",
-                    profile_name
-                )));
-            }
-
-            return profile
-                .id
-                .ok_or_else(|| ConfigError::DataAccessError(format!("Profile '{}' is missing an id", profile_name)));
-        }
-
-        let profile = Profile {
-            id: None,
-            name: profile_name,
-            description: Some(format!("Custom profile for {}", identifier)),
-            profile_type: ProfileType::HostApp,
-            role: ProfileRole::User,
-            multi_select: false,
-            priority: 0,
-            is_active: false,
-            is_default: false,
-            created_at: None,
-            updated_at: None,
-        };
-
-        crate::config::profile::upsert_profile(&self.db_pool, &profile)
+            .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+        let profile_id = self
+            .ensure_custom_profile_in_transaction(&mut transaction, identifier, &prepared)
+            .await?;
+        transaction
+            .commit()
             .await
-            .map_err(|err| ConfigError::DataAccessError(err.to_string()))
+            .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
+        Ok(profile_id)
     }
 
     async fn validate_selected_profile_ids(

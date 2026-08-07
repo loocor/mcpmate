@@ -10,6 +10,7 @@ use crate::api::models::profile::{
     ProfileToolData, ProfileToolsListData, ProfileToolsListResp,
 };
 use serde_json::{Map, Value};
+use std::collections::BTreeSet;
 
 type CapabilityAuditDetails = Value;
 
@@ -52,14 +53,14 @@ pub async fn prompts_list(
     Query(request): Query<ProfileComponentListReq>,
 ) -> Result<Json<ProfilePromptsListResp>, ApiError> {
     let db = get_database(&state).await?;
-
-    // Verify profile exists
-    let profile = get_profile_or_error(&db, &request.profile_id).await?;
+    let mut transaction = db.pool.begin().await.map_err(snapshot_error)?;
+    let profile = load_profile_in_transaction(&mut transaction, &request.profile_id).await?;
 
     // Get prompts in the profile
-    let prompt_configs = crate::config::profile::get_prompts_for_profile(&db.pool, &request.profile_id)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get profile prompts: {e}")))?;
+    let prompt_configs =
+        crate::config::profile::prompt::get_prompts_for_profile_in_transaction(&mut transaction, &request.profile_id)
+            .await
+            .map_err(|e| ApiError::InternalError(format!("Failed to get profile prompts: {e}")))?;
     let mut prompts = Vec::new();
     for config in prompt_configs {
         let allowed_operations: Vec<String> = allowed_ops(config.enabled);
@@ -83,18 +84,19 @@ pub async fn prompts_list(
     }
 
     let total = prompts.len();
+    let source_revision_set = load_related_revision_set(
+        &mut transaction,
+        prompts.iter().map(|prompt| prompt.server_id.clone()).collect(),
+    )
+    .await?;
+    transaction.commit().await.map_err(snapshot_error)?;
     let response = ProfilePromptsListData {
         profile_id: request.profile_id,
         profile_name: profile.name,
         prompts,
         total,
-        source_revision_set: crate::core::capability::materializer::SurfaceAuthoringLoader::load_catalog_revision_set(
-            &db.pool,
-        )
-        .await
-        .map_err(|error| ApiError::InternalError(error.to_string()))?
-        .into_iter()
-        .collect(),
+        authoring_generation: profile.authoring_generation,
+        source_revision_set,
     };
 
     Ok(Json(ProfilePromptsListResp::success(response)))
@@ -108,14 +110,16 @@ pub async fn resources_list(
     Query(request): Query<ProfileComponentListReq>,
 ) -> Result<Json<ProfileResourcesListResp>, ApiError> {
     let db = get_database(&state).await?;
-
-    // Verify profile exists
-    let profile = get_profile_or_error(&db, &request.profile_id).await?;
+    let mut transaction = db.pool.begin().await.map_err(snapshot_error)?;
+    let profile = load_profile_in_transaction(&mut transaction, &request.profile_id).await?;
 
     // Get resources in the profile
-    let resource_configs = crate::config::profile::get_resources_for_profile(&db.pool, &request.profile_id)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get profile resources: {e}")))?;
+    let resource_configs = crate::config::profile::resource::get_resources_for_profile_in_transaction(
+        &mut transaction,
+        &request.profile_id,
+    )
+    .await
+    .map_err(|e| ApiError::InternalError(format!("Failed to get profile resources: {e}")))?;
     let mut resources = Vec::new();
     for config in resource_configs {
         let allowed_operations: Vec<String> = allowed_ops(config.enabled);
@@ -139,18 +143,19 @@ pub async fn resources_list(
     }
 
     let total = resources.len();
+    let source_revision_set = load_related_revision_set(
+        &mut transaction,
+        resources.iter().map(|resource| resource.server_id.clone()).collect(),
+    )
+    .await?;
+    transaction.commit().await.map_err(snapshot_error)?;
     let response = ProfileResourcesListData {
         profile_id: request.profile_id,
         profile_name: profile.name,
         resources,
         total,
-        source_revision_set: crate::core::capability::materializer::SurfaceAuthoringLoader::load_catalog_revision_set(
-            &db.pool,
-        )
-        .await
-        .map_err(|error| ApiError::InternalError(error.to_string()))?
-        .into_iter()
-        .collect(),
+        authoring_generation: profile.authoring_generation,
+        source_revision_set,
     };
 
     Ok(Json(ProfileResourcesListResp::success(response)))
@@ -164,10 +169,14 @@ pub async fn resource_templates_list(
     Query(request): Query<ProfileComponentListReq>,
 ) -> Result<Json<ProfileResourceTemplatesListResp>, ApiError> {
     let db = get_database(&state).await?;
+    let mut transaction = db.pool.begin().await.map_err(snapshot_error)?;
+    let profile = load_profile_in_transaction(&mut transaction, &request.profile_id).await?;
 
-    let profile = get_profile_or_error(&db, &request.profile_id).await?;
-
-    let template_configs = crate::config::profile::get_resource_templates_for_profile(&db.pool, &request.profile_id)
+    let template_configs =
+        crate::config::profile::resource_template::get_resource_templates_for_profile_in_transaction(
+            &mut transaction,
+            &request.profile_id,
+        )
         .await
         .map_err(|e| ApiError::InternalError(format!("Failed to get profile resource templates: {e}")))?;
 
@@ -193,18 +202,19 @@ pub async fn resource_templates_list(
     }
 
     let total = templates.len();
+    let source_revision_set = load_related_revision_set(
+        &mut transaction,
+        templates.iter().map(|template| template.server_id.clone()).collect(),
+    )
+    .await?;
+    transaction.commit().await.map_err(snapshot_error)?;
     let response = ProfileResourceTemplatesListData {
         profile_id: request.profile_id,
         profile_name: profile.name,
         templates,
         total,
-        source_revision_set: crate::core::capability::materializer::SurfaceAuthoringLoader::load_catalog_revision_set(
-            &db.pool,
-        )
-        .await
-        .map_err(|error| ApiError::InternalError(error.to_string()))?
-        .into_iter()
-        .collect(),
+        authoring_generation: profile.authoring_generation,
+        source_revision_set,
     };
 
     Ok(Json(ProfileResourceTemplatesListResp::success(response)))
@@ -226,10 +236,12 @@ async fn load_profile_tools_list_data(
     db: &crate::config::database::Database,
     request: ProfileComponentListReq,
 ) -> Result<ProfileToolsListData, ApiError> {
-    let profile = get_profile_or_error(db, &request.profile_id).await?;
-    let tool_configs = crate::config::profile::get_profile_tools(&db.pool, &request.profile_id)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get profile tools: {e}")))?;
+    let mut transaction = db.pool.begin().await.map_err(snapshot_error)?;
+    let profile = load_profile_in_transaction(&mut transaction, &request.profile_id).await?;
+    let tool_configs =
+        crate::config::profile::tool::get_profile_tools_in_transaction(&mut transaction, &request.profile_id)
+            .await
+            .map_err(|e| ApiError::InternalError(format!("Failed to get profile tools: {e}")))?;
     let mut tools = tool_configs.into_iter().map(profile_tool_data).collect::<Vec<_>>();
 
     if request.enabled_only.unwrap_or(false) {
@@ -237,19 +249,55 @@ async fn load_profile_tools_list_data(
     }
 
     let total = tools.len();
+    let source_revision_set = load_related_revision_set(
+        &mut transaction,
+        tools.iter().map(|tool| tool.server_id.clone()).collect(),
+    )
+    .await?;
+    transaction.commit().await.map_err(snapshot_error)?;
     Ok(ProfileToolsListData {
         profile_id: request.profile_id,
         profile_name: profile.name,
         tools,
         total,
-        source_revision_set: crate::core::capability::materializer::SurfaceAuthoringLoader::load_catalog_revision_set(
-            &db.pool,
-        )
-        .await
-        .map_err(|error| ApiError::InternalError(error.to_string()))?
-        .into_iter()
-        .collect(),
+        authoring_generation: profile.authoring_generation,
+        source_revision_set,
     })
+}
+
+async fn load_related_revision_set(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    server_ids: BTreeSet<String>,
+) -> Result<crate::api::models::CatalogRevisionSet, ApiError> {
+    let mut revisions = crate::api::models::CatalogRevisionSet::new();
+    for server_id in server_ids {
+        let revision = sqlx::query_scalar::<_, i64>(
+            "SELECT catalog_revision FROM capability_server_snapshots WHERE server_id = ?",
+        )
+        .bind(&server_id)
+        .fetch_optional(&mut **transaction)
+        .await
+        .map_err(|_| ApiError::InternalError("Failed to load Profile capability dependencies".to_string()))?
+        .ok_or_else(|| ApiError::InternalError("Profile capability dependency is unavailable".to_string()))?;
+        revisions.insert(server_id, revision);
+    }
+    Ok(revisions)
+}
+
+async fn load_profile_in_transaction(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    profile_id: &str,
+) -> Result<crate::config::models::Profile, ApiError> {
+    sqlx::query_as("SELECT * FROM profile WHERE id = ?")
+        .bind(profile_id)
+        .fetch_optional(&mut **transaction)
+        .await
+        .map_err(snapshot_error)?
+        .ok_or_else(|| ApiError::NotFound(format!("Profile with ID '{profile_id}' not found")))
+}
+
+fn snapshot_error(error: sqlx::Error) -> ApiError {
+    ApiError::InternalError(format!("Failed to load Profile projection: {error}"))
 }
 
 /// Manage capability operations (enable/disable tools, resources, prompts)
@@ -404,11 +452,23 @@ async fn execute_unified_operations(
         &request.profile_id,
         &request.component_ids,
         action,
+        request.expected_authoring_generation,
         request.source_revision_set.clone().into_iter().collect(),
         "profile_management",
     )
-    .await
-    .map_err(map_catalog_error)?;
+    .await;
+    let management = match management {
+        Ok(management) => management,
+        Err(error) => {
+            return Err(super::map_profile_management_error(
+                &db.pool,
+                &request.profile_id,
+                request.source_revision_set.keys().cloned().collect(),
+                error,
+            )
+            .await);
+        }
+    };
     invalidate_profile_cache(state).await;
     super::emit_surface_publication_audits(
         state,
@@ -449,13 +509,6 @@ async fn execute_unified_operations(
     };
 
     Ok(Json(ProfileServerManageResp::success(response)))
-}
-
-fn map_catalog_error(error: mcpmate_capability_store::CatalogError) -> ApiError {
-    match error {
-        mcpmate_capability_store::CatalogError::ConcurrencyConflict { .. } => ApiError::Conflict(error.to_string()),
-        _ => ApiError::InternalError(error.to_string()),
-    }
 }
 
 /// Invalidate profile cache if merge service is available
@@ -591,5 +644,96 @@ mod tests {
         assert_eq!(response.tools.len(), 1);
         assert_eq!(response.tools[0].server_name, "Retired Server");
         assert_eq!(response.tools[0].state, "retired");
+    }
+
+    #[tokio::test]
+    async fn profile_component_and_revision_projection_share_one_snapshot() {
+        let directory = tempfile::tempdir().unwrap();
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(directory.path().join("projection.db"))
+            .create_if_missing(true)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(3)
+            .connect_with(options)
+            .await
+            .unwrap();
+        crate::test_helpers::prepare_config_database(&pool).await;
+        sqlx::query(
+            "INSERT INTO server_config (id, name, server_type, command, enabled) VALUES ('server-a', 'Server A', 'stdio', '', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO profile (id, name, description, type, role) VALUES ('profile-a', 'Profile A', '', 'shared', 'user')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let catalog = SqliteCapabilityCatalog::new(pool.clone());
+        let observation = |description: &str| {
+            let tool: Tool = serde_json::from_value(json!({
+                "name": "analyze",
+                "description": description,
+                "inputSchema": {"type": "object"}
+            }))
+            .unwrap();
+            let record = CatalogRecord::materialize(
+                "server-a",
+                "analyze",
+                "server_a__analyze",
+                CapabilityPayload::Tool(tool),
+            )
+            .unwrap();
+            let initialize: InitializeResult = serde_json::from_value(json!({
+                "protocolVersion": "2025-11-25",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "Server A", "version": "1.0.0"}
+            }))
+            .unwrap();
+            (
+                record.clone(),
+                CapabilityObservation::new(
+                    "server-a",
+                    "Server A",
+                    "config-v1",
+                    initialize,
+                    vec![KindObservation::new(
+                        CapabilityKind::Tools,
+                        DeclarationState::Supported,
+                        InventoryState::Complete,
+                    )],
+                    vec![record],
+                ),
+            )
+        };
+        let (record, first) = observation("before");
+        catalog.commit_observation(first).await.unwrap();
+        crate::config::profile::capability_ref::upsert_profile_capability_ref(&pool, "profile-a", &record.ref_id, true)
+            .await
+            .unwrap();
+
+        let mut snapshot = pool.begin().await.unwrap();
+        let generation: i64 = sqlx::query_scalar("SELECT authoring_generation FROM profile WHERE id = 'profile-a'")
+            .fetch_one(&mut *snapshot)
+            .await
+            .unwrap();
+        assert_eq!(generation, 0);
+        let (_, second) = observation("after");
+        catalog.commit_observation(second).await.unwrap();
+        sqlx::query("UPDATE profile SET authoring_generation = 1 WHERE id = 'profile-a'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let tools = crate::config::profile::tool::get_profile_tools_in_transaction(&mut snapshot, "profile-a")
+            .await
+            .unwrap();
+        let revisions = load_related_revision_set(&mut snapshot, BTreeSet::from(["server-a".to_string()]))
+            .await
+            .unwrap();
+        assert_eq!(tools[0].description.as_deref(), Some("before"));
+        assert_eq!(revisions["server-a"], 1);
     }
 }

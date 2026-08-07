@@ -27,8 +27,8 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import {
 	assertCompleteCapabilityBatch,
+	addServersToProfile,
 	clientsApi,
-	configSuitsApi,
 	serversApi,
 } from "../../lib/api";
 import {
@@ -36,6 +36,10 @@ import {
 	useAutoAddTargetProfile,
 } from "../../lib/default-profile";
 import { startOAuthAccessFlow } from "../../lib/oauth-callback-access";
+import {
+	orchestratePendingPublish,
+	ProfileSyncClientError,
+} from "../../lib/profile-sync-error";
 import {
 	type InstallSource,
 	type ServerInstallDraft,
@@ -263,7 +267,7 @@ export const ServerInstallWizard = forwardRef(
 		ref: React.Ref<ServerInstallManualFormHandle>,
 	) => {
 		usePageTranslations("servers");
-		const { t } = useTranslation("servers");
+		const { t, i18n } = useTranslation("servers");
 		// Live snapshot of the "Auto Add To Default Profile" setting and the
 		// real default-anchor profile name (when enabled). Used to render
 		// accurate result-step labels — the imperative resolve in
@@ -701,22 +705,14 @@ export const ServerInstallWizard = forwardRef(
 				const sourceRevisionSet =
 					publishedServer.data?.source_revision_set;
 				if (!sourceRevisionSet) {
-					throw new Error(
-						"Capability catalog revisions are not loaded. Refresh the server and retry.",
-					);
+					throw new ProfileSyncClientError("capability_snapshot_missing");
 				}
 				await serversApi.enableServer(
 					publishedServerId,
 					sourceRevisionSet,
 				);
 				if (targetProfileId) {
-					const profileServers =
-						await configSuitsApi.getServers(targetProfileId);
-					await configSuitsApi.enableServer(
-						targetProfileId,
-						publishedServerId,
-						profileServers.source_revision_set,
-					);
+					await addServersToProfile(targetProfileId, [publishedServerId]);
 				}
 				await queryClient.invalidateQueries({ queryKey: ["servers"] });
 				if (targetProfileId) {
@@ -755,29 +751,6 @@ export const ServerInstallWizard = forwardRef(
 				return true;
 			},
 			[installPipeline, queryClient],
-		);
-
-		const tryFinalizePublishImport = useCallback(
-			async (draft: ServerInstallDraft, targetProfileId: string | null) => {
-				const publishedServerId = pendingImportServerRef.current;
-				if (!publishedServerId) {
-					return false;
-				}
-				try {
-					await completePendingPublishImport(
-						draft,
-						publishedServerId,
-						targetProfileId,
-					);
-					clearPendingImportState();
-				} catch (error) {
-					pendingImportServerRef.current = publishedServerId;
-					setPendingImportServerId(publishedServerId);
-					throw error;
-				}
-				return true;
-			},
-			[completePendingPublishImport, clearPendingImportState],
 		);
 
 		const buildJsonPayloadFromValues = useCallback(
@@ -1577,11 +1550,37 @@ export const ServerInstallWizard = forwardRef(
 			try {
 				const draft = toDraftFromValues(getValues());
 				const effectiveTargetProfileId = await resolveImportTargetProfileId();
-				if (
-					!isEditMode &&
-					(await tryFinalizePublishImport(draft, effectiveTargetProfileId))
-				) {
-					return;
+				if (!isEditMode) {
+					const pendingPublishResult = await orchestratePendingPublish(
+						pendingImportServerRef.current,
+						(publishedServerId) =>
+							completePendingPublishImport(
+								draft,
+								publishedServerId,
+								effectiveTargetProfileId,
+							),
+					);
+					if (pendingPublishResult.status === "retryable_failure") {
+						pendingImportServerRef.current =
+							pendingPublishResult.pendingImportServerId;
+						setPendingImportServerId(
+							pendingPublishResult.pendingImportServerId,
+						);
+						const message = t(pendingPublishResult.notificationKey);
+						installPipeline.setImportResult({
+							success: false,
+							error: message,
+						});
+						notifyError(
+							t("profileSyncErrors.pendingPublishTitle"),
+							message,
+						);
+						return;
+					}
+					if (pendingPublishResult.status === "success") {
+						clearPendingImportState();
+						return;
+					}
 				}
 
 				if (onImport) {
@@ -1605,10 +1604,13 @@ export const ServerInstallWizard = forwardRef(
 			onImport,
 			toDraftFromValues,
 			resolveImportTargetProfileId,
+			completePendingPublishImport,
 			runImportPipeline,
-			tryFinalizePublishImport,
 			clearPendingImportState,
 			isEditMode,
+			installPipeline,
+			t,
+			i18n.language,
 		]);
 
 		// Cancel close handler (with delay for complete reset)

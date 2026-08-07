@@ -22,6 +22,43 @@ use axum::{
 };
 use serde_json::json;
 
+#[derive(Clone, Debug)]
+pub struct ProfileConflict {
+    code: &'static str,
+    message: &'static str,
+    current_authoring_generation: Option<i64>,
+    dependency_server_ids: Vec<String>,
+}
+
+impl ProfileConflict {
+    pub fn profile_authoring_changed(current_authoring_generation: i64) -> Self {
+        Self {
+            code: "profile_authoring_changed",
+            message: "Profile was changed by another author",
+            current_authoring_generation: Some(current_authoring_generation),
+            dependency_server_ids: Vec::new(),
+        }
+    }
+
+    pub fn catalog_dependency_changed(dependency_server_ids: Vec<String>) -> Self {
+        Self {
+            code: "catalog_dependency_changed",
+            message: "Profile capability dependencies changed",
+            current_authoring_generation: None,
+            dependency_server_ids,
+        }
+    }
+
+    pub fn consumer_binding_changed(dependency_server_ids: Vec<String>) -> Self {
+        Self {
+            code: "consumer_binding_changed",
+            message: "Consumer binding changed during Profile authoring",
+            current_authoring_generation: None,
+            dependency_server_ids,
+        }
+    }
+}
+
 /// API error type
 #[derive(Debug)]
 pub enum ApiError {
@@ -35,6 +72,10 @@ pub enum ApiError {
     ServiceUnavailable(String),
     /// Conflict error
     Conflict(String),
+    /// Profile-scoped coded conflict.
+    ProfileConflict(ProfileConflict),
+    /// Profile target validation failure.
+    InvalidProfileTarget(Vec<String>),
     /// Forbidden error
     Forbidden(String),
     /// Timeout error
@@ -58,6 +99,8 @@ impl fmt::Display for ApiError {
             ApiError::InternalError(msg) => write!(f, "Internal error: {msg}"),
             ApiError::ServiceUnavailable(msg) => write!(f, "Service unavailable: {msg}"),
             ApiError::Conflict(msg) => write!(f, "Conflict: {msg}"),
+            ApiError::ProfileConflict(conflict) => write!(f, "Conflict: {}", conflict.message),
+            ApiError::InvalidProfileTarget(_) => write!(f, "Bad request: invalid Profile target"),
             ApiError::Forbidden(msg) => write!(f, "Forbidden: {msg}"),
             ApiError::Timeout(msg) => write!(f, "Timeout: {msg}"),
             ApiError::GatewayTimeout(msg) => write!(f, "Gateway timeout: {msg}"),
@@ -69,12 +112,51 @@ impl fmt::Display for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let (status, message) = match self {
+        let error = match self {
+            ApiError::ProfileConflict(conflict) => {
+                let mut details = serde_json::Map::new();
+                if let Some(generation) = conflict.current_authoring_generation {
+                    details.insert("currentAuthoringGeneration".to_string(), json!(generation));
+                }
+                if !conflict.dependency_server_ids.is_empty() {
+                    details.insert("dependencyServerIds".to_string(), json!(conflict.dependency_server_ids));
+                }
+                return (
+                    StatusCode::CONFLICT,
+                    Json(json!({
+                        "error": {
+                            "message": conflict.message,
+                            "status": StatusCode::CONFLICT.as_u16(),
+                            "code": conflict.code,
+                            "details": details,
+                        }
+                    })),
+                )
+                    .into_response();
+            }
+            ApiError::InvalidProfileTarget(dependency_server_ids) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "error": {
+                            "message": "Profile target does not exist",
+                            "status": StatusCode::BAD_REQUEST.as_u16(),
+                            "code": "invalid_target",
+                            "details": { "dependencyServerIds": dependency_server_ids },
+                        }
+                    })),
+                )
+                    .into_response();
+            }
+            error => error,
+        };
+        let (status, message) = match error {
             ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
             ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
             ApiError::InternalError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
             ApiError::ServiceUnavailable(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg),
             ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg),
+            ApiError::ProfileConflict(_) | ApiError::InvalidProfileTarget(_) => unreachable!(),
             ApiError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
             ApiError::Timeout(msg) => (StatusCode::REQUEST_TIMEOUT, msg),
             ApiError::GatewayTimeout(msg) => (StatusCode::GATEWAY_TIMEOUT, msg),
@@ -159,5 +241,26 @@ mod tests {
             ApiError::NotFound(msg) => assert_eq!(msg, "Not Found"),
             other => panic!("Expected NotFound, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn profile_authoring_conflict_returns_stable_code_and_generation_details() {
+        let response = ApiError::ProfileConflict(ProfileConflict::profile_authoring_changed(13)).into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"]["code"], "profile_authoring_changed");
+        assert_eq!(json["error"]["details"]["currentAuthoringGeneration"], 13);
+    }
+
+    #[tokio::test]
+    async fn invalid_profile_target_returns_coded_bad_request_without_internal_details() {
+        let response = ApiError::InvalidProfileTarget(vec!["missing".to_string()]).into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"]["code"], "invalid_target");
+        assert_eq!(json["error"]["details"]["dependencyServerIds"], json!(["missing"]));
+        assert!(json.to_string().find("sql").is_none());
     }
 }

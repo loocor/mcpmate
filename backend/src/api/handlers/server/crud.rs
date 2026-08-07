@@ -20,7 +20,6 @@ use crate::{
     config::server::{replace_server_headers, upsert_server_headers},
     config::{
         database::Database,
-        profile,
         server::{self},
     },
     core::secrets::{mcp_config_from_server, sync_server_secret_usages},
@@ -28,10 +27,7 @@ use crate::{
 use axum::{Json, extract::State};
 use serde_json::{Map, Value};
 use std::sync::Arc;
-use std::{
-    collections::{BTreeSet, HashMap},
-    str::FromStr,
-};
+use std::{collections::HashMap, str::FromStr};
 
 async fn discover_server_capabilities(
     state: &Arc<AppState>,
@@ -220,20 +216,6 @@ fn create_server_from_config(
         ServerType::Sse => Server::new_sse(name, url),
         ServerType::StreamableHttp => Server::new_streamable_http(name, url),
     }
-}
-
-/// Add server to profile
-#[inline]
-async fn add_server_to_profile(
-    db: &Database,
-    profile_id: &str,
-    server_id: &str,
-    enabled: bool,
-) -> Result<(), ApiError> {
-    profile::add_server_to_profile(&db.pool, profile_id, server_id, enabled)
-        .await
-        .map_err(map_anyhow_error)
-        .map(|_| ())
 }
 
 async fn upsert_meta_payload(
@@ -466,39 +448,6 @@ pub async fn create_server(
     // Apply optional metadata payload
     if let Some(meta_payload) = payload.meta.as_ref() {
         upsert_meta_payload(&db, &server_id, meta_payload).await?;
-    }
-
-    // Associate server with specified profiles if provided
-    let initial_enabled = payload.enabled.unwrap_or(true);
-
-    if !server.pending_import
-        && let Some(profile_ids) = payload.profile_ids.as_ref()
-    {
-        let mut unique_profiles = BTreeSet::new();
-        for profile_id in profile_ids {
-            if !unique_profiles.insert(profile_id) {
-                continue;
-            }
-
-            let profile = crate::config::profile::get_profile(&db.pool, profile_id)
-                .await
-                .map_err(|error| ApiError::InternalError(error.to_string()))?
-                .ok_or_else(|| ApiError::NotFound(format!("Profile with ID '{}' not found", profile_id)))?;
-
-            if !profile.is_active {
-                return Err(ApiError::BadRequest(format!("Profile '{}' is not active", profile_id)));
-            }
-
-            add_server_to_profile(&db, profile_id, &server_id, initial_enabled).await?;
-            tracing::info!(
-                server_id = %server_id,
-                profile_id = %profile_id,
-                "Associated server '{}' with profile '{}' (enabled={})",
-                payload.name,
-                profile_id,
-                initial_enabled
-            );
-        }
     }
 
     if !server.pending_import {
@@ -851,18 +800,6 @@ pub async fn import_servers(
     let started_at = std::time::Instant::now();
     let db = common::get_database_from_state(&state)?;
 
-    // Use safer dedup strategy by default: name + fingerprint, skip on conflict
-    if let Some(profile_id) = payload.target_profile_id.as_ref() {
-        let profile = crate::config::profile::get_profile(&db.pool, profile_id)
-            .await
-            .map_err(map_anyhow_error)?
-            .ok_or_else(|| ApiError::NotFound(format!("Profile with ID '{}' not found", profile_id)))?;
-
-        if !profile.is_active {
-            return Err(ApiError::BadRequest(format!("Profile '{}' is not active", profile_id)));
-        }
-    }
-
     // Validate: require either client_identifier or mcp_servers
     if payload.client_identifier.is_none() && payload.mcp_servers.is_empty() {
         return Err(ApiError::BadRequest(
@@ -897,14 +834,10 @@ pub async fn import_servers(
         payload.mcp_servers
     };
 
-    let outcome = import_batch(
-        db.clone(),
-        Some(&state.connection_pool),
-        mcp_servers,
-        ImportOptions::dashboard_import(payload.dry_run, payload.target_profile_id.clone()),
-    )
-    .await
-    .map_err(|e| ApiError::InternalError(e.to_string()))?;
+    let import_options = ImportOptions::dashboard_import(payload.dry_run);
+    let outcome = import_batch(db.clone(), Some(&state.connection_pool), mcp_servers, import_options)
+        .await
+        .map_err(map_anyhow_error)?;
 
     let ImportOutcome {
         imported,
@@ -957,7 +890,7 @@ pub async fn import_servers(
             "/api/mcp/servers/import",
             Some(started_at.elapsed().as_millis() as u64),
             None,
-            payload.target_profile_id,
+            None,
             Some(data),
             audit_error,
         ),

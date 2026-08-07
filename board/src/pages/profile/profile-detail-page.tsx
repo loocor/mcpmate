@@ -91,12 +91,20 @@ import {
 import {
 	auditApi,
 	configSuitsApi,
-	requireProfileRevisionSet,
 	serversApi,
 	useProfileTokenChartSource,
 } from "../../lib/api";
 import { DEFAULT_ANCHOR_ROLE } from "../../lib/default-profile";
 import { notifyError, notifySuccess } from "../../lib/notify";
+import { handleProfileCapabilityMutationError } from "../../lib/profile-capability-conflict";
+import {
+	requireSelectedCapabilityRevisionSet,
+	type CapabilityRevisionSource,
+} from "../../lib/profile-capability-revisions";
+import {
+	ProfileSyncClientError,
+	profileSyncErrorTranslationKey,
+} from "../../lib/profile-sync-error";
 import { useAppStore } from "../../lib/store";
 import { toTitleCase } from "../../lib/utils";
 import type {
@@ -122,33 +130,33 @@ type ProfileFlatCapabilityItem = CapabilityRecord & {
 	__profileCapabilityKind: CapabilityKind;
 };
 
-function requireMatchingRevisionSet(
-	revisionSets: Array<CatalogRevisionSet | undefined>,
-): CatalogRevisionSet {
-	const available = revisionSets.filter(
-		(value): value is CatalogRevisionSet => value !== undefined,
+function requireMatchingAuthoringGeneration(
+	generations: Array<number | undefined>,
+): number {
+	const available = generations.filter(
+		(value): value is number => value !== undefined,
 	);
-	if (available.length !== revisionSets.length || available.length === 0) {
-		throw new Error("Capability catalog revisions are not loaded. Refresh the profile and retry.");
+	if (available.length !== generations.length || available.length === 0) {
+		throw new ProfileSyncClientError("profile_authoring_state_missing");
 	}
-	const canonical = JSON.stringify(
-		Object.entries(available[0]).sort(([left], [right]) =>
-			left.localeCompare(right),
-		),
-	);
-	if (
-		available.some(
-			(value) =>
-				JSON.stringify(
-					Object.entries(value).sort(([left], [right]) =>
-						left.localeCompare(right),
-					),
-				) !== canonical,
-		)
-	) {
-		throw new Error("Capability catalog changed while this profile was open. Refresh and review before saving.");
+	if (available.some((value) => value !== available[0])) {
+		throw new ProfileSyncClientError("profile_authoring_state_mismatch");
 	}
 	return available[0];
+}
+
+function requireCapabilityRevisionSet(
+	selectedIds: string[],
+	items: Array<{ id: string; server_id: string }> | undefined,
+	sourceRevisionSet: CatalogRevisionSet | undefined,
+): CatalogRevisionSet {
+	return requireSelectedCapabilityRevisionSet([
+		{
+			selectedIds,
+			items: items ?? [],
+			sourceRevisionSet,
+		},
+	]);
 }
 
 function capabilityDetailsCacheToken(items: ProfileFlatCapabilityItem[]) {
@@ -410,40 +418,58 @@ export function ProfileDetailPage() {
 				},
 			);
 			const action = enable ? "enable" : "disable";
-			const revisionSets: Array<CatalogRevisionSet | undefined> = [];
+			const revisionSources: CapabilityRevisionSource[] = [];
+			const authoringGenerations: Array<number | undefined> = [];
 			if (grouped.tools.length) {
-				revisionSets.push(
-					queryClient.getQueryData<ConfigSuitToolsResponse>([
-						"configSuitTools",
-						profileId,
-					])?.source_revision_set,
-				);
+				const response = queryClient.getQueryData<ConfigSuitToolsResponse>([
+					"configSuitTools",
+					profileId,
+				]);
+				revisionSources.push({
+					selectedIds: grouped.tools,
+					items: response?.tools ?? [],
+					sourceRevisionSet: response?.source_revision_set,
+				});
+				authoringGenerations.push(response?.authoring_generation);
 			}
 			if (grouped.resources.length) {
-				revisionSets.push(
-					queryClient.getQueryData<ConfigSuitResourcesResponse>([
+				const response = queryClient.getQueryData<ConfigSuitResourcesResponse>([
 						"configSuitResources",
 						profileId,
-					])?.source_revision_set,
-				);
+					]);
+				revisionSources.push({
+					selectedIds: grouped.resources,
+					items: response?.resources ?? [],
+					sourceRevisionSet: response?.source_revision_set,
+				});
+				authoringGenerations.push(response?.authoring_generation);
 			}
 			if (grouped.prompts.length) {
-				revisionSets.push(
-					queryClient.getQueryData<ConfigSuitPromptsResponse>([
+				const response = queryClient.getQueryData<ConfigSuitPromptsResponse>([
 						"configSuitPrompts",
 						profileId,
-					])?.source_revision_set,
-				);
+					]);
+				revisionSources.push({
+					selectedIds: grouped.prompts,
+					items: response?.prompts ?? [],
+					sourceRevisionSet: response?.source_revision_set,
+				});
+				authoringGenerations.push(response?.authoring_generation);
 			}
 			if (grouped.templates.length) {
-				revisionSets.push(
-					queryClient.getQueryData<ConfigSuitResourceTemplatesResponse>([
+				const response = queryClient.getQueryData<ConfigSuitResourceTemplatesResponse>([
 						"configSuitResourceTemplates",
 						profileId,
-					])?.source_revision_set,
-				);
+					]);
+				revisionSources.push({
+					selectedIds: grouped.templates,
+					items: response?.templates ?? [],
+					sourceRevisionSet: response?.source_revision_set,
+				});
+				authoringGenerations.push(response?.authoring_generation);
 			}
-			const revisionSet = requireMatchingRevisionSet(revisionSets);
+			const revisionSet = requireSelectedCapabilityRevisionSet(revisionSources);
+			const authoringGeneration = requireMatchingAuthoringGeneration(authoringGenerations);
 			await configSuitsApi.bulkCapabilities(
 				profileId!,
 				[
@@ -453,6 +479,7 @@ export function ProfileDetailPage() {
 					...grouped.templates,
 				],
 				action,
+				authoringGeneration,
 				revisionSet,
 			);
 		},
@@ -469,13 +496,15 @@ export function ProfileDetailPage() {
 				}),
 			);
 		},
-		onError: (e) =>
+		onError: (e) => {
+			void handleCapabilityMutationError(e);
 			notifyError(
 				t("profiles:detail.messages.capabilitiesUpdateFailed", {
 					defaultValue: "Capabilities update failed",
 				}),
-				String(e),
-			),
+				t(profileSyncErrorTranslationKey(e)),
+			);
+		},
 	});
 
 	const bulkServersM = useMutation({
@@ -484,11 +513,11 @@ export function ProfileDetailPage() {
 				profileId!,
 				ids,
 				enable ? "enable" : "disable",
-				requireMatchingRevisionSet([
+				requireMatchingAuthoringGeneration([
 					queryClient.getQueryData<ConfigSuitServersResponse>([
 						"configSuitServers",
 						profileId,
-					])?.source_revision_set,
+					])?.authoring_generation,
 				]),
 			),
 		onSuccess: () => {
@@ -509,7 +538,7 @@ export function ProfileDetailPage() {
 				t("profiles:detail.messages.serversUpdateFailed", {
 					defaultValue: "Servers update failed",
 				}),
-				String(e),
+				t(profileSyncErrorTranslationKey(e)),
 			),
 	});
 
@@ -664,14 +693,29 @@ export function ProfileDetailPage() {
 		refetchTools,
 	]);
 
+	const handleCapabilityMutationError = useCallback(
+		(error: unknown) => {
+			if (!profileId) {
+				return Promise.resolve(false);
+			}
+			return handleProfileCapabilityMutationError({
+				error,
+				profileId,
+				invalidateQueries: (predicate) =>
+					queryClient.invalidateQueries({
+						predicate: (query) =>
+							predicate(query.queryKey, query.state.data),
+					}),
+			});
+		},
+		[profileId, queryClient],
+	);
+
 	// Activation/deactivation mutations
 	const activateSuitMutation = useMutation({
 		mutationFn: () => {
 			if (!suit) throw new Error("Profile details are not loaded");
-			return configSuitsApi.activateSuit(
-				suit.id,
-				requireProfileRevisionSet(suit),
-			);
+			return configSuitsApi.activateSuit(suit.id, suit.authoring_generation);
 		},
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["configSuit", profileId] });
@@ -690,7 +734,7 @@ export function ProfileDetailPage() {
 				t("profiles:detail.messages.activationFailed", {
 					defaultValue: "Activation failed",
 				}),
-				`${t("profiles:detail.messages.activationFailedDescription", { defaultValue: "Failed to activate profile" })}: ${error instanceof Error ? error.message : String(error)}`,
+				t(profileSyncErrorTranslationKey(error)),
 			);
 		},
 	});
@@ -698,10 +742,7 @@ export function ProfileDetailPage() {
 	const deactivateSuitMutation = useMutation({
 		mutationFn: () => {
 			if (!suit) throw new Error("Profile details are not loaded");
-			return configSuitsApi.deactivateSuit(
-				suit.id,
-				requireProfileRevisionSet(suit),
-			);
+			return configSuitsApi.deactivateSuit(suit.id, suit.authoring_generation);
 		},
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["configSuit", profileId] });
@@ -720,7 +761,7 @@ export function ProfileDetailPage() {
 				t("profiles:detail.messages.deactivationFailed", {
 					defaultValue: "Deactivation failed",
 				}),
-				`${t("profiles:detail.messages.deactivationFailedDescription", { defaultValue: "Failed to deactivate profile" })}: ${error instanceof Error ? error.message : String(error)}`,
+				t(profileSyncErrorTranslationKey(error)),
 			);
 		},
 	});
@@ -733,10 +774,7 @@ export function ProfileDetailPage() {
 					t("profiles:detail.errors.noSuitId", { defaultValue: "No suit ID" }),
 				);
 			if (!suit) throw new Error("Profile details are not loaded");
-			return configSuitsApi.deleteSuit(
-				profileId,
-				requireProfileRevisionSet(suit),
-			);
+			return configSuitsApi.deleteSuit(profileId, suit.authoring_generation);
 		},
 		onSuccess: () => {
 			// Invalidate queries to refresh the profiles list
@@ -756,7 +794,7 @@ export function ProfileDetailPage() {
 				t("profiles:detail.messages.deleteFailed", {
 					defaultValue: "Delete failed",
 				}),
-				`Failed to delete profile: ${error instanceof Error ? error.message : String(error)}`,
+				t(profileSyncErrorTranslationKey(error)),
 			);
 		},
 	});
@@ -774,12 +812,16 @@ export function ProfileDetailPage() {
 				? configSuitsApi.enableServer(
 					profileId!,
 					serverId,
-					requireMatchingRevisionSet([serversResponse?.source_revision_set]),
+					requireMatchingAuthoringGeneration([
+						serversResponse?.authoring_generation,
+					]),
 				)
 				: configSuitsApi.disableServer(
 					profileId!,
 					serverId,
-					requireMatchingRevisionSet([serversResponse?.source_revision_set]),
+					requireMatchingAuthoringGeneration([
+						serversResponse?.authoring_generation,
+					]),
 				);
 		},
 		onSuccess: () => {
@@ -797,7 +839,7 @@ export function ProfileDetailPage() {
 				t("profiles:detail.messages.serverUpdateFailed", {
 					defaultValue: "Server update failed",
 				}),
-				`Failed to update server: ${error instanceof Error ? error.message : String(error)}`,
+				t(profileSyncErrorTranslationKey(error)),
 			);
 		},
 	});
@@ -809,12 +851,26 @@ export function ProfileDetailPage() {
 				? configSuitsApi.enableTool(
 					profileId!,
 					toolId,
-					requireMatchingRevisionSet([toolsResponse?.source_revision_set]),
+					requireMatchingAuthoringGeneration([
+						toolsResponse?.authoring_generation,
+					]),
+					requireCapabilityRevisionSet(
+						[toolId],
+						toolsResponse?.tools,
+						toolsResponse?.source_revision_set,
+					),
 				)
 				: configSuitsApi.disableTool(
 					profileId!,
 					toolId,
-					requireMatchingRevisionSet([toolsResponse?.source_revision_set]),
+					requireMatchingAuthoringGeneration([
+						toolsResponse?.authoring_generation,
+					]),
+					requireCapabilityRevisionSet(
+						[toolId],
+						toolsResponse?.tools,
+						toolsResponse?.source_revision_set,
+					),
 				);
 		},
 		onSuccess: () => {
@@ -827,11 +883,12 @@ export function ProfileDetailPage() {
 			);
 		},
 		onError: (error) => {
+			void handleCapabilityMutationError(error);
 			notifyError(
 				t("profiles:detail.messages.toolUpdateFailed", {
 					defaultValue: "Tool update failed",
 				}),
-				`Failed to update tool: ${error instanceof Error ? error.message : String(error)}`,
+				t(profileSyncErrorTranslationKey(error)),
 			);
 		},
 	});
@@ -849,12 +906,26 @@ export function ProfileDetailPage() {
 				? configSuitsApi.enableResource(
 					profileId!,
 					resourceId,
-					requireMatchingRevisionSet([resourcesResponse?.source_revision_set]),
+					requireMatchingAuthoringGeneration([
+						resourcesResponse?.authoring_generation,
+					]),
+					requireCapabilityRevisionSet(
+						[resourceId],
+						resourcesResponse?.resources,
+						resourcesResponse?.source_revision_set,
+					),
 				)
 				: configSuitsApi.disableResource(
 					profileId!,
 					resourceId,
-					requireMatchingRevisionSet([resourcesResponse?.source_revision_set]),
+					requireMatchingAuthoringGeneration([
+						resourcesResponse?.authoring_generation,
+					]),
+					requireCapabilityRevisionSet(
+						[resourceId],
+						resourcesResponse?.resources,
+						resourcesResponse?.source_revision_set,
+					),
 				);
 		},
 		onSuccess: () => {
@@ -867,11 +938,12 @@ export function ProfileDetailPage() {
 			);
 		},
 		onError: (error) => {
+			void handleCapabilityMutationError(error);
 			notifyError(
 				t("profiles:detail.messages.resourceUpdateFailed", {
 					defaultValue: "Resource update failed",
 				}),
-				`Failed to update resource: ${error instanceof Error ? error.message : String(error)}`,
+				t(profileSyncErrorTranslationKey(error)),
 			);
 		},
 	});
@@ -889,12 +961,26 @@ export function ProfileDetailPage() {
 				? configSuitsApi.enablePrompt(
 					profileId!,
 					promptId,
-					requireMatchingRevisionSet([promptsResponse?.source_revision_set]),
+					requireMatchingAuthoringGeneration([
+						promptsResponse?.authoring_generation,
+					]),
+					requireCapabilityRevisionSet(
+						[promptId],
+						promptsResponse?.prompts,
+						promptsResponse?.source_revision_set,
+					),
 				)
 				: configSuitsApi.disablePrompt(
 					profileId!,
 					promptId,
-					requireMatchingRevisionSet([promptsResponse?.source_revision_set]),
+					requireMatchingAuthoringGeneration([
+						promptsResponse?.authoring_generation,
+					]),
+					requireCapabilityRevisionSet(
+						[promptId],
+						promptsResponse?.prompts,
+						promptsResponse?.source_revision_set,
+					),
 				);
 		},
 		onSuccess: () => {
@@ -907,11 +993,12 @@ export function ProfileDetailPage() {
 			);
 		},
 		onError: (error) => {
+			void handleCapabilityMutationError(error);
 			notifyError(
 				t("profiles:detail.messages.promptUpdateFailed", {
 					defaultValue: "Prompt update failed",
 				}),
-				`Failed to update prompt: ${error instanceof Error ? error.message : String(error)}`,
+				t(profileSyncErrorTranslationKey(error)),
 			);
 		},
 	});
@@ -1374,12 +1461,26 @@ export function ProfileDetailPage() {
 				? configSuitsApi.enableResourceTemplate(
 					profileId!,
 					templateId,
-					requireMatchingRevisionSet([templatesResponse?.source_revision_set]),
+					requireMatchingAuthoringGeneration([
+						templatesResponse?.authoring_generation,
+					]),
+					requireCapabilityRevisionSet(
+						[templateId],
+						templatesResponse?.templates,
+						templatesResponse?.source_revision_set,
+					),
 				)
 				: configSuitsApi.disableResourceTemplate(
 					profileId!,
 					templateId,
-					requireMatchingRevisionSet([templatesResponse?.source_revision_set]),
+					requireMatchingAuthoringGeneration([
+						templatesResponse?.authoring_generation,
+					]),
+					requireCapabilityRevisionSet(
+						[templateId],
+						templatesResponse?.templates,
+						templatesResponse?.source_revision_set,
+					),
 				),
 		onSuccess: () => {
 			refreshProfileCapabilitySurface();
@@ -1391,11 +1492,12 @@ export function ProfileDetailPage() {
 			);
 		},
 		onError: (error) => {
+			void handleCapabilityMutationError(error);
 			notifyError(
 				t("profiles:detail.messages.templateUpdateFailed", {
 					defaultValue: "Template update failed",
 				}),
-				`Failed to update template: ${error instanceof Error ? error.message : String(error)}`,
+				t(profileSyncErrorTranslationKey(error)),
 			);
 		},
 	});

@@ -26,6 +26,25 @@ async fn table_columns(
 }
 
 #[tokio::test]
+async fn fresh_config_schema_contains_profile_authoring_generation() {
+    let pool = memory_support::pool().await;
+    prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect("prepare fresh config database");
+
+    let column: (String, i64, Option<String>) = sqlx::query_as(
+        "SELECT name, [notnull], dflt_value
+         FROM pragma_table_info('profile')
+         WHERE name = 'authoring_generation'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("load Profile authoring generation column");
+
+    assert_eq!(column, ("authoring_generation".into(), 1, Some("0".into())));
+}
+
+#[tokio::test]
 async fn creates_config_and_audit_schema_through_independent_ledgers() {
     let config = memory_support::pool().await;
     prepare_config_database(&config, DatabaseSource::InMemory)
@@ -290,6 +309,10 @@ async fn rejects_partial_or_unversioned_current_capability_storage() {
 }
 
 async fn convert_prepared_database_to_epoch_four(pool: &sqlx::SqlitePool) {
+    sqlx::query("ALTER TABLE profile DROP COLUMN authoring_generation")
+        .execute(pool)
+        .await
+        .expect("restore the pre-v11 Profile shape");
     sqlx::query(
         "CREATE TABLE capability_schema_metadata (
             singleton INTEGER PRIMARY KEY,
@@ -350,7 +373,7 @@ async fn adopts_complete_epoch_four_capability_storage_without_losing_data() {
     .fetch_one(&pool)
     .await
     .expect("load adopted migration version");
-    assert_eq!(version, 10);
+    assert_eq!(version, 11);
 }
 
 #[tokio::test]

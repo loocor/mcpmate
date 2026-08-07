@@ -212,7 +212,7 @@ pub(super) async fn mark_configured_server_managed_status(
         &plan.items,
         &ImportOptions {
             by_name: false,
-            ..ImportOptions::dashboard_import(true, None)
+            ..ImportOptions::dashboard_import(true)
         },
     )
     .await?;

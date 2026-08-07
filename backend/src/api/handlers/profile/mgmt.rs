@@ -1,125 +1,13 @@
 // MCPMate Proxy API handlers for Profile management operations
 // Contains handler functions for activating and deactivating Profile
 
-use super::{common::*, helpers, helpers::get_profile_or_error};
-use crate::{
-    api::models::profile::{
-        ProfileAction, ProfileCreateReq, ProfileDeleteReq, ProfileDetailsData, ProfileDetailsReq, ProfileDetailsResp,
-        ProfileListData, ProfileListReq, ProfileListResp, ProfileManageData, ProfileManageReq, ProfileManageResp,
-        ProfileOperationResult, ProfileResp, ProfileUpdateReq,
-    },
-    config::profile::is_default_anchor_profile,
+use super::{common::*, helpers};
+use crate::api::models::profile::{
+    ProfileAction, ProfileDeleteReq, ProfileDetailsData, ProfileDetailsReq, ProfileDetailsResp, ProfileListData,
+    ProfileListReq, ProfileListResp, ProfileManageData, ProfileManageReq, ProfileManageResp, ProfileOperationResult,
 };
 use chrono::Utc;
 use serde_json::{Map, Value};
-use std::str::FromStr;
-
-// ==========================================
-// INTERNAL HELPER FUNCTIONS
-// ==========================================
-
-/// Validate and parse profile type
-///
-/// Validates the profile type string and returns the parsed enum
-fn validate_profile_type(profile_type: &str) -> Result<crate::common::profile::ProfileType, ApiError> {
-    crate::common::profile::ProfileType::from_str(profile_type).map_err(|_| {
-        ApiError::BadRequest(format!(
-            "Invalid profile type: {}. Must be one of: host_app, scenario, shared",
-            profile_type
-        ))
-    })
-}
-
-/// Validate default profile rules
-///
-/// Ensures business rules for default profile are followed
-fn validate_default_profile_rules(
-    profile: &crate::config::models::Profile,
-    is_update: bool,
-) -> Result<(), ApiError> {
-    let _ = is_update;
-
-    if profile.is_default && !profile.is_active {
-        return Err(ApiError::BadRequest("Default profiles must remain active".to_string()));
-    }
-
-    if is_default_anchor_profile(profile) {
-        if !profile.is_default {
-            return Err(ApiError::BadRequest(
-                "Default anchor profile must stay in the default bundle".to_string(),
-            ));
-        }
-
-        if !profile.is_active {
-            return Err(ApiError::BadRequest(
-                "Default anchor profile must stay active".to_string(),
-            ));
-        }
-    }
-
-    Ok(())
-}
-
-fn reconcile_default_flags(profile: &mut crate::config::models::Profile) {
-    if crate::config::profile::is_default_anchor_profile(profile) {
-        profile.is_active = true;
-        profile.is_default = true;
-    } else {
-        // No automatic coupling required for user profiles; keep caller's intent.
-    }
-}
-
-fn validate_profile_create_activation_contract(request: &ProfileCreateReq) -> Result<(), ApiError> {
-    if request.is_active == Some(true) {
-        return Err(ApiError::BadRequest(
-            "Create profiles as inactive, then activate them through /api/mcp/profile/manage".to_string(),
-        ));
-    }
-    if request.is_default == Some(true) {
-        return Err(ApiError::BadRequest(
-            "Create profiles as non-default, activate them through /api/mcp/profile/manage, then assign the default flag"
-                .to_string(),
-        ));
-    }
-    Ok(())
-}
-
-fn validate_profile_update_activation_contract(request: &ProfileUpdateReq) -> Result<(), ApiError> {
-    if request.is_active.is_some() {
-        return Err(ApiError::BadRequest(
-            "Update profile activation through /api/mcp/profile/manage".to_string(),
-        ));
-    }
-    Ok(())
-}
-
-/// Validate profile name uniqueness
-///
-/// Checks if a profile with the given name already exists, optionally excluding a specific ID
-async fn validate_name_uniqueness(
-    pool: &sqlx::Pool<sqlx::Sqlite>,
-    name: &str,
-    exclude_id: Option<&str>,
-) -> Result<(), ApiError> {
-    let existing_profile = crate::config::profile::get_profile_by_name(pool, name)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to check existing profile: {e}")))?;
-
-    if let Some(existing) = existing_profile {
-        // If we're excluding an ID (for updates), check if it's the same profile
-        if let Some(exclude) = exclude_id {
-            if existing.id.as_ref() == Some(&exclude.to_string()) {
-                return Ok(()); // Same profile, name is valid
-            }
-        }
-        return Err(ApiError::BadRequest(format!(
-            "Profile with name '{}' already exists",
-            name
-        )));
-    }
-
-    Ok(())
-}
 
 // ==========================================
 // STANDARDIZED HANDLERS
@@ -172,20 +60,10 @@ pub async fn profile_list(
     let paginated_profile: Vec<_> = filtered_profile.into_iter().skip(offset).take(limit).collect();
 
     let profile_responses = paginated_profile.iter().map(profile_to_response).collect();
-    let source_revision_set = sqlx::query_as::<_, (String, i64)>(
-        "SELECT server_id, catalog_revision FROM capability_server_snapshots ORDER BY server_id",
-    )
-    .fetch_all(&db.pool)
-    .await
-    .map_err(|error| ApiError::InternalError(format!("Failed to load catalog revisions: {error}")))?
-    .into_iter()
-    .collect();
-
     let response = ProfileListData {
         profile: profile_responses,
         total,
         timestamp: Utc::now().to_rfc3339(),
-        source_revision_set,
     };
 
     Ok(Json(ProfileListResp::success(response)))
@@ -199,59 +77,43 @@ pub async fn profile_details(
     Query(request): Query<ProfileDetailsReq>,
 ) -> Result<Json<ProfileDetailsResp>, ApiError> {
     let db = get_database(&state).await?;
-
-    // Get the profile
-    let profile = crate::config::profile::get_profile(&db.pool, &request.id)
+    let mut transaction = db.pool.begin().await.map_err(profile_details_error)?;
+    let profile: crate::config::models::Profile = sqlx::query_as("SELECT * FROM profile WHERE id = ?")
+        .bind(&request.id)
+        .fetch_optional(&mut *transaction)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get profile: {e}")))?;
-
-    let profile = match profile {
-        Some(s) => s,
-        None => {
-            return Err(ApiError::NotFound(format!(
-                "Profile with ID '{}' not found",
-                request.id
-            )));
-        }
-    };
-
-    // Get component counts
-    let servers_count = crate::config::profile::get_profile_servers(&db.pool, &request.id)
+        .map_err(profile_details_error)?
+        .ok_or_else(|| ApiError::NotFound(format!("Profile with ID '{}' not found", request.id)))?;
+    let servers_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM profile_server_relationships WHERE profile_id = ? AND enabled = 1")
+            .bind(&request.id)
+            .fetch_one(&mut *transaction)
+            .await
+            .map_err(profile_details_error)?;
+    let tools_count = crate::config::profile::tool::get_profile_tools_in_transaction(&mut transaction, &request.id)
         .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get servers count: {e}")))?
+        .map_err(|error| ApiError::InternalError(format!("Failed to load Profile Tool projection: {error}")))?
         .into_iter()
-        .filter(|s| s.enabled)
+        .filter(|tool| tool.enabled)
         .count();
-
-    let tools_count = crate::config::profile::get_profile_tools(&db.pool, &request.id)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get tools count: {e}")))?
-        .into_iter()
-        .filter(|t| t.enabled)
-        .count();
+    transaction.commit().await.map_err(profile_details_error)?;
 
     // For now, set resources and prompts counts to 0 (implement later)
     let resources_count = 0;
     let prompts_count = 0;
-    let source_revision_set = sqlx::query_as::<_, (String, i64)>(
-        "SELECT server_id, catalog_revision FROM capability_server_snapshots ORDER BY server_id",
-    )
-    .fetch_all(&db.pool)
-    .await
-    .map_err(|error| ApiError::InternalError(format!("Failed to load catalog revisions: {error}")))?
-    .into_iter()
-    .collect();
-
     let response = ProfileDetailsData {
         profile: profile_to_response(&profile),
-        servers_count,
+        servers_count: servers_count as usize,
         tools_count,
         resources_count,
         prompts_count,
-        source_revision_set,
     };
 
     Ok(Json(ProfileDetailsResp::success(response)))
+}
+
+fn profile_details_error(error: sqlx::Error) -> ApiError {
+    ApiError::InternalError(format!("Failed to load Profile details projection: {error}"))
 }
 
 /// Delete a profile
@@ -266,11 +128,16 @@ pub async fn profile_delete(
     let management = crate::core::capability::management::ProfileSurfaceManagement::delete_profile(
         &db.pool,
         &request.id,
-        request.source_revision_set.clone().into_iter().collect(),
+        request.expected_authoring_generation,
         "profile_management",
     )
-    .await
-    .map_err(profile_management_error)?;
+    .await;
+    let management = match management {
+        Ok(management) => management,
+        Err(error) => {
+            return Err(super::map_profile_management_error(&db.pool, &request.id, Vec::new(), error).await);
+        }
+    };
 
     let response = ProfileManageData {
         success_count: 1,
@@ -317,130 +184,6 @@ pub async fn profile_delete(
     Ok(response)
 }
 
-/// Create a new profile
-///
-/// **Endpoint:** `POST /mcp/profile/create`
-pub async fn profile_create(
-    State(state): State<Arc<AppState>>,
-    Json(request): Json<ProfileCreateReq>,
-) -> Result<Json<ProfileResp>, ApiError> {
-    let started_at = std::time::Instant::now();
-    validate_profile_create_activation_contract(&request)?;
-    let db = get_database(&state).await?;
-
-    // Validate name uniqueness
-    validate_name_uniqueness(&db.pool, &request.name, None).await?;
-
-    // Validate and parse profile type
-    let profile_type = validate_profile_type(&request.profile_type)?;
-
-    // Create new profile
-    let mut new_profile = crate::config::models::Profile::new_with_description(
-        request.name.clone(),
-        request.description.clone(),
-        profile_type,
-    );
-
-    // Set optional fields
-    if let Some(multi_select) = request.multi_select {
-        new_profile.multi_select = multi_select;
-    }
-    if let Some(priority) = request.priority {
-        new_profile.priority = priority;
-    }
-    // Insert the new profile and get the ID
-    let profile_id = crate::config::profile::upsert_profile(&db.pool, &new_profile)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to create profile: {e}")))?;
-
-    // If cloning from existing profile, copy server and tool associations
-    if let Some(clone_from_id) = request.clone_from_id {
-        profile_cloning_core(&db.pool, &profile_id, &clone_from_id).await?;
-    }
-
-    // Get the created profile
-    let created_profile = get_profile_or_error(&db, &profile_id).await?;
-
-    // Convert to response format
-    let response = profile_to_response(&created_profile);
-
-    let response = Json(ProfileResp::success(response));
-    let mut data = Map::new();
-    data.insert("profile_name".to_string(), Value::String(created_profile.name));
-    crate::audit::interceptor::emit_event(
-        state.audit_service.as_ref(),
-        crate::audit::interceptor::build_rest_event(
-            crate::audit::AuditAction::ProfileCreate,
-            crate::audit::AuditStatus::Success,
-            "POST",
-            "/api/mcp/profile/create",
-            Some(started_at.elapsed().as_millis() as u64),
-            None,
-            response.0.data.as_ref().map(|profile| profile.id.clone()),
-            Some(data),
-            None,
-        ),
-    )
-    .await;
-    Ok(response)
-}
-
-/// Update an existing profile
-///
-/// **Endpoint:** `POST /mcp/profile/update`
-pub async fn profile_update(
-    State(state): State<Arc<AppState>>,
-    Json(request): Json<ProfileUpdateReq>,
-) -> Result<Json<ProfileResp>, ApiError> {
-    let started_at = std::time::Instant::now();
-    validate_profile_update_activation_contract(&request)?;
-    let db = get_database(&state).await?;
-
-    // 1. Get existing profile by ID
-    let mut existing_profile = get_profile_or_error(&db, &request.id).await?;
-
-    // 2. Validate name uniqueness if name is being updated
-    if let Some(ref name) = request.name {
-        validate_name_uniqueness(&db.pool, name, Some(&request.id)).await?;
-    }
-
-    // 3. Apply partial updates to the profile
-    profile_updates_core(&mut existing_profile, &request)?;
-    reconcile_default_flags(&mut existing_profile);
-
-    // 4. Validate business rules
-    validate_default_profile_rules(&existing_profile, true)?;
-
-    // 5. Save updated profile to database using dedicated update function
-    crate::config::profile::update_profile(&db.pool, &existing_profile)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to update profile: {e}")))?;
-
-    // 6. Get the updated profile for response
-    let updated_profile = get_profile_or_error(&db, &request.id).await?;
-
-    // 7. Convert to response format
-    let response = profile_to_response(&updated_profile);
-
-    let response = Json(ProfileResp::success(response));
-    crate::audit::interceptor::emit_event(
-        state.audit_service.as_ref(),
-        crate::audit::interceptor::build_rest_event(
-            crate::audit::AuditAction::ProfileUpdate,
-            crate::audit::AuditStatus::Success,
-            "POST",
-            "/api/mcp/profile/update",
-            Some(started_at.elapsed().as_millis() as u64),
-            None,
-            Some(request.id),
-            None,
-            None,
-        ),
-    )
-    .await;
-    Ok(response)
-}
-
 /// Manage profile operations (activate/deactivate) - supports single or multiple profile
 ///
 /// **Endpoint:** `POST /mcp/profile/manage`
@@ -458,11 +201,22 @@ pub async fn profile_manage(
         &db.pool,
         &request.ids,
         activation_action,
-        request.source_revision_set.clone().into_iter().collect(),
+        request.expected_authoring_generations.clone().into_iter().collect(),
         "profile_management",
     )
-    .await
-    .map_err(profile_management_error)?;
+    .await;
+    let management = match management {
+        Ok(management) => management,
+        Err(error) => {
+            return Err(super::map_profile_management_error(
+                &db.pool,
+                request.ids.first().map(String::as_str).unwrap_or_default(),
+                Vec::new(),
+                error,
+            )
+            .await);
+        }
+    };
     let results = management
         .mutations
         .iter()
@@ -562,264 +316,4 @@ pub async fn profile_manage(
     )
     .await;
     Ok(response)
-}
-
-fn profile_management_error(error: mcpmate_capability_store::CatalogError) -> ApiError {
-    match error {
-        mcpmate_capability_store::CatalogError::ConcurrencyConflict { .. } => ApiError::Conflict(error.to_string()),
-        mcpmate_capability_store::CatalogError::InvalidSurfaceValue { .. } => ApiError::BadRequest(error.to_string()),
-        _ => ApiError::InternalError(error.to_string()),
-    }
-}
-
-/// Apply partial updates to a profile
-///
-/// Updates only the fields that are provided in the request
-fn profile_updates_core(
-    profile: &mut crate::config::models::Profile,
-    updates: &ProfileUpdateReq,
-) -> Result<(), ApiError> {
-    // Update name if provided
-    if let Some(ref name) = updates.name {
-        profile.name = name.clone();
-    }
-
-    // Update description if provided
-    if let Some(ref description) = updates.description {
-        profile.description = Some(description.clone());
-    }
-
-    // Update profile type if provided
-    if let Some(ref profile_type_str) = updates.profile_type {
-        profile.profile_type = validate_profile_type(profile_type_str)?;
-    }
-
-    // Update optional fields if provided
-    if let Some(multi_select) = updates.multi_select {
-        profile.multi_select = multi_select;
-    }
-    if let Some(priority) = updates.priority {
-        profile.priority = priority;
-    }
-    if let Some(is_default) = updates.is_default {
-        if is_default_anchor_profile(profile) && !is_default {
-            return Err(ApiError::BadRequest(
-                "Default anchor profile must stay in the default bundle".to_string(),
-            ));
-        }
-        profile.is_default = is_default;
-    }
-
-    // Update timestamp
-    profile.updated_at = Some(Utc::now());
-
-    Ok(())
-}
-
-/// Handle profile cloning operations
-///
-/// Copies server and tool associations from source profile to target profile
-async fn profile_cloning_core(
-    pool: &sqlx::Pool<sqlx::Sqlite>,
-    target_profile_id: &str,
-    source_profile_id: &str,
-) -> Result<(), ApiError> {
-    // Check if the source profile exists
-    let source_profile = crate::config::profile::get_profile(pool, source_profile_id)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get source profile: {e}")))?;
-
-    if source_profile.is_none() {
-        return Err(ApiError::NotFound(format!(
-            "Source profile with ID '{}' not found",
-            source_profile_id
-        )));
-    }
-
-    // Copy server associations
-    let server_configs = crate::config::profile::get_profile_servers(pool, source_profile_id)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get server configs: {e}")))?;
-
-    for server_config in server_configs {
-        crate::config::profile::add_server_to_profile(
-            pool,
-            target_profile_id,
-            &server_config.server_id,
-            server_config.enabled,
-        )
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to copy server association: {e}")))?;
-    }
-
-    // Copy tool associations
-    let tool_configs = crate::config::profile::get_profile_tools(pool, source_profile_id)
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to get tool configs: {e}")))?;
-
-    for tool_config in tool_configs {
-        crate::config::profile::add_tool_to_profile(
-            pool,
-            target_profile_id,
-            &tool_config.server_id,
-            &tool_config.ref_id,
-            tool_config.enabled,
-        )
-        .await
-        .map_err(|e| ApiError::InternalError(format!("Failed to copy tool association: {e}")))?;
-    }
-
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use mcpmate_capability_store::{
-        CapabilityCatalog, CapabilityKind, CapabilityObservation, CapabilityPayload, CatalogRecord, DeclarationState,
-        InventoryState, KindObservation, SqliteCapabilityCatalog,
-    };
-    use rmcp::model::{InitializeResult, Tool};
-    use serde_json::json;
-    use sqlx::sqlite::SqlitePoolOptions;
-
-    #[test]
-    fn profile_create_requires_activation_through_management_endpoint() {
-        let request = ProfileCreateReq {
-            name: "Research".to_string(),
-            description: None,
-            profile_type: "scenario".to_string(),
-            multi_select: None,
-            priority: None,
-            is_active: Some(true),
-            is_default: None,
-            clone_from_id: None,
-        };
-
-        let error = validate_profile_create_activation_contract(&request).unwrap_err();
-
-        assert!(matches!(error, ApiError::BadRequest(_)));
-    }
-
-    #[test]
-    fn profile_create_requires_default_assignment_after_activation() {
-        let request = ProfileCreateReq {
-            name: "Research".to_string(),
-            description: None,
-            profile_type: "scenario".to_string(),
-            multi_select: None,
-            priority: None,
-            is_active: Some(false),
-            is_default: Some(true),
-            clone_from_id: None,
-        };
-
-        let error = validate_profile_create_activation_contract(&request).unwrap_err();
-
-        assert!(matches!(error, ApiError::BadRequest(_)));
-    }
-
-    #[test]
-    fn profile_update_requires_activation_through_management_endpoint() {
-        let request = ProfileUpdateReq {
-            id: "profile-1".to_string(),
-            name: None,
-            description: None,
-            profile_type: None,
-            multi_select: None,
-            priority: None,
-            is_active: Some(false),
-            is_default: None,
-        };
-
-        let error = validate_profile_update_activation_contract(&request).unwrap_err();
-
-        assert!(matches!(error, ApiError::BadRequest(_)));
-    }
-
-    #[tokio::test]
-    async fn profile_clone_preserves_tool_capability_ref_identity() {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .unwrap();
-        crate::test_helpers::prepare_config_database(&pool).await;
-        crate::config::server::init::initialize_server_tables(&pool)
-            .await
-            .unwrap();
-        crate::config::client::init::initialize_client_table(&pool)
-            .await
-            .unwrap();
-        crate::config::database::initialize_capability_catalog(&pool)
-            .await
-            .unwrap();
-        crate::config::profile::init::initialize_profile_tables(&pool)
-            .await
-            .unwrap();
-        sqlx::query(
-            "INSERT INTO server_config (id, name, server_type, command, enabled) VALUES ('server-a', 'Server A', 'stdio', '', 1)",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            r#"
-            INSERT INTO profile (id, name, description, type, role)
-            VALUES ('profile-source', 'Source', '', 'shared', 'user'),
-                   ('profile-target', 'Target', '', 'shared', 'user')
-            "#,
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        let tool: Tool = serde_json::from_value(json!({
-            "name": "analyze",
-            "description": "Analyze",
-            "inputSchema": {"type": "object"}
-        }))
-        .unwrap();
-        let record = CatalogRecord::materialize(
-            "server-a",
-            "analyze",
-            "server_a__analyze",
-            CapabilityPayload::Tool(tool),
-        )
-        .unwrap();
-        let initialize: InitializeResult = serde_json::from_value(json!({
-            "protocolVersion": "2025-11-25",
-            "capabilities": {"tools": {}},
-            "serverInfo": {"name": "Server A", "version": "1.0.0"}
-        }))
-        .unwrap();
-        SqliteCapabilityCatalog::new(pool.clone())
-            .commit_observation(CapabilityObservation::new(
-                "server-a",
-                "Server A",
-                "config-v1",
-                initialize,
-                vec![KindObservation::new(
-                    CapabilityKind::Tools,
-                    DeclarationState::Supported,
-                    InventoryState::Complete,
-                )],
-                vec![record.clone()],
-            ))
-            .await
-            .unwrap();
-        crate::config::profile::add_tool_to_profile(&pool, "profile-source", "server-a", record.ref_id.as_str(), true)
-            .await
-            .unwrap();
-
-        profile_cloning_core(&pool, "profile-target", "profile-source")
-            .await
-            .unwrap();
-
-        let cloned = crate::config::profile::get_profile_tools(&pool, "profile-target")
-            .await
-            .unwrap();
-        assert_eq!(cloned.len(), 1);
-        assert_eq!(cloned[0].ref_id, record.ref_id.to_string());
-    }
 }

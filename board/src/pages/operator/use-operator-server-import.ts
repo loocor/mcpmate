@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ServerInstallDraft } from "../../hooks/use-server-install-pipeline";
 import {
-	assertCompleteServerImport,
+	completeServerImportForProfile,
 	extractImportStats,
 	serversApi,
 	type ImportStats,
@@ -13,6 +13,7 @@ import {
 	type ServerIngestPayload,
 } from "../../lib/install-normalizer";
 import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
+import { profileSyncErrorTranslationKey } from "../../lib/profile-sync-error";
 import { buildDraftServersImportRequest } from "../../lib/server-import-payload";
 import {
 	canIngestFromDataTransfer,
@@ -114,7 +115,7 @@ export function useOperatorServerImport({
 }: {
 	onImported?: () => void;
 }) {
-	const { t } = useTranslation();
+	const { t, i18n } = useTranslation();
 	const [open, setOpen] = useState(false);
 	const [phase, setPhase] = useState<OperatorServerImportPhase>("idle");
 	const [drafts, setDrafts] = useState<ServerInstallDraft[]>([]);
@@ -142,11 +143,9 @@ export function useOperatorServerImport({
 			setDryRunWarning(null);
 			setDryRunError(null);
 			try {
-				const targetProfileId = await resolveTargetProfileId();
 				const result = await serversApi.importServers(
 					buildDraftServersImportRequest({
 						drafts: items,
-						targetProfileId,
 						dryRun: true,
 					}),
 				);
@@ -218,7 +217,7 @@ export function useOperatorServerImport({
 	const handleImportDrop = useCallback(
 		async (dataTransfer: DataTransfer) => {
 			if (!canIngestFromDataTransfer(dataTransfer)) {
-				notifyError(
+				 notifyError(
 					t("servers:notifications.importUnsupported.title", {
 						defaultValue: "Unsupported content",
 					}),
@@ -272,7 +271,6 @@ export function useOperatorServerImport({
 			const result = await serversApi.importServers(
 				buildDraftServersImportRequest({
 					drafts,
-					targetProfileId,
 				}),
 			);
 			const stats = extractImportStats(result);
@@ -285,12 +283,12 @@ export function useOperatorServerImport({
 			if (!didSucceed) {
 				notifyError(
 					t("operator:import.installFailed", { defaultValue: "Import failed" }),
-					String(result.error ?? "Unknown error"),
+					t("profileSyncErrors.unexpected"),
 				);
 				setPhase("ready");
 				return false;
 			}
-			assertCompleteServerImport(stats);
+			await completeServerImportForProfile(targetProfileId, stats);
 
 			const { importedCount, skippedCount } = stats;
 			const skippedDescription = buildSkippedInstallDescription(stats, t);
@@ -332,18 +330,14 @@ export function useOperatorServerImport({
 			reset();
 			return importedCount > 0;
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
 			notifyError(
 				t("operator:import.installFailed", { defaultValue: "Import failed" }),
-				message ||
-					t("operator:import.unexpectedError", {
-						defaultValue: "Unexpected error",
-					}),
+				t(profileSyncErrorTranslationKey(error)),
 			);
 			setPhase("ready");
 			return false;
 		}
-	}, [drafts, dryRunError, onImported, parseError, reset, t]);
+	}, [drafts, dryRunError, onImported, parseError, reset, t, i18n.language]);
 
 	const canInstall =
 		drafts.length > 0 &&

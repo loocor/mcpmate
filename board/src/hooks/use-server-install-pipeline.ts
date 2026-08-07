@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-	assertCompleteServerImport,
+	completeServerImportForProfile,
 	extractImportStats,
 	serversApi,
   systemApi,
@@ -14,6 +14,7 @@ import {
 } from "../lib/server-import-payload";
 import type { ImportStats } from "../lib/api";
 import { notifyError, notifyInfo, notifySuccess } from "../lib/notify";
+import { profileSyncErrorTranslationKey } from "../lib/profile-sync-error";
 import { formatNameList, summarizeSkipped } from "../lib/server-import-utils";
 import type { ServerMetaInfo, ServerSource } from "../lib/types";
 
@@ -245,7 +246,6 @@ export function useServerInstallPipeline(
 			const requestBody = buildDraftServersImportRequest({
 				drafts,
 				selectedDraftNames,
-				targetProfileId,
 				dryRun: true,
 			});
 			const result = await serversApi.importServers(requestBody);
@@ -316,7 +316,6 @@ export function useServerInstallPipeline(
 		drafts,
 		selectedDraftNames,
 		selectedDrafts.length,
-		targetProfileId,
 		t,
 		i18n.language,
 	]);
@@ -345,7 +344,6 @@ export function useServerInstallPipeline(
 				const requestBody = buildDraftServersImportRequest({
 					drafts,
 					selectedDraftNames,
-					targetProfileId: effectiveTargetProfileId,
 				});
 				const result = await serversApi.importServers(requestBody);
 
@@ -356,7 +354,10 @@ export function useServerInstallPipeline(
 							!("error" in (result ?? {}));
 				if (didSucceed) {
 					const stats = extractImportStats(result);
-					assertCompleteServerImport(stats);
+					await completeServerImportForProfile(
+						effectiveTargetProfileId,
+						stats,
+					);
 					setImportResult({ success: true });
 					const {
 						importedCount,
@@ -394,14 +395,12 @@ export function useServerInstallPipeline(
 					}
 					return true;
 				}
-				const failureMessage = String(result.error ?? "Unknown error");
+				const failureMessage = t("profileSyncErrors.unexpected");
 				setImportResult({ success: false, error: failureMessage });
 				notifyError("Import failed", failureMessage);
 				return false;
 			} catch (error) {
-				const message =
-					error instanceof Error ? error.message : String(error ?? "");
-				const failureMessage = message || "Unexpected error";
+				const failureMessage = t(profileSyncErrorTranslationKey(error));
 				setImportResult({ success: false, error: failureMessage });
 				notifyError("Import failed", failureMessage);
 				return false;

@@ -8,6 +8,146 @@ use std::fs;
 use mcpmate_migrations::{DatabaseSource, prepare_config_database};
 use tempfile::tempdir;
 
+const PRE_GENERATION_PROFILE_SCHEMA: &str = "
+CREATE TABLE profile (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT, type TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user', multi_select BOOLEAN NOT NULL DEFAULT 0, priority INTEGER NOT NULL DEFAULT 0, is_active BOOLEAN NOT NULL DEFAULT 0, is_default BOOLEAN NOT NULL DEFAULT 0, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE profile_server_relationships (profile_id TEXT NOT NULL, server_id TEXT NOT NULL, enabled BOOLEAN NOT NULL DEFAULT 1, new_ref_policy TEXT NOT NULL CHECK (new_ref_policy IN ('follow', 'review')), FOREIGN KEY (profile_id) REFERENCES profile (id) ON DELETE CASCADE, PRIMARY KEY(profile_id, server_id));
+";
+
+#[tokio::test]
+async fn upgrades_pre_generation_profile_storage() {
+    let directory = tempdir().expect("create temporary directory");
+    let database_path = directory.path().join("config.db");
+    let pool = file_support::pool(&database_path).await;
+    sqlx::raw_sql(PRE_GENERATION_PROFILE_SCHEMA)
+        .execute(&pool)
+        .await
+        .expect("create released pre-generation Profile storage");
+    sqlx::query(
+        "INSERT INTO profile (
+            id, name, description, type, role, multi_select, priority, is_active, is_default,
+            created_at, updated_at
+         ) VALUES (
+            'profile-1', 'Production', 'Preserved description', 'persistent', 'admin', 1, 7, 1, 1,
+            '2026-08-01T00:00:00Z', '2026-08-02T00:00:00Z'
+         )",
+    )
+    .execute(&pool)
+    .await
+    .expect("insert pre-generation Profile");
+    sqlx::query(
+        "INSERT INTO profile_server_relationships (profile_id, server_id, enabled, new_ref_policy)
+         VALUES ('profile-1', 'server-1', 0, 'review')",
+    )
+    .execute(&pool)
+    .await
+    .expect("insert pre-generation Profile Server relationship");
+
+    let backup = prepare_config_database(
+        &pool,
+        DatabaseSource::File {
+            path: &database_path,
+            existed_before_open: true,
+        },
+    )
+    .await
+    .expect("upgrade pre-generation Profile storage")
+    .expect("pending Profile migration creates a recovery backup");
+
+    let profile: (
+        String,
+        String,
+        String,
+        String,
+        String,
+        bool,
+        i32,
+        bool,
+        bool,
+        String,
+        String,
+        i64,
+    ) = sqlx::query_as(
+        "SELECT id, name, description, type, role, multi_select, priority, is_active, is_default,
+                    created_at, updated_at, authoring_generation
+             FROM profile WHERE id = 'profile-1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("load upgraded Profile");
+    assert_eq!(
+        profile,
+        (
+            "profile-1".into(),
+            "Production".into(),
+            "Preserved description".into(),
+            "persistent".into(),
+            "admin".into(),
+            true,
+            7,
+            true,
+            true,
+            "2026-08-01T00:00:00Z".into(),
+            "2026-08-02T00:00:00Z".into(),
+            0,
+        )
+    );
+    let relationship: (String, String, bool, String) = sqlx::query_as(
+        "SELECT profile_id, server_id, enabled, new_ref_policy
+         FROM profile_server_relationships WHERE profile_id = 'profile-1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("load preserved Profile Server relationship");
+    assert_eq!(
+        relationship,
+        ("profile-1".into(), "server-1".into(), false, "review".into())
+    );
+    let version: i64 = sqlx::query_scalar(
+        "SELECT version FROM mcpmate_schema_migrations
+         WHERE target = 'config' ORDER BY version DESC LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("load latest config migration");
+    assert_eq!(version, 11);
+
+    let backup_pool = file_support::pool(&backup).await;
+    let backup_columns: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('profile')")
+        .fetch_all(&backup_pool)
+        .await
+        .expect("inspect recovery backup Profile columns");
+    assert!(!backup_columns.iter().any(|column| column == "authoring_generation"));
+    let backup_profile: (String, String) =
+        sqlx::query_as("SELECT name, description FROM profile WHERE id = 'profile-1'")
+            .fetch_one(&backup_pool)
+            .await
+            .expect("read pre-generation Profile from recovery backup");
+    assert_eq!(backup_profile, ("Production".into(), "Preserved description".into()));
+    backup_pool.close().await;
+
+    let second_backup = prepare_config_database(
+        &pool,
+        DatabaseSource::File {
+            path: &database_path,
+            existed_before_open: true,
+        },
+    )
+    .await
+    .expect("recheck upgraded Profile storage");
+    assert!(second_backup.is_none());
+    let generation: i64 = sqlx::query_scalar("SELECT authoring_generation FROM profile WHERE id = 'profile-1'")
+        .fetch_one(&pool)
+        .await
+        .expect("reload unchanged Profile generation");
+    assert_eq!(generation, 0);
+    let backup_count = fs::read_dir(directory.path())
+        .expect("read temporary directory")
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("config.db.migration-"))
+        .count();
+    assert_eq!(backup_count, 1);
+}
+
 #[tokio::test]
 async fn preserves_client_relationships_during_legacy_normalization() {
     let pool = memory_support::pool().await;

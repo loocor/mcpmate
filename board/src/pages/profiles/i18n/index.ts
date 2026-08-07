@@ -116,6 +116,16 @@ export const profilesTranslations = {
 				loading: "Loading server list…",
 				noAvailable: "No available servers",
 			},
+			serverState: {
+				configuration: "Configuration",
+				catalog: "Catalog",
+				profile: "Profile",
+				notReported: "Not reported",
+				unavailable: "Unavailable",
+				notObserved: "Not observed",
+				selected: "Selected",
+				notSelected: "Not selected",
+			},
 			clonePreview: {
 				loading: "Loading capabilities…",
 				description:
@@ -144,6 +154,17 @@ export const profilesTranslations = {
 			updateFailed: "Update failed",
 			validationFailed: "Validation failed",
 			nameRequired: "Name is required",
+		},
+		conflict: {
+			title: "Profile modified elsewhere",
+			description:
+				"Load the latest Profile and discard this draft, or overwrite it with your current draft.",
+			serversAdded: "Servers added elsewhere",
+			serversRemoved: "Servers removed elsewhere",
+			serversUnchanged: "Server assignments are unchanged.",
+			cancel: "Cancel",
+			loadLatest: "Load latest version",
+			overwrite: "Overwrite with current draft",
 		},
 	},
 		detail: {
@@ -438,6 +459,16 @@ export const profilesTranslations = {
 				loading: "加载服务器列表…",
 				noAvailable: "无可用服务器",
 			},
+			serverState: {
+				configuration: "配置",
+				catalog: "目录",
+				profile: "配置集",
+				notReported: "未报告",
+				unavailable: "不可用",
+				notObserved: "未观测",
+				selected: "已选择",
+				notSelected: "未选择",
+			},
 			clonePreview: {
 				loading: "加载能力…",
 				description: "克隆会复制源配置集中已启用的服务器、工具和资源。",
@@ -465,6 +496,17 @@ export const profilesTranslations = {
 				updateFailed: "更新失败",
 				validationFailed: "验证失败",
 				nameRequired: "名称为必填项",
+			},
+			conflict: {
+				title: "配置集已在其他位置修改",
+				description:
+					"加载最新配置集并放弃当前草稿，或使用当前草稿覆盖最新版本。",
+				serversAdded: "其他修改中添加的服务器",
+				serversRemoved: "其他修改中移除的服务器",
+				serversUnchanged: "服务器分配未发生变化。",
+				cancel: "取消",
+				loadLatest: "加载最新版本",
+				overwrite: "使用当前草稿覆盖",
 			},
 		},
 			detail: {
@@ -763,6 +805,16 @@ export const profilesTranslations = {
 				loading: "サーバーリストを読み込み中…",
 				noAvailable: "利用可能なサーバーなし",
 			},
+			serverState: {
+				configuration: "構成",
+				catalog: "カタログ",
+				profile: "プロファイル",
+				notReported: "未報告",
+				unavailable: "利用不可",
+				notObserved: "未観測",
+				selected: "選択済み",
+				notSelected: "未選択",
+			},
 			clonePreview: {
 				loading: "機能を読み込み中…",
 				description:
@@ -791,6 +843,17 @@ export const profilesTranslations = {
 				updateFailed: "更新に失敗しました",
 				validationFailed: "検証に失敗しました",
 				nameRequired: "名前は必須です",
+			},
+			conflict: {
+				title: "プロファイルが別の場所で変更されました",
+				description:
+					"最新のプロファイルを読み込んで現在の下書きを破棄するか、現在の下書きで上書きしてください。",
+				serversAdded: "別の変更で追加されたサーバー",
+				serversRemoved: "別の変更で削除されたサーバー",
+				serversUnchanged: "サーバーの割り当ては変更されていません。",
+				cancel: "キャンセル",
+				loadLatest: "最新バージョンを読み込む",
+				overwrite: "現在の下書きで上書き",
 			},
 		},
 			detail: {

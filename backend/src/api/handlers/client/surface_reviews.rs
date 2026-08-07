@@ -375,8 +375,7 @@ async fn resolve_target_review(
         )
         .await
         .map_err(store_error)?;
-    let source_revision_set = load_catalog_revision_set(&mut transaction).await?;
-    let trigger = MaterializationTrigger::new("review_resolution", &decision_id, source_revision_set, &request.actor);
+    let trigger = MaterializationTrigger::for_consumer("review_resolution", &decision_id, &request.actor);
     let commit = MaterializationCoordinator::new(pool.clone())
         .compile_consumer_in_transaction(&mut transaction, &item.item.consumer_id, &trigger)
         .await
@@ -443,22 +442,11 @@ async fn resolve_target_review(
     })))
 }
 
-async fn load_catalog_revision_set(
-    transaction: &mut sqlx::Transaction<'_, Sqlite>
-) -> Result<std::collections::HashMap<String, i64>, ApiError> {
-    sqlx::query_as::<_, (String, i64)>(
-        "SELECT server_id, catalog_revision FROM capability_server_snapshots ORDER BY server_id",
-    )
-    .fetch_all(&mut **transaction)
-    .await
-    .map(|rows| rows.into_iter().collect())
-    .map_err(database_error)
-}
-
 #[derive(Clone)]
 struct IntentImpact {
     owner: Option<SurfaceReviewOwner>,
     owner_revision: String,
+    profile_authoring_generation: Option<i64>,
     impacted_consumer_ids: Vec<String>,
     impact_token: String,
 }
@@ -507,11 +495,11 @@ async fn resolve_intent_review(
     request: SurfaceIntentResolveReq,
 ) -> Result<Json<SurfaceReviewActionResp>, ApiError> {
     let pool = database_pool(&state)?.clone();
+    let store = SqliteSurfaceStore::new(pool.clone());
+    let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await.map_err(database_error)?;
     let default_config_mode = crate::core::capability::materializer::load_default_config_mode(&pool)
         .await
         .map_err(store_error)?;
-    let store = SqliteSurfaceStore::new(pool.clone());
-    let mut transaction = pool.begin().await.map_err(database_error)?;
     let item = store
         .load_review_record_in_transaction(&mut transaction, &review_item_id)
         .await
@@ -583,6 +571,15 @@ async fn resolve_intent_review(
             .owner
             .as_ref()
             .ok_or_else(|| ApiError::BadRequest("Intent mutation requires an Owner".to_string()))?;
+        if let Some(expected_generation) = impact.profile_authoring_generation {
+            crate::core::capability::management::advance_profile_generation_in_transaction(
+                &mut transaction,
+                &owner.owner_id,
+                expected_generation,
+            )
+            .await
+            .map_err(store_error)?;
+        }
         mutate_owner_relationship(
             &mut transaction,
             owner,
@@ -597,7 +594,6 @@ async fn resolve_intent_review(
             .map_err(store_error)?;
     }
 
-    let source_revision_set = load_catalog_revision_set(&mut transaction).await?;
     let coordinator = MaterializationCoordinator::new(pool.clone());
     let mut effective_surface_changed = false;
     let mut response_generation = binding.generation;
@@ -608,12 +604,7 @@ async fn resolve_intent_review(
                 &mut transaction,
                 consumer_id,
                 &default_config_mode,
-                &MaterializationTrigger::new(
-                    "intent_resolution",
-                    &decision_id,
-                    source_revision_set.clone(),
-                    &request.actor,
-                ),
+                &MaterializationTrigger::for_consumer("intent_resolution", &decision_id, &request.actor),
             )
             .await
             .map_err(store_error)?;
@@ -741,6 +732,7 @@ async fn calculate_intent_impact(
         return Ok(IntentImpact {
             owner: None,
             owner_revision,
+            profile_authoring_generation: None,
             impacted_consumer_ids,
             impact_token,
         });
@@ -754,7 +746,8 @@ async fn calculate_intent_impact(
     if *action == SurfaceIntentResolutionActionData::RebindRef && new_ref_id.is_none() {
         return Err(ApiError::BadRequest("Rebind requires new_ref_id".to_string()));
     }
-    let owner_revision = load_owner_revision(transaction, owner, &item.item.ref_id).await?;
+    let (owner_revision, profile_authoring_generation) =
+        load_owner_revision(transaction, owner, &item.item.ref_id).await?;
     let impacted_consumer_ids = load_impacted_consumers(transaction, owner, default_config_mode).await?;
     let impact_token = impact_token(
         &item.item.review_item_id,
@@ -767,6 +760,7 @@ async fn calculate_intent_impact(
     Ok(IntentImpact {
         owner: Some(owner.clone()),
         owner_revision,
+        profile_authoring_generation,
         impacted_consumer_ids,
         impact_token,
     })
@@ -776,12 +770,25 @@ async fn load_owner_revision(
     transaction: &mut sqlx::Transaction<'_, Sqlite>,
     owner: &SurfaceReviewOwner,
     ref_id: &CapabilityRefId,
-) -> Result<String, ApiError> {
+) -> Result<(String, Option<i64>), ApiError> {
     let server_id: String = sqlx::query_scalar("SELECT server_id FROM capability_refs WHERE ref_id = ?")
         .bind(ref_id.as_str())
         .fetch_one(&mut **transaction)
         .await
         .map_err(database_error)?;
+    let profile_authoring_generation = match owner.owner_type {
+        ReviewOwnerType::StandardProfile | ReviewOwnerType::CustomProfile | ReviewOwnerType::ProfileServerExposure => {
+            Some(
+                sqlx::query_scalar::<_, i64>("SELECT authoring_generation FROM profile WHERE id = ?")
+                    .bind(&owner.owner_id)
+                    .fetch_optional(&mut **transaction)
+                    .await
+                    .map_err(database_error)?
+                    .ok_or_else(|| ApiError::Conflict("Selected Profile Owner no longer exists".to_string()))?,
+            )
+        }
+        _ => None,
+    };
     let relationship = match owner.owner_type {
         ReviewOwnerType::StandardProfile | ReviewOwnerType::CustomProfile => {
             sqlx::query_scalar::<_, String>(
@@ -824,7 +831,14 @@ async fn load_owner_revision(
         }
     }
     .ok_or_else(|| ApiError::Conflict("Selected Owner relationship no longer exists".to_string()))?;
-    Ok(format!("sha256:{:x}", Sha256::digest(relationship.as_bytes())))
+    let revision = match profile_authoring_generation {
+        Some(generation) => format!("profile-generation:{generation}:{relationship}"),
+        None => relationship,
+    };
+    Ok((
+        format!("sha256:{:x}", Sha256::digest(revision.as_bytes())),
+        profile_authoring_generation,
+    ))
 }
 
 async fn load_impacted_consumers(
@@ -1291,7 +1305,7 @@ mod tests {
     use mcpmate_capability_store::{
         CapabilityCatalog, CapabilityKind, CapabilityObservation, CapabilityPayload, CatalogRecord, DeclarationState,
         InventoryState, KindObservation, ReviewOwnerType, ReviewTargetKey, SqliteCapabilityCatalog, SurfaceManifest,
-        SurfaceProposal, SurfacePublication, SurfaceReviewItemDraft, SurfaceReviewOwner,
+        SurfaceManifestId, SurfaceProposal, SurfacePublication, SurfaceReviewItemDraft, SurfaceReviewOwner,
     };
     use rmcp::model::{InitializeResult, Tool};
     use serde_json::json;
@@ -1505,6 +1519,102 @@ mod tests {
             "review-target".to_string(),
             format!("capability:{}", target.capability_id),
         )
+    }
+
+    async fn configure_profile_owned_missing_intent(
+        state: &Arc<AppState>,
+        review_item_id: &str,
+    ) -> i64 {
+        let pool = &state.database.as_ref().expect("test database").pool;
+        let ref_id: String = sqlx::query_scalar("SELECT ref_id FROM surface_review_items WHERE review_item_id = ?")
+            .bind(review_item_id)
+            .fetch_one(pool)
+            .await
+            .expect("load reviewed ref");
+        sqlx::query(
+            "INSERT INTO profile (id, name, type, role, is_active, authoring_generation)
+             VALUES ('profile-a', 'Profile A', 'shared', 'user', 1, 0)",
+        )
+        .execute(pool)
+        .await
+        .expect("insert Profile owner");
+        sqlx::query(
+            "INSERT INTO profile_capability_refs (profile_id, ref_id, enabled)
+             VALUES ('profile-a', ?, 1)",
+        )
+        .bind(&ref_id)
+        .execute(pool)
+        .await
+        .expect("insert Profile ref intent");
+        sqlx::query(
+            "UPDATE client
+             SET config_mode = 'hosted', capability_source = 'profiles', selected_profile_ids = '[\"profile-a\"]'
+             WHERE identifier = 'consumer-a'",
+        )
+        .execute(pool)
+        .await
+        .expect("select Profile for Consumer");
+        sqlx::query(
+            "UPDATE surface_review_owners
+             SET owner_type = 'standard_profile', owner_id = 'profile-a'
+             WHERE review_item_id = ? AND active = 1",
+        )
+        .bind(review_item_id)
+        .execute(pool)
+        .await
+        .expect("replace review owner");
+        let manifest_id: SurfaceManifestId = sqlx::query_scalar::<_, String>(
+            "SELECT proposed_manifest_id FROM surface_proposals WHERE proposal_id = 'proposal-review'",
+        )
+        .fetch_one(pool)
+        .await
+        .expect("load reviewed manifest")
+        .parse()
+        .expect("parse reviewed manifest id");
+        let store = SqliteSurfaceStore::new(pool.clone());
+        let binding = store
+            .load_binding("consumer-a")
+            .await
+            .expect("load initial binding")
+            .expect("initial binding");
+        let mut transaction = pool.begin().await.expect("bind Profile-owned manifest");
+        store
+            .publish_and_bind_in_transaction(
+                &mut transaction,
+                &SurfacePublication::new(
+                    "publication-profile-current",
+                    "consumer-a",
+                    manifest_id,
+                    None,
+                    "profile_intent_fixture",
+                    "test",
+                    Some(binding.active_publication_id),
+                ),
+                Some(binding.generation),
+            )
+            .await
+            .expect("publish Profile-owned surface");
+        transaction.commit().await.expect("commit Profile-owned surface");
+        sqlx::query("UPDATE capability_refs SET state = 'unresolved', state_generation = 1 WHERE ref_id = ?")
+            .bind(&ref_id)
+            .execute(pool)
+            .await
+            .expect("mark ref unresolved");
+        sqlx::query(
+            "UPDATE surface_review_items
+             SET target_capability_id = NULL, target_key = 'missing:1', change_class = 'missing'
+             WHERE review_item_id = ?",
+        )
+        .bind(review_item_id)
+        .execute(pool)
+        .await
+        .expect("mark review missing");
+        SqliteSurfaceStore::new(pool.clone())
+            .load_binding("consumer-a")
+            .await
+            .expect("load Profile binding")
+            .expect("active Profile binding")
+            .generation
     }
 
     #[tokio::test]
@@ -1769,6 +1879,101 @@ mod tests {
             serde_json::json!("consumer_direct_exposure")
         );
         assert_eq!(payload["owner"]["owner_id"], serde_json::json!("consumer-a"));
+    }
+
+    #[tokio::test]
+    async fn profile_intent_resolution_rejects_stale_authoring_then_advances_once_with_materialization() {
+        let (state, review_item_id, _) = review_fixture().await;
+        let binding_generation = configure_profile_owned_missing_intent(&state, &review_item_id).await;
+        let owner = SurfaceReviewOwnerData {
+            owner_type: SurfaceReviewOwnerTypeData::StandardProfile,
+            owner_id: "profile-a".to_string(),
+        };
+        let preview = preview_intent_resolution(
+            state.clone(),
+            review_item_id.clone(),
+            SurfaceIntentPreviewReq {
+                action: SurfaceIntentResolutionActionData::RemoveIntent,
+                owner: Some(owner.clone()),
+                new_ref_id: None,
+            },
+        )
+        .await
+        .expect("preview Profile intent removal")
+        .0
+        .data
+        .expect("preview data");
+        let pool = &state.database.as_ref().unwrap().pool;
+        sqlx::query("UPDATE profile SET authoring_generation = 1 WHERE id = 'profile-a'")
+            .execute(pool)
+            .await
+            .expect("simulate concurrent Profile authoring");
+
+        let stale = resolve_intent_review(
+            state.clone(),
+            review_item_id.clone(),
+            SurfaceIntentResolveReq {
+                action: SurfaceIntentResolutionActionData::RemoveIntent,
+                owner: Some(owner.clone()),
+                new_ref_id: None,
+                expected_owner_revision: preview.owner_revision,
+                impact_token: preview.impact_token,
+                expected_target_key: "missing:1".to_string(),
+                expected_binding_generation: binding_generation,
+                actor: "reviewer-stale".to_string(),
+            },
+        )
+        .await
+        .expect_err("stale Profile authoring snapshot must conflict");
+        assert!(matches!(stale, ApiError::Conflict(_)));
+
+        let fresh = preview_intent_resolution(
+            state.clone(),
+            review_item_id.clone(),
+            SurfaceIntentPreviewReq {
+                action: SurfaceIntentResolutionActionData::RemoveIntent,
+                owner: Some(owner.clone()),
+                new_ref_id: None,
+            },
+        )
+        .await
+        .expect("refresh Profile intent preview")
+        .0
+        .data
+        .expect("fresh preview data");
+        let resolved = resolve_intent_review(
+            state.clone(),
+            review_item_id,
+            SurfaceIntentResolveReq {
+                action: SurfaceIntentResolutionActionData::RemoveIntent,
+                owner: Some(owner),
+                new_ref_id: None,
+                expected_owner_revision: fresh.owner_revision,
+                impact_token: fresh.impact_token,
+                expected_target_key: "missing:1".to_string(),
+                expected_binding_generation: binding_generation,
+                actor: "reviewer-current".to_string(),
+            },
+        )
+        .await
+        .expect("resolve current Profile intent")
+        .0
+        .data
+        .expect("resolution data");
+
+        assert!(resolved.effective_surface_changed);
+        assert_eq!(resolved.binding_generation, binding_generation + 1);
+        let authoring_generation: i64 =
+            sqlx::query_scalar("SELECT authoring_generation FROM profile WHERE id = 'profile-a'")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        let relationship_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM profile_capability_refs WHERE profile_id = 'profile-a'")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        assert_eq!((authoring_generation, relationship_count), (2, 0));
     }
 
     #[tokio::test]

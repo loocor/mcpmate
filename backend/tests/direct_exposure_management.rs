@@ -12,6 +12,59 @@ use rmcp::model::{InitializeResult, Tool};
 use serde_json::json;
 use sqlx::sqlite::SqlitePoolOptions;
 
+fn initialize_result() -> InitializeResult {
+    serde_json::from_value(json!({
+        "protocolVersion": "2025-11-25",
+        "capabilities": {"tools": {"listChanged": true}},
+        "serverInfo": {"name": "fixture", "version": "1.0.0"}
+    }))
+    .expect("initialize payload")
+}
+
+async fn commit_unrelated_catalog(
+    pool: &sqlx::SqlitePool,
+    config_version: &str,
+    description: &str,
+) {
+    let record = CatalogRecord::materialize(
+        "server-z",
+        "unrelated",
+        "server_z__unrelated",
+        CapabilityPayload::Tool(Tool::new(
+            "unrelated",
+            description.to_string(),
+            Arc::new(json!({"type": "object"}).as_object().expect("object schema").clone()),
+        )),
+    )
+    .expect("materialize unrelated tool");
+    SqliteCapabilityCatalog::new(pool.clone())
+        .commit_observation(CapabilityObservation::new(
+            "server-z",
+            "Server Z",
+            config_version,
+            initialize_result(),
+            vec![KindObservation::new(
+                CapabilityKind::Tools,
+                DeclarationState::Supported,
+                InventoryState::Complete,
+            )],
+            vec![record],
+        ))
+        .await
+        .expect("commit unrelated catalog");
+}
+
+async fn latest_proposal_dependency_revisions(pool: &sqlx::SqlitePool) -> serde_json::Value {
+    let revisions: String = sqlx::query_scalar(
+        "SELECT source_revision_set FROM surface_proposals \
+         WHERE consumer_id = 'client-a' ORDER BY rowid DESC LIMIT 1",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("load proposal dependency revisions");
+    serde_json::from_str(&revisions).expect("parse proposal dependency revisions")
+}
+
 async fn fixture() -> (sqlx::SqlitePool, ClientConfigService, CatalogRecord) {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
@@ -65,18 +118,12 @@ async fn fixture() -> (sqlx::SqlitePool, ClientConfigService, CatalogRecord) {
         )),
     )
     .expect("materialize tool");
-    let initialize: InitializeResult = serde_json::from_value(json!({
-        "protocolVersion": "2025-11-25",
-        "capabilities": {"tools": {"listChanged": true}},
-        "serverInfo": {"name": "fixture", "version": "1.0.0"}
-    }))
-    .expect("initialize payload");
     SqliteCapabilityCatalog::new(pool.clone())
         .commit_observation(CapabilityObservation::new(
             "server-a",
             "Server A",
             "server-v1",
-            initialize,
+            initialize_result(),
             vec![KindObservation::new(
                 CapabilityKind::Tools,
                 DeclarationState::Supported,
@@ -194,6 +241,62 @@ async fn retired_same_kind_refs_remain_as_intent_but_are_excluded_from_the_activ
     .await
     .expect("count published retired refs");
     assert_eq!(published_refs, 0);
+}
+
+#[tokio::test]
+async fn client_direct_exposure_proposals_exclude_unrelated_catalog_revisions() {
+    let (pool, service, tool) = fixture().await;
+    sqlx::query(
+        "INSERT INTO server_config (id, name, server_type, command, enabled) \
+         VALUES ('server-z', 'Server Z', 'stdio', '', 1)",
+    )
+    .execute(&pool)
+    .await
+    .expect("insert unrelated server");
+    commit_unrelated_catalog(&pool, "server-z-v1", "Unrelated version one").await;
+    let requested = UnifyDirectExposureIntent {
+        route_mode: UnifyRouteMode::CapabilityLevel,
+        server_ids: Vec::new(),
+        capability_refs: UnifyDirectCapabilityRefs {
+            tool_refs: vec![tool.ref_id.to_string()],
+            ..UnifyDirectCapabilityRefs::default()
+        },
+    };
+
+    service
+        .update_capability_config_state_and_invalidate(
+            "client-a",
+            Some("unify".to_string()),
+            CapabilitySource::Activated,
+            Vec::new(),
+            Some(requested),
+            service.catalog_revision_set().await.expect("load catalog revisions"),
+        )
+        .await
+        .expect("persist direct exposure");
+
+    assert_eq!(
+        latest_proposal_dependency_revisions(&pool).await,
+        json!({"server-a": 1})
+    );
+
+    commit_unrelated_catalog(&pool, "server-z-v2", "Unrelated version two").await;
+
+    service
+        .update_capability_config_state_and_invalidate(
+            "client-a",
+            Some("unify".to_string()),
+            CapabilitySource::Activated,
+            Vec::new(),
+            Some(UnifyDirectExposureIntent::default()),
+            service.catalog_revision_set().await.expect("refresh catalog revisions"),
+        )
+        .await
+        .expect("persist consumer change after unrelated revision");
+    assert_eq!(
+        latest_proposal_dependency_revisions(&pool).await,
+        json!({"server-a": 1})
+    );
 }
 #[path = "support/database.rs"]
 mod database_support;

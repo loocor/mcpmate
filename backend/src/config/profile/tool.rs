@@ -1,14 +1,17 @@
+#[cfg(test)]
 use std::str::FromStr;
 
 use anyhow::{Context, Result};
-use mcpmate_capability_store::{CapabilityKind, CapabilityRefId, EffectiveCapabilityDefinition};
-use sqlx::{Pool, Sqlite};
+#[cfg(test)]
+use mcpmate_capability_store::CapabilityRefId;
+use mcpmate_capability_store::{CapabilityKind, EffectiveCapabilityDefinition};
+use sqlx::{Pool, Sqlite, Transaction};
 
+#[cfg(test)]
+use crate::config::profile::capability_ref::upsert_profile_capability_ref;
 use crate::config::{
     models::ProfileToolWithDetails,
-    profile::capability_ref::{
-        load_capability_server_name, load_profile_capability_refs, upsert_profile_capability_ref,
-    },
+    profile::capability_ref::{load_profile_capability_refs, load_profile_capability_refs_in_transaction},
 };
 
 #[derive(Debug, Clone)]
@@ -116,9 +119,23 @@ pub async fn get_profile_tools(
     profile_id: &str,
 ) -> Result<Vec<ProfileToolWithDetails>> {
     let relationships = load_profile_capability_refs(pool, profile_id, Some(CapabilityKind::Tools)).await?;
+    profile_tools_from_relationships(relationships)
+}
+
+pub async fn get_profile_tools_in_transaction(
+    transaction: &mut Transaction<'_, Sqlite>,
+    profile_id: &str,
+) -> Result<Vec<ProfileToolWithDetails>> {
+    let relationships =
+        load_profile_capability_refs_in_transaction(transaction, profile_id, Some(CapabilityKind::Tools)).await?;
+    profile_tools_from_relationships(relationships)
+}
+
+fn profile_tools_from_relationships(
+    relationships: Vec<crate::config::profile::capability_ref::ProfileCapabilityRef>
+) -> Result<Vec<ProfileToolWithDetails>> {
     let mut tools = Vec::with_capacity(relationships.len());
     for relationship in relationships {
-        let server_name = load_capability_server_name(pool, &relationship.server_id).await?;
         let EffectiveCapabilityDefinition::Tool(tool) = relationship.definition else {
             anyhow::bail!(
                 "Capability ref '{}' does not contain a Tool definition",
@@ -130,7 +147,7 @@ pub async fn get_profile_tools(
             ref_id: relationship.ref_id.to_string(),
             enabled: relationship.enabled,
             server_id: relationship.server_id,
-            server_name,
+            server_name: relationship.server_name,
             tool_name: relationship.origin_key,
             unique_name: relationship.external_key,
             description: tool.description.map(|value| value.to_string()),
@@ -141,7 +158,8 @@ pub async fn get_profile_tools(
     Ok(tools)
 }
 
-pub async fn add_tool_to_profile(
+#[cfg(test)]
+pub(crate) async fn add_tool_to_profile(
     pool: &Pool<Sqlite>,
     profile_id: &str,
     server_id: &str,
@@ -168,62 +186,7 @@ pub async fn add_tool_to_profile(
     Ok(ref_id.to_string())
 }
 
-pub async fn remove_tool_from_profile(
-    pool: &Pool<Sqlite>,
-    profile_id: &str,
-    server_id: &str,
-    ref_id: &str,
-) -> Result<bool> {
-    let ref_id =
-        CapabilityRefId::from_str(ref_id).with_context(|| format!("Invalid Tool capability ref '{ref_id}'"))?;
-    let relationship = load_ref_for_profile_write(pool, &ref_id).await?;
-    if relationship.0 != server_id || relationship.1 != CapabilityKind::Tools {
-        anyhow::bail!(
-            "Capability ref '{}' is not a Tool owned by server '{}'",
-            ref_id,
-            server_id
-        );
-    }
-    let result = sqlx::query("DELETE FROM profile_capability_refs WHERE profile_id = ? AND ref_id = ?")
-        .bind(profile_id)
-        .bind(ref_id.as_str())
-        .execute(pool)
-        .await
-        .context("Failed to remove Tool capability ref from Profile")?;
-    Ok(result.rows_affected() == 1)
-}
-
-pub async fn update_tool_enabled_status(
-    pool: &Pool<Sqlite>,
-    profile_id: &str,
-    ref_id: &str,
-    enabled: bool,
-) -> Result<()> {
-    let ref_id =
-        CapabilityRefId::from_str(ref_id).with_context(|| format!("Invalid Tool capability ref '{ref_id}'"))?;
-    let relationship = load_ref_for_profile_write(pool, &ref_id).await?;
-    if relationship.1 != CapabilityKind::Tools {
-        anyhow::bail!("Capability ref '{}' is not a Tool", ref_id);
-    }
-    let result = sqlx::query("UPDATE profile_capability_refs SET enabled = ? WHERE profile_id = ? AND ref_id = ?")
-        .bind(enabled)
-        .bind(profile_id)
-        .bind(ref_id.as_str())
-        .execute(pool)
-        .await
-        .context("Failed to update Tool capability ref")?;
-    if result.rows_affected() != 1 {
-        anyhow::bail!("Tool relationship '{}' not found in Profile '{}'", ref_id, profile_id);
-    }
-    crate::core::events::EventBus::global().publish(crate::core::events::Event::ToolEnabledInProfileChanged {
-        tool_id: ref_id.to_string(),
-        tool_name: relationship.2,
-        profile_id: profile_id.to_string(),
-        enabled,
-    });
-    Ok(())
-}
-
+#[cfg(test)]
 async fn load_ref_for_profile_write(
     pool: &Pool<Sqlite>,
     ref_id: &CapabilityRefId,

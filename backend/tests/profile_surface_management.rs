@@ -183,6 +183,29 @@ async fn add_sibling_tool(
     sibling_record
 }
 
+async fn commit_empty_server_observation(
+    pool: &sqlx::SqlitePool,
+    server_id: &str,
+) {
+    let initialize: InitializeResult = serde_json::from_value(json!({
+        "protocolVersion": "2025-11-25",
+        "capabilities": {},
+        "serverInfo": {"name": server_id, "version": "1.0.0"}
+    }))
+    .unwrap();
+    SqliteCapabilityCatalog::new(pool.clone())
+        .commit_observation(CapabilityObservation::new(
+            server_id,
+            server_id,
+            "config-v1",
+            initialize,
+            Vec::new(),
+            Vec::new(),
+        ))
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn hosted_profile_surface_ignores_preserved_unify_direct_exposure_intent() {
     let (pool, profile_record) = fixture().await;
@@ -230,7 +253,7 @@ async fn profile_activation_republishes_activated_consumers_in_the_same_operatio
         &pool,
         &["profile-a".to_string()],
         ProfileActivationAction::Activate,
-        HashMap::from([("server-a".to_string(), 1)]),
+        HashMap::from([("profile-a".to_string(), 0)]),
         "test",
     )
     .await
@@ -257,7 +280,7 @@ async fn profile_activation_republishes_activated_consumers_in_the_same_operatio
         &pool,
         &["profile-a".to_string()],
         ProfileActivationAction::Deactivate,
-        HashMap::from([("server-a".to_string(), 1)]),
+        HashMap::from([("profile-a".to_string(), 1)]),
         "test",
     )
     .await
@@ -291,6 +314,7 @@ async fn profile_capability_save_is_atomic_and_requires_the_displayed_revision_s
         "profile-a",
         &[record.ref_id.to_string(), unknown_ref],
         ProfileRelationshipAction::Disable,
+        0,
         HashMap::from([("server-a".to_string(), 1)]),
         "test",
     )
@@ -309,7 +333,8 @@ async fn profile_capability_save_is_atomic_and_requires_the_displayed_revision_s
         "profile-a",
         &[record.ref_id.to_string()],
         ProfileRelationshipAction::Disable,
-        HashMap::new(),
+        1,
+        HashMap::from([("server-a".to_string(), 1)]),
         "test",
     )
     .await;
@@ -323,6 +348,7 @@ async fn profile_capability_save_is_atomic_and_requires_the_displayed_revision_s
         "profile-a",
         &[record.ref_id.to_string()],
         ProfileRelationshipAction::Disable,
+        0,
         HashMap::from([("server-a".to_string(), 1)]),
         "test",
     )
@@ -355,6 +381,7 @@ async fn profile_capability_override_can_disable_and_reenable_a_server_level_ref
         "profile-a",
         &[record.ref_id.to_string()],
         ProfileRelationshipAction::Disable,
+        0,
         HashMap::from([("server-a".to_string(), 1)]),
         "test",
     )
@@ -399,6 +426,7 @@ async fn profile_capability_override_can_disable_and_reenable_a_server_level_ref
         "profile-a",
         &[record.ref_id.to_string()],
         ProfileRelationshipAction::Enable,
+        1,
         HashMap::from([("server-a".to_string(), 1)]),
         "test",
     )
@@ -429,25 +457,26 @@ async fn profile_capability_override_can_disable_and_reenable_a_server_level_ref
 }
 
 #[tokio::test]
-async fn profile_server_toggle_updates_all_capabilities_without_removing_membership() {
+async fn generation_aware_profile_operation_associates_snapshot_ready_server_and_supports_toggles() {
     let (pool, record) = fixture().await;
-    ProfileSurfaceManagement::mutate_servers(
+    let association_materializations = ProfileSurfaceManagement::mutate_servers(
         &pool,
         "profile-a",
         &["server-a".to_string()],
         ProfileRelationshipAction::Enable,
-        HashMap::from([("server-a".to_string(), 1)]),
+        0,
         "test",
     )
     .await
     .unwrap();
+    assert_eq!(association_materializations.len(), 1);
 
     ProfileSurfaceManagement::mutate_servers(
         &pool,
         "profile-a",
         &["server-a".to_string()],
         ProfileRelationshipAction::Disable,
-        HashMap::from([("server-a".to_string(), 1)]),
+        1,
         "test",
     )
     .await
@@ -487,7 +516,7 @@ async fn profile_server_toggle_updates_all_capabilities_without_removing_members
         "profile-a",
         &["server-a".to_string()],
         ProfileRelationshipAction::Enable,
-        HashMap::from([("server-a".to_string(), 1)]),
+        2,
         "test",
     )
     .await
@@ -543,7 +572,7 @@ async fn enabling_a_profile_server_adds_and_enables_all_current_capability_refs(
         "profile-a",
         &["server-a".to_string()],
         ProfileRelationshipAction::Enable,
-        HashMap::from([("server-a".to_string(), 1)]),
+        0,
         "test",
     )
     .await
@@ -566,7 +595,7 @@ async fn disabling_the_last_profile_capability_disables_its_server() {
         "profile-a",
         &["server-a".to_string()],
         ProfileRelationshipAction::Enable,
-        HashMap::from([("server-a".to_string(), 1)]),
+        0,
         "test",
     )
     .await
@@ -577,6 +606,7 @@ async fn disabling_the_last_profile_capability_disables_its_server() {
         "profile-a",
         &[record.ref_id.to_string()],
         ProfileRelationshipAction::Disable,
+        1,
         HashMap::from([("server-a".to_string(), 1)]),
         "test",
     )
@@ -620,6 +650,7 @@ async fn enabling_a_profile_capability_enables_its_server_without_enabling_sibli
         "profile-a",
         &[record.ref_id.to_string()],
         ProfileRelationshipAction::Enable,
+        0,
         HashMap::from([("server-a".to_string(), 2)]),
         "test",
     )
@@ -665,6 +696,7 @@ async fn reenabling_a_capability_on_an_enabled_server_preserves_derived_siblings
         "profile-a",
         &[record.ref_id.to_string()],
         ProfileRelationshipAction::Disable,
+        0,
         HashMap::from([("server-a".to_string(), 2)]),
         "test",
     )
@@ -675,6 +707,7 @@ async fn reenabling_a_capability_on_an_enabled_server_preserves_derived_siblings
         "profile-a",
         &[record.ref_id.to_string()],
         ProfileRelationshipAction::Enable,
+        1,
         HashMap::from([("server-a".to_string(), 2)]),
         "test",
     )
@@ -719,6 +752,7 @@ async fn disabling_one_of_multiple_enabled_capabilities_keeps_its_server_enabled
         "profile-a",
         &[record.ref_id.to_string()],
         ProfileRelationshipAction::Disable,
+        0,
         HashMap::from([("server-a".to_string(), 2)]),
         "test",
     )
@@ -750,12 +784,13 @@ async fn profile_server_replace_preserves_retained_server_state_and_enables_new_
     .execute(&pool)
     .await
     .unwrap();
+    commit_empty_server_observation(&pool, "server-b").await;
     ProfileSurfaceManagement::mutate_servers(
         &pool,
         "profile-a",
         &["server-a".to_string()],
         ProfileRelationshipAction::Enable,
-        HashMap::from([("server-a".to_string(), 1)]),
+        0,
         "test",
     )
     .await
@@ -765,7 +800,7 @@ async fn profile_server_replace_preserves_retained_server_state_and_enables_new_
         "profile-a",
         &["server-a".to_string()],
         ProfileRelationshipAction::Disable,
-        HashMap::from([("server-a".to_string(), 1)]),
+        1,
         "test",
     )
     .await
@@ -775,7 +810,7 @@ async fn profile_server_replace_preserves_retained_server_state_and_enables_new_
         &pool,
         "profile-a",
         &["server-a".to_string(), "server-b".to_string()],
-        HashMap::from([("server-a".to_string(), 1)]),
+        2,
         "test",
     )
     .await
@@ -799,20 +834,16 @@ async fn profile_delete_republishes_affected_consumers_in_the_same_operation() {
         "profile-a",
         &[record.ref_id.to_string()],
         ProfileRelationshipAction::Enable,
+        0,
         HashMap::from([("server-a".to_string(), 1)]),
         "test",
     )
     .await
     .unwrap();
 
-    let deleted = ProfileSurfaceManagement::delete_profile(
-        &pool,
-        "profile-a",
-        HashMap::from([("server-a".to_string(), 1)]),
-        "test",
-    )
-    .await
-    .unwrap();
+    let deleted = ProfileSurfaceManagement::delete_profile(&pool, "profile-a", 1, "test")
+        .await
+        .unwrap();
 
     assert_eq!(deleted.profile_name, "Profile A");
     assert_eq!(deleted.materializations.len(), 1);
@@ -848,6 +879,7 @@ async fn profile_server_replace_is_atomic() {
     .execute(&pool)
     .await
     .unwrap();
+    commit_empty_server_observation(&pool, "server-b").await;
     sqlx::query(
         "INSERT INTO profile_server_relationships (profile_id, server_id, new_ref_policy) VALUES ('profile-a', 'server-a', 'follow')",
     )
@@ -859,7 +891,7 @@ async fn profile_server_replace_is_atomic() {
         &pool,
         "profile-a",
         &["server-b".to_string(), "missing".to_string()],
-        HashMap::from([("server-a".to_string(), 1)]),
+        0,
         "test",
     )
     .await;
@@ -872,15 +904,9 @@ async fn profile_server_replace_is_atomic() {
     .unwrap();
     assert_eq!(unchanged, vec!["server-a"]);
 
-    ProfileSurfaceManagement::replace_servers(
-        &pool,
-        "profile-a",
-        &["server-b".to_string()],
-        HashMap::from([("server-a".to_string(), 1)]),
-        "test",
-    )
-    .await
-    .unwrap();
+    ProfileSurfaceManagement::replace_servers(&pool, "profile-a", &["server-b".to_string()], 0, "test")
+        .await
+        .unwrap();
     let replaced: Vec<String> = sqlx::query_scalar(
         "SELECT server_id FROM profile_server_relationships WHERE profile_id = 'profile-a' ORDER BY server_id",
     )
@@ -904,6 +930,274 @@ async fn profile_server_replace_is_atomic() {
 }
 
 #[tokio::test]
+async fn server_operations_use_only_profile_authoring_generation() {
+    let (pool, _) = fixture().await;
+
+    ProfileSurfaceManagement::mutate_servers(
+        &pool,
+        "profile-a",
+        &["server-a".to_string()],
+        ProfileRelationshipAction::Enable,
+        0,
+        "test",
+    )
+    .await
+    .unwrap();
+    let generation: i64 = sqlx::query_scalar("SELECT authoring_generation FROM profile WHERE id = 'profile-a'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(generation, 1);
+
+    let stale = ProfileSurfaceManagement::mutate_servers(
+        &pool,
+        "profile-a",
+        &["server-a".to_string()],
+        ProfileRelationshipAction::Disable,
+        0,
+        "test",
+    )
+    .await;
+    assert!(matches!(
+        stale,
+        Err(mcpmate_capability_store::CatalogError::ConcurrencyConflict {
+            entity: "profile authoring generation",
+            ..
+        })
+    ));
+}
+
+#[tokio::test]
+async fn capability_operations_require_exact_dependencies_and_profile_authoring_generation() {
+    let (pool, record) = fixture().await;
+
+    ProfileSurfaceManagement::mutate_capabilities(
+        &pool,
+        "profile-a",
+        &[record.ref_id.to_string()],
+        ProfileRelationshipAction::Disable,
+        0,
+        HashMap::from([("server-a".to_string(), 1)]),
+        "test",
+    )
+    .await
+    .unwrap();
+    let generation: i64 = sqlx::query_scalar("SELECT authoring_generation FROM profile WHERE id = 'profile-a'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(generation, 1);
+
+    for invalid_dependencies in [
+        HashMap::new(),
+        HashMap::from([("server-a".to_string(), 1), ("unrelated".to_string(), 1)]),
+    ] {
+        let invalid = ProfileSurfaceManagement::mutate_capabilities(
+            &pool,
+            "profile-a",
+            &[record.ref_id.to_string()],
+            ProfileRelationshipAction::Enable,
+            1,
+            invalid_dependencies,
+            "test",
+        )
+        .await;
+        assert!(matches!(
+            invalid,
+            Err(mcpmate_capability_store::CatalogError::InvalidSurfaceValue {
+                field: "profile catalog dependency revisions",
+                ..
+            })
+        ));
+    }
+    let generation_after_invalid: i64 =
+        sqlx::query_scalar("SELECT authoring_generation FROM profile WHERE id = 'profile-a'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(generation_after_invalid, 1);
+
+    add_sibling_tool(&pool, &record).await;
+    let drift = ProfileSurfaceManagement::mutate_capabilities(
+        &pool,
+        "profile-a",
+        &[record.ref_id.to_string()],
+        ProfileRelationshipAction::Enable,
+        1,
+        HashMap::from([("server-a".to_string(), 1)]),
+        "test",
+    )
+    .await;
+    assert!(matches!(
+        drift,
+        Err(mcpmate_capability_store::CatalogError::ConcurrencyConflict {
+            entity: "profile catalog dependency revisions",
+            ..
+        })
+    ));
+    let generation_after_drift: i64 =
+        sqlx::query_scalar("SELECT authoring_generation FROM profile WHERE id = 'profile-a'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(generation_after_drift, 1);
+}
+
+#[tokio::test]
+async fn delete_requires_current_profile_authoring_generation() {
+    let (pool, _) = fixture().await;
+
+    let stale = ProfileSurfaceManagement::delete_profile(&pool, "profile-a", 1, "test").await;
+    assert!(matches!(
+        stale,
+        Err(mcpmate_capability_store::CatalogError::ConcurrencyConflict {
+            entity: "profile authoring generation",
+            ..
+        })
+    ));
+    let retained: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM profile WHERE id = 'profile-a')")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(retained);
+
+    ProfileSurfaceManagement::delete_profile(&pool, "profile-a", 0, "test")
+        .await
+        .unwrap();
+    let deleted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM profile WHERE id = 'profile-a')")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(!deleted);
+}
+
+#[tokio::test]
+async fn activation_advances_target_and_automatically_deactivated_authoring_generations() {
+    let (pool, _) = fixture().await;
+    sqlx::query(
+        "INSERT INTO profile (id, name, description, type, role, is_active, multi_select)
+         VALUES ('profile-b', 'Profile B', '', 'shared', 'user', 0, 0)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    ProfileSurfaceManagement::set_profiles_active(
+        &pool,
+        &["profile-b".to_string()],
+        ProfileActivationAction::Activate,
+        HashMap::from([("profile-b".to_string(), 0)]),
+        "test",
+    )
+    .await
+    .unwrap();
+    let generations: Vec<(String, bool, i64)> =
+        sqlx::query_as("SELECT id, is_active, authoring_generation FROM profile ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        generations,
+        vec![("profile-a".to_string(), false, 1), ("profile-b".to_string(), true, 1),]
+    );
+
+    ProfileSurfaceManagement::set_profiles_active(
+        &pool,
+        &["profile-b".to_string()],
+        ProfileActivationAction::Deactivate,
+        HashMap::from([("profile-b".to_string(), 1)]),
+        "test",
+    )
+    .await
+    .unwrap();
+    let generation: (bool, i64) =
+        sqlx::query_as("SELECT is_active, authoring_generation FROM profile WHERE id = 'profile-b'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(generation, (false, 2));
+}
+
+#[tokio::test]
+async fn batch_activation_validates_once_and_advances_each_profile_once() {
+    let (pool, _) = fixture().await;
+    sqlx::query("UPDATE profile SET multi_select = 0 WHERE id = 'profile-a'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO profile (id, name, description, type, role, is_active, multi_select)
+         VALUES ('profile-b', 'Profile B', '', 'shared', 'user', 1, 0)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let result = ProfileSurfaceManagement::set_profiles_active(
+        &pool,
+        &["profile-a".to_string(), "profile-b".to_string()],
+        ProfileActivationAction::Activate,
+        HashMap::from([("profile-a".to_string(), 0), ("profile-b".to_string(), 0)]),
+        "test",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.mutations.len(), 2);
+    let profiles: Vec<(String, bool, i64)> =
+        sqlx::query_as("SELECT id, is_active, authoring_generation FROM profile ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        profiles,
+        vec![("profile-a".to_string(), false, 1), ("profile-b".to_string(), true, 1)]
+    );
+}
+
+#[tokio::test]
+async fn batch_activation_reports_the_non_first_stale_profile() {
+    let (pool, _) = fixture().await;
+    sqlx::query(
+        "INSERT INTO profile (id, name, description, type, role, is_active, multi_select, authoring_generation)
+         VALUES ('profile-b', 'Profile B', '', 'shared', 'user', 0, 1, 2)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let result = ProfileSurfaceManagement::set_profiles_active(
+        &pool,
+        &["profile-a".to_string(), "profile-b".to_string()],
+        ProfileActivationAction::Activate,
+        HashMap::from([("profile-a".to_string(), 0), ("profile-b".to_string(), 1)]),
+        "test",
+    )
+    .await;
+    let error = match result {
+        Ok(_) => panic!("stale non-first Profile must reject the whole batch"),
+        Err(error) => error,
+    };
+
+    assert!(matches!(
+        error,
+        mcpmate_capability_store::CatalogError::ConcurrencyConflict {
+            entity: "profile authoring generation",
+            ref id,
+        } if id == "profile-b"
+    ));
+    let unchanged: Vec<(String, bool, i64)> =
+        sqlx::query_as("SELECT id, is_active, authoring_generation FROM profile ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        unchanged,
+        vec![("profile-a".to_string(), true, 0), ("profile-b".to_string(), false, 2)]
+    );
+}
+
+#[tokio::test]
 async fn startup_bootstrap_creates_initial_publications_for_managed_consumers() {
     let (pool, _) = fixture().await;
 
@@ -916,6 +1210,128 @@ async fn startup_bootstrap_creates_initial_publications_for_managed_consumers() 
             .await
             .unwrap();
     assert_eq!(binding_count, 1);
+}
+
+#[tokio::test]
+async fn startup_bootstrap_persists_distinct_dependencies_for_each_consumer() {
+    let pool = init_management_pool().await;
+    for server_id in ["server-empty", "server-capability"] {
+        sqlx::query(
+            "INSERT INTO server_config (id, name, server_type, command, enabled, unify_direct_exposure_eligible) \
+             VALUES (?, ?, 'stdio', '', 1, 1)",
+        )
+        .bind(server_id)
+        .bind(server_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let capability = CatalogRecord::materialize(
+        "server-capability",
+        "analyze",
+        "server_capability__analyze",
+        CapabilityPayload::Tool(Tool::new(
+            "analyze",
+            "Analyze input",
+            std::sync::Arc::new(json!({"type": "object"}).as_object().unwrap().clone()),
+        )),
+    )
+    .unwrap();
+    let initialize: InitializeResult = serde_json::from_value(json!({
+        "protocolVersion": "2025-11-25",
+        "capabilities": {"tools": {"listChanged": true}},
+        "serverInfo": {"name": "fixture", "version": "1.0.0"}
+    }))
+    .unwrap();
+    let catalog = SqliteCapabilityCatalog::new(pool.clone());
+    catalog
+        .commit_observation(CapabilityObservation::new(
+            "server-empty",
+            "Empty Server",
+            "empty-v1",
+            initialize.clone(),
+            vec![KindObservation::new(
+                CapabilityKind::Tools,
+                DeclarationState::Supported,
+                InventoryState::Complete,
+            )],
+            Vec::new(),
+        ))
+        .await
+        .unwrap();
+    catalog
+        .commit_observation(CapabilityObservation::new(
+            "server-capability",
+            "Capability Server",
+            "capability-v1",
+            initialize,
+            vec![KindObservation::new(
+                CapabilityKind::Tools,
+                DeclarationState::Supported,
+                InventoryState::Complete,
+            )],
+            vec![capability.clone()],
+        ))
+        .await
+        .unwrap();
+    for (consumer_id, route_mode) in [
+        ("client-server-intent", "server_level"),
+        ("client-capability-intent", "capability_level"),
+    ] {
+        sqlx::query(
+            r#"
+            INSERT INTO client (
+                id, identifier, name, config_mode, approval_status,
+                capability_source, selected_profile_ids, unify_route_mode
+            ) VALUES (?, ?, ?, 'unify', 'approved', 'activated', '[]', ?)
+            "#,
+        )
+        .bind(consumer_id)
+        .bind(consumer_id)
+        .bind(consumer_id)
+        .bind(route_mode)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO direct_exposure_servers (consumer_id, server_id, new_ref_policy) \
+         VALUES ('client-server-intent', 'server-empty', 'follow')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO direct_exposure_refs (consumer_id, ref_id, enabled) \
+         VALUES ('client-capability-intent', ?, 1)",
+    )
+    .bind(capability.ref_id.as_str())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let commits = bootstrap_managed_surfaces(&pool).await.unwrap();
+
+    assert_eq!(commits.len(), 2);
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT consumer_id, source_revision_set FROM surface_proposals \
+         WHERE trigger_kind = 'startup_bootstrap' ORDER BY consumer_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows.into_iter()
+            .map(|(consumer_id, revisions)| (
+                consumer_id,
+                serde_json::from_str::<serde_json::Value>(&revisions).unwrap(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("client-capability-intent".to_string(), json!({"server-capability": 1}),),
+            ("client-server-intent".to_string(), json!({"server-empty": 1}),),
+        ]
+    );
 }
 
 #[tokio::test]
@@ -1033,7 +1449,7 @@ async fn builtin_catalog_sync_republishes_existing_unify_surface_with_only_ucan_
 }
 
 #[tokio::test]
-async fn global_server_disable_uses_current_catalog_revision_for_affected_surfaces() {
+async fn global_server_disable_scopes_current_catalog_revisions_to_affected_surfaces() {
     let (pool, _) = fixture().await;
     sqlx::query(
         "INSERT INTO server_config (id, name, server_type, command, enabled) VALUES ('server-b', 'Server B', 'stdio', '', 1)",
@@ -1105,7 +1521,7 @@ async fn global_server_disable_uses_current_catalog_revision_for_affected_surfac
     .unwrap();
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&source_revision_set).unwrap(),
-        json!({"server-a": 1, "server-b": 2})
+        json!({"server-a": 1})
     );
 }
 

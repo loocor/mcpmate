@@ -5,7 +5,7 @@ use crate::clients::models::{
     FirstContactBehavior,
 };
 use crate::core::capability::materializer::{
-    MaterializationCoordinator, MaterializationTrigger, SurfaceAuthoringLoader, revoke_managed_surface_in_transaction,
+    MaterializationCoordinator, MaterializationTrigger, revoke_managed_surface_in_transaction,
 };
 use mcpmate_capability_store::CatalogError;
 use std::collections::HashMap;
@@ -79,9 +79,9 @@ impl ClientConfigService {
         &self,
         identifier: &str,
     ) -> ConfigResult<bool> {
-        let Some(state) = self.fetch_state(identifier).await? else {
+        if self.fetch_state(identifier).await?.is_none() {
             return Ok(false);
-        };
+        }
 
         if let Err(err) = self.delete_all_client_backups(identifier).await {
             tracing::warn!(
@@ -91,17 +91,23 @@ impl ClientConfigService {
             );
         }
 
-        if let Some(custom_profile_id) = state.custom_profile_id.as_deref() {
-            crate::config::profile::delete_profile(self.db_pool.as_ref(), custom_profile_id)
-                .await
-                .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
-        }
-
         let mut transaction = self
             .db_pool
-            .begin()
+            .begin_with("BEGIN IMMEDIATE")
             .await
             .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+        let custom_profile = sqlx::query_as::<_, (String, i64)>(
+            r#"
+            SELECT profile.id, profile.authoring_generation
+            FROM client
+            JOIN profile ON profile.id = client.custom_profile_id
+            WHERE client.identifier = ?
+            "#,
+        )
+        .bind(identifier)
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
         revoke_managed_surface_in_transaction(self.db_pool.as_ref(), &mut transaction, identifier, "client-delete")
             .await
             .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
@@ -126,6 +132,20 @@ impl ClientConfigService {
 
         if result.rows_affected() == 0 {
             return Ok(false);
+        }
+
+        if let Some((custom_profile_id, authoring_generation)) = custom_profile {
+            let deleted = sqlx::query("DELETE FROM profile WHERE id = ? AND authoring_generation = ?")
+                .bind(&custom_profile_id)
+                .bind(authoring_generation)
+                .execute(&mut *transaction)
+                .await
+                .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+            if deleted.rows_affected() != 1 {
+                return Err(ConfigError::DataAccessError(format!(
+                    "Profile '{custom_profile_id}' changed before client cleanup"
+                )));
+            }
         }
 
         transaction
@@ -287,18 +307,14 @@ impl ClientConfigService {
         .execute(&mut *transaction)
         .await
         .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
-        let source_revision_set = SurfaceAuthoringLoader::load_catalog_revision_set_in_transaction(&mut transaction)
-            .await
-            .map_err(|error| ConfigError::DataAccessError(error.to_string()))?;
         let materialization = self
             .materialize_managed_surface_in_transaction(
                 &mut transaction,
                 identifier,
                 &default_config_mode,
-                &MaterializationTrigger::new(
+                &MaterializationTrigger::for_consumer(
                     "consumer_approval",
                     format!("approve:{identifier}"),
-                    source_revision_set,
                     "client_management",
                 ),
             )
@@ -1499,6 +1515,50 @@ mod tests {
             .await
             .expect("deleted client can be recreated passively");
         assert_eq!(recreated.identifier, "test.client");
+    }
+
+    #[tokio::test]
+    async fn delete_client_record_generation_aware_deletes_custom_profile() {
+        let (_temp_dir, service) = create_test_service().await;
+
+        service
+            .set_client_settings("test.custom", None, None)
+            .await
+            .expect("create custom client state");
+        let mut profile = crate::config::models::Profile::new(
+            "Test Custom Profile".to_string(),
+            crate::common::profile::ProfileType::HostApp,
+        );
+        profile.id = Some("profile-custom-test".to_string());
+        profile.authoring_generation = 7;
+        let profile_id = crate::test_helpers::insert_profile(service.db_pool.as_ref(), &profile).await;
+        sqlx::query("UPDATE client SET capability_source = 'custom', custom_profile_id = ? WHERE identifier = ?")
+            .bind(&profile_id)
+            .bind("test.custom")
+            .execute(service.db_pool.as_ref())
+            .await
+            .expect("assign custom Profile to client");
+
+        assert!(
+            service
+                .delete_client_record("test.custom")
+                .await
+                .expect("delete client with custom Profile")
+        );
+
+        let profile_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM profile WHERE id = ?)")
+            .bind(&profile_id)
+            .fetch_one(service.db_pool.as_ref())
+            .await
+            .expect("query custom Profile after client cleanup");
+        assert!(!profile_exists);
+        assert!(
+            service
+                .fetch_state("test.custom")
+                .await
+                .expect("fetch custom client after delete")
+                .is_none()
+        );
     }
 
     #[tokio::test]

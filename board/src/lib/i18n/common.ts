@@ -53,6 +53,34 @@ export const commonTranslations = {
 				unknown: "Unknown reason",
 			},
 		},
+		profileSyncErrors: {
+			importFailedTitle: "Import failed",
+			pendingPublishTitle: "Server publish failed",
+			importedServerMissing:
+				"An imported server could not be found. Refresh the server list and try again.",
+			importedServerAmbiguous:
+				"More than one server matches an imported name. Rename the duplicate servers and try again.",
+			profileAuthoringStateMissing:
+				"The latest Profile state is not loaded. Refresh the Profile and try again.",
+			profileAuthoringStateMismatch:
+				"The selected capabilities were loaded from different Profile versions. Refresh and try again.",
+			catalogSnapshotMissing:
+				"Capability catalog state is not loaded. Refresh and try again.",
+			catalogSnapshotMismatch:
+				"The selected capabilities were loaded from different catalog versions. Refresh and try again.",
+			capabilitySnapshotMissing:
+				"The server capability catalog is not ready. Refresh the server and try again.",
+			profileAuthoringChanged:
+				"This Profile changed elsewhere. Your draft is preserved; review the latest state and save again.",
+			catalogDependencyChanged:
+				"A related server capability catalog changed. The affected data was refreshed; review and try again.",
+			consumerBindingChanged:
+				"A related client binding changed. Refresh the Profile and try again.",
+			invalidTarget:
+				"The selected Profile target is no longer available. Refresh and choose another target.",
+			unexpected:
+				"The Profile update could not be completed. Refresh and try again.",
+		},
 		backendReadiness: {
 			title: "MCPMate is starting",
 			starting: "Starting MCPMate Core...",
@@ -166,6 +194,31 @@ export const commonTranslations = {
 				unknown: "未知原因",
 			},
 		},
+		profileSyncErrors: {
+			importFailedTitle: "导入失败",
+			pendingPublishTitle: "服务器发布失败",
+			importedServerMissing: "找不到已导入的服务器。请刷新服务器列表后重试。",
+			importedServerAmbiguous:
+				"多个服务器使用了相同的导入名称。请重命名重复服务器后重试。",
+			profileAuthoringStateMissing:
+				"尚未加载最新的 Profile 状态。请刷新 Profile 后重试。",
+			profileAuthoringStateMismatch:
+				"所选能力来自不同的 Profile 版本。请刷新后重试。",
+			catalogSnapshotMissing: "尚未加载能力目录状态。请刷新后重试。",
+			catalogSnapshotMismatch:
+				"所选能力来自不同的目录版本。请刷新后重试。",
+			capabilitySnapshotMissing:
+				"服务器能力目录尚未就绪。请刷新服务器后重试。",
+			profileAuthoringChanged:
+				"此 Profile 已在其他位置更改。你的草稿已保留；请检查最新状态后再次保存。",
+			catalogDependencyChanged:
+				"相关服务器的能力目录已更改。受影响的数据已刷新；请检查后重试。",
+			consumerBindingChanged:
+				"相关客户端绑定已更改。请刷新 Profile 后重试。",
+			invalidTarget:
+				"所选 Profile 目标已不可用。请刷新并选择其他目标。",
+			unexpected: "无法完成 Profile 更新。请刷新后重试。",
+		},
 		backendReadiness: {
 			title: "MCPMate 正在启动",
 			starting: "正在启动 MCPMate Core...",
@@ -277,6 +330,34 @@ export const commonTranslations = {
 				configMissingUrl: "URL がありません",
 				unknown: "不明な理由",
 			},
+		},
+		profileSyncErrors: {
+			importFailedTitle: "インポートに失敗しました",
+			pendingPublishTitle: "サーバーの公開に失敗しました",
+			importedServerMissing:
+				"インポートしたサーバーが見つかりません。サーバー一覧を更新して再試行してください。",
+			importedServerAmbiguous:
+				"同じインポート名に複数のサーバーが一致します。重複するサーバー名を変更して再試行してください。",
+			profileAuthoringStateMissing:
+				"最新の Profile 状態が読み込まれていません。Profile を更新して再試行してください。",
+			profileAuthoringStateMismatch:
+				"選択した capability は異なる Profile バージョンから読み込まれています。更新して再試行してください。",
+			catalogSnapshotMissing:
+				"capability catalog の状態が読み込まれていません。更新して再試行してください。",
+			catalogSnapshotMismatch:
+				"選択した capability は異なる catalog バージョンから読み込まれています。更新して再試行してください。",
+			capabilitySnapshotMissing:
+				"サーバーの capability catalog はまだ準備できていません。サーバーを更新して再試行してください。",
+			profileAuthoringChanged:
+				"この Profile は別の場所で変更されました。下書きは保持されています。最新の状態を確認して再度保存してください。",
+			catalogDependencyChanged:
+				"関連サーバーの capability catalog が変更されました。対象データを更新しました。確認して再試行してください。",
+			consumerBindingChanged:
+				"関連する client binding が変更されました。Profile を更新して再試行してください。",
+			invalidTarget:
+				"選択した Profile は利用できなくなりました。更新して別の対象を選択してください。",
+			unexpected:
+				"Profile の更新を完了できませんでした。更新して再試行してください。",
 		},
 		backendReadiness: {
 			title: "MCPMate を起動しています",

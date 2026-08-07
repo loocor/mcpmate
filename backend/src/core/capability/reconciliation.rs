@@ -12,7 +12,10 @@ use uuid::Uuid;
 
 use super::{
     change_policy::{ChangeClass, classify_effective_definition_change},
-    materializer::{MaterializationCoordinator, MaterializationTrigger},
+    dependency::CatalogDependencyRevisions,
+    materializer::{
+        MaterializationCoordinator, MaterializationTrigger, SurfaceAuthoringLoader, load_default_config_mode,
+    },
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -156,15 +159,21 @@ impl CatalogSurfaceReconciler {
         fault: ReconciliationFault,
     ) -> Result<()> {
         let consumers = affected_consumers(transaction, server_id, include_server_intent).await?;
-        let target_revision_set = sqlx::query_as::<_, (String, i64)>(
-            "SELECT server_id, catalog_revision FROM capability_server_snapshots ORDER BY server_id",
-        )
-        .fetch_all(&mut **transaction)
-        .await?
-        .into_iter()
-        .map(|(server_id, revision)| (server_id, serde_json::Value::from(revision)))
-        .collect::<serde_json::Map<String, serde_json::Value>>();
+        let default_config_mode = load_default_config_mode(&self.pool).await?;
         for (index, (consumer_id, needs_contraction)) in consumers.iter().enumerate() {
+            let input = SurfaceAuthoringLoader::load_consumer_input_in_transaction(
+                transaction,
+                consumer_id,
+                &default_config_mode,
+            )
+            .await?;
+            let target_revisions = CatalogDependencyRevisions::derive_in_transaction(
+                transaction,
+                consumer_id,
+                &input.dependency_server_ids,
+                Some(server_id),
+            )
+            .await?;
             let binding = self
                 .surfaces
                 .load_binding_in_transaction(transaction, consumer_id)
@@ -207,7 +216,7 @@ impl CatalogSurfaceReconciler {
                 "catalog_delta",
                 cause_id,
                 consumer_id,
-                serde_json::Value::Object(target_revision_set.clone()),
+                serde_json::to_value(&target_revisions)?,
                 safe_binding.generation,
             )?;
             self.surfaces
@@ -325,35 +334,51 @@ impl SurfaceReconciliationWorker {
         &self,
         job: &SurfaceReconciliationJob,
     ) -> Result<()> {
-        let source_revision_set = parse_target_revision_set(&job.target_revision_set)?;
+        let expected: CatalogDependencyRevisions = serde_json::from_value(job.target_revision_set.clone())?;
         let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         self.store
             .validate_reconciliation_lease_owner_in_transaction(&mut transaction, job, &self.worker_id)
             .await?;
-        let actual_revision_set = sqlx::query_as::<_, (String, i64)>(
-            "SELECT server_id, catalog_revision FROM capability_server_snapshots ORDER BY server_id",
-        )
-        .fetch_all(&mut *transaction)
-        .await?
-        .into_iter()
-        .collect::<HashMap<_, _>>();
+        let actual =
+            CatalogDependencyRevisions::load_current_for_expected_servers_in_transaction(&mut transaction, &expected)
+                .await?;
         let actual_binding_generation: Option<i64> =
             sqlx::query_scalar("SELECT generation FROM consumer_surface_bindings WHERE consumer_id = ?")
                 .bind(&job.consumer_id)
                 .fetch_optional(&mut *transaction)
                 .await?;
-        if actual_revision_set != source_revision_set
-            || actual_binding_generation != Some(job.expected_binding_generation)
-        {
+        let catalog_dependencies_changed = actual != expected;
+        let binding_generation_changed = actual_binding_generation != Some(job.expected_binding_generation);
+        if catalog_dependencies_changed || binding_generation_changed {
             let actual_binding_generation = actual_binding_generation.ok_or_else(|| CatalogError::SurfaceNotFound {
                 entity: "consumer surface binding",
                 id: job.consumer_id.clone(),
             })?;
+            let default_config_mode = load_default_config_mode(&self.pool).await?;
+            let input = SurfaceAuthoringLoader::load_consumer_input_in_transaction(
+                &mut transaction,
+                &job.consumer_id,
+                &default_config_mode,
+            )
+            .await?;
+            let cause_server_id = catalog_job_cause_server_id(job)?;
+            let successor_revisions = CatalogDependencyRevisions::derive_in_transaction(
+                &mut transaction,
+                &job.consumer_id,
+                &input.dependency_server_ids,
+                Some(cause_server_id),
+            )
+            .await?;
+            let supersede_reason = if catalog_dependencies_changed {
+                "catalog_dependency_changed"
+            } else {
+                "binding_generation_changed"
+            };
             let successor = SurfaceReconciliationJob::new(
                 &job.cause_kind,
                 &job.cause_id,
                 &job.consumer_id,
-                serde_json::to_value(&actual_revision_set)?,
+                serde_json::to_value(&successor_revisions)?,
                 actual_binding_generation,
             )?;
             self.store
@@ -361,8 +386,10 @@ impl SurfaceReconciliationWorker {
                 .await?;
             let receipt = json!({
                 "outcome": "superseded",
+                "supersedeReason": supersede_reason,
+                "dependencyServerCount": successor_revisions.server_ids().count(),
                 "successorIdempotencyKey": successor.idempotency_key,
-                "actualRevisionSet": actual_revision_set,
+                "actualRevisionSet": actual,
                 "actualBindingGeneration": actual_binding_generation,
             });
             self.store
@@ -378,8 +405,9 @@ impl SurfaceReconciliationWorker {
             return Ok(());
         }
         let (changes, baseline_manifest_id) = load_job_changes(&mut transaction, job).await?;
-        let trigger = MaterializationTrigger::new(&job.cause_kind, &job.cause_id, source_revision_set, &self.worker_id)
-            .with_review_baseline_manifest_id(baseline_manifest_id);
+        let trigger =
+            MaterializationTrigger::from_dependencies(&job.cause_kind, &job.cause_id, expected, &self.worker_id)
+                .with_review_baseline_manifest_id(baseline_manifest_id);
         let commit = MaterializationCoordinator::new(self.pool.clone())
             .compile_consumer_with_changes_in_transaction(&mut transaction, &job.consumer_id, changes, &trigger)
             .await?;
@@ -622,24 +650,21 @@ fn classify_version_change(
     Ok(classify_effective_definition_change(&baseline, &current))
 }
 
-fn parse_target_revision_set(value: &serde_json::Value) -> Result<HashMap<String, i64>> {
-    value
-        .as_object()
+fn catalog_job_cause_server_id(job: &SurfaceReconciliationJob) -> Result<&str> {
+    if job.cause_kind != "catalog_delta" {
+        return Err(CatalogError::InvalidSurfaceValue {
+            field: "surface reconciliation cause kind",
+            value: job.cause_kind.clone(),
+        });
+    }
+    job.cause_id
+        .rsplit_once(':')
+        .map(|(server_id, _)| server_id)
+        .filter(|server_id| !server_id.is_empty())
         .ok_or_else(|| CatalogError::InvalidSurfaceValue {
-            field: "target revision set",
-            value: value.to_string(),
-        })?
-        .iter()
-        .map(|(server_id, revision)| {
-            revision
-                .as_i64()
-                .map(|revision| (server_id.clone(), revision))
-                .ok_or_else(|| CatalogError::InvalidSurfaceValue {
-                    field: "target catalog revision",
-                    value: revision.to_string(),
-                })
+            field: "surface reconciliation cause id",
+            value: job.cause_id.clone(),
         })
-        .collect()
 }
 
 async fn affected_consumers(

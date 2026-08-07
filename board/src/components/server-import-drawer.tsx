@@ -2,12 +2,13 @@ import { useMutation } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-	assertCompleteServerImport,
+	completeServerImportForProfile,
 	extractImportStats,
 	serversApi,
 } from "../lib/api";
 import { resolveAutoAddTargetProfileId } from "../lib/default-profile";
 import { notifyError, notifyInfo, notifySuccess } from "../lib/notify";
+import { profileSyncErrorTranslationKey } from "../lib/profile-sync-error";
 import { formatNameList, summarizeSkipped } from "../lib/server-import-utils";
 import {
 	resolveImportDrawerOpen,
@@ -189,10 +190,7 @@ export function ServerImportDrawer({
 					useAppStore.getState().dashboardSettings
 						.autoAddServerToDefaultProfile,
 			});
-			const importPayload = targetProfileId
-				? { ...p.payload, target_profile_id: targetProfileId }
-				: p.payload;
-			const res = await serversApi.importServers(importPayload);
+			const res = await serversApi.importServers(p.payload);
 			const stats = extractImportStats(res);
 			const didSucceed =
 				typeof res?.success === "boolean"
@@ -200,7 +198,7 @@ export function ServerImportDrawer({
 					: (res as { status?: string })?.status === "success" ||
 					!("error" in (res ?? {}));
 			if (didSucceed) {
-				assertCompleteServerImport(stats);
+				await completeServerImportForProfile(targetProfileId, stats);
 				const { importedCount, skippedCount, skippedServers, skippedDetails } =
 					stats;
 				const skippedSummary = summarizeSkipped(skippedDetails, t);
@@ -228,9 +226,15 @@ export function ServerImportDrawer({
 				onOpenChange(false);
 				return;
 			}
-			notifyError("Import failed", String(res.error ?? "Unknown error"));
+			notifyError(
+				t("profileSyncErrors.importFailedTitle"),
+				String(res.error ?? "Unknown error"),
+			);
 		} catch (e) {
-			notifyError("Import failed", String(e));
+			notifyError(
+				t("profileSyncErrors.importFailedTitle"),
+				t(profileSyncErrorTranslationKey(e)),
+			);
 		} finally {
 			importInFlightRef.current = false;
 			setImporting(false);

@@ -13,6 +13,35 @@ pub async fn prepare_audit_database(pool: &Pool<Sqlite>) {
         .expect("prepare test audit database");
 }
 
+pub async fn insert_profile(
+    pool: &Pool<Sqlite>,
+    profile: &crate::config::models::Profile,
+) -> String {
+    let profile_id = profile.id.clone().unwrap_or_else(|| crate::generate_id!("prof"));
+    sqlx::query(
+        r#"
+        INSERT INTO profile (
+            id, name, description, type, role, multi_select,
+            priority, is_active, is_default, authoring_generation
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(&profile_id)
+    .bind(&profile.name)
+    .bind(&profile.description)
+    .bind(profile.profile_type)
+    .bind(profile.role)
+    .bind(profile.multi_select)
+    .bind(profile.priority)
+    .bind(profile.is_active)
+    .bind(profile.is_default)
+    .bind(profile.authoring_generation)
+    .execute(pool)
+    .await
+    .expect("insert test Profile");
+    profile_id
+}
+
 /// Build a `SecretOriginInput` for an OAuth-managed secret slot.
 pub fn oauth_secret_origin(
     server_id: &str,

@@ -1,17 +1,23 @@
+#[cfg(test)]
 use std::str::FromStr;
 
-use anyhow::{Context, Result};
-use mcpmate_capability_store::{CapabilityKind, CapabilityRefId, EffectiveCapabilityDefinition};
-use sqlx::{Pool, Sqlite};
+#[cfg(test)]
+use anyhow::Context;
+use anyhow::Result;
+#[cfg(test)]
+use mcpmate_capability_store::CapabilityRefId;
+use mcpmate_capability_store::{CapabilityKind, EffectiveCapabilityDefinition};
+use sqlx::{Pool, Sqlite, Transaction};
 
+#[cfg(test)]
+use crate::config::profile::capability_ref::upsert_profile_capability_ref;
 use crate::config::{
     models::ProfileResource,
-    profile::capability_ref::{
-        load_capability_server_name, load_profile_capability_refs, upsert_profile_capability_ref,
-    },
+    profile::capability_ref::{load_profile_capability_refs, load_profile_capability_refs_in_transaction},
 };
 
-pub async fn add_resource_to_profile(
+#[cfg(test)]
+pub(crate) async fn add_resource_to_profile(
     pool: &Pool<Sqlite>,
     profile_id: &str,
     server_id: &str,
@@ -23,30 +29,28 @@ pub async fn add_resource_to_profile(
     Ok(ref_id.to_string())
 }
 
-pub async fn remove_resource_from_profile(
-    pool: &Pool<Sqlite>,
-    profile_id: &str,
-    server_id: &str,
-    ref_id: &str,
-) -> Result<bool> {
-    let ref_id = parse_owned_ref(pool, server_id, ref_id).await?;
-    let result = sqlx::query("DELETE FROM profile_capability_refs WHERE profile_id = ? AND ref_id = ?")
-        .bind(profile_id)
-        .bind(ref_id.as_str())
-        .execute(pool)
-        .await
-        .context("Failed to remove Resource capability ref from Profile")?;
-    Ok(result.rows_affected() == 1)
-}
-
 pub async fn get_resources_for_profile(
     pool: &Pool<Sqlite>,
     profile_id: &str,
 ) -> Result<Vec<ProfileResource>> {
     let relationships = load_profile_capability_refs(pool, profile_id, Some(CapabilityKind::Resources)).await?;
+    resources_from_relationships(relationships)
+}
+
+pub async fn get_resources_for_profile_in_transaction(
+    transaction: &mut Transaction<'_, Sqlite>,
+    profile_id: &str,
+) -> Result<Vec<ProfileResource>> {
+    let relationships =
+        load_profile_capability_refs_in_transaction(transaction, profile_id, Some(CapabilityKind::Resources)).await?;
+    resources_from_relationships(relationships)
+}
+
+fn resources_from_relationships(
+    relationships: Vec<crate::config::profile::capability_ref::ProfileCapabilityRef>
+) -> Result<Vec<ProfileResource>> {
     let mut resources = Vec::with_capacity(relationships.len());
     for relationship in relationships {
-        let server_name = load_capability_server_name(pool, &relationship.server_id).await?;
         let EffectiveCapabilityDefinition::Resource(resource) = relationship.definition else {
             anyhow::bail!(
                 "Capability ref '{}' does not contain a Resource definition",
@@ -57,7 +61,7 @@ pub async fn get_resources_for_profile(
             id: Some(relationship.ref_id.to_string()),
             profile_id: relationship.profile_id,
             server_id: relationship.server_id,
-            server_name,
+            server_name: relationship.server_name,
             resource_uri: relationship.origin_key,
             unique_uri: relationship.external_key,
             description: resource.description,
@@ -80,31 +84,6 @@ pub async fn get_enabled_resources_for_profile(
         .collect())
 }
 
-pub async fn update_resource_enabled_status(
-    pool: &Pool<Sqlite>,
-    profile_id: &str,
-    server_id: &str,
-    ref_id: &str,
-    enabled: bool,
-) -> Result<()> {
-    let ref_id = parse_owned_ref(pool, server_id, ref_id).await?;
-    let result = sqlx::query("UPDATE profile_capability_refs SET enabled = ? WHERE profile_id = ? AND ref_id = ?")
-        .bind(enabled)
-        .bind(profile_id)
-        .bind(ref_id.as_str())
-        .execute(pool)
-        .await
-        .context("Failed to update Resource capability ref")?;
-    if result.rows_affected() != 1 {
-        anyhow::bail!(
-            "Resource relationship '{}' not found in Profile '{}'",
-            ref_id,
-            profile_id
-        );
-    }
-    Ok(())
-}
-
 pub fn build_enabled_resources_query(additional_where: Option<&str>) -> String {
     let base_query = r#"
         SELECT DISTINCT cr.server_id, sc.name AS server_name, cr.origin_key AS resource_uri
@@ -123,6 +102,7 @@ pub fn build_enabled_resources_query(additional_where: Option<&str>) -> String {
     }
 }
 
+#[cfg(test)]
 async fn parse_owned_ref(
     pool: &Pool<Sqlite>,
     server_id: &str,

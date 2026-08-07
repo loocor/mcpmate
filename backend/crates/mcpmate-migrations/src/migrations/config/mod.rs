@@ -13,6 +13,7 @@ pub(super) const SERVER_SCHEMA: &str = include_str!("v0003_create_server_configu
 pub(super) const CLIENT_SCHEMA: &str = include_str!("v0005_create_client_configuration.sql");
 pub(super) const SECURE_STORE_SCHEMA: &str = include_str!("v0007_create_secure_store.sql");
 pub(super) const PROFILE_SCHEMA: &str = include_str!("v0009_create_profile_authoring.sql");
+const PROFILE_AUTHORING_GENERATION: &str = include_str!("v0011_add_profile_authoring_generation.sql");
 
 pub(crate) fn all() -> Vec<Migration> {
     vec![
@@ -26,6 +27,7 @@ pub(crate) fn all() -> Vec<Migration> {
         v0008_validate_secure_store::migration(),
         Migration::sql(9, "create profile authoring storage", PROFILE_SCHEMA),
         v0010_create_capability_catalog::migration(),
+        Migration::sql(11, "add profile authoring generation", PROFILE_AUTHORING_GENERATION),
     ]
 }
 

@@ -45,7 +45,6 @@ pub struct ImportOptions {
     pub by_fingerprint: bool,
     pub conflict_policy: ConflictPolicy,
     pub preview: bool,
-    pub target_profile: Option<String>,
 }
 
 impl Default for ImportOptions {
@@ -55,23 +54,18 @@ impl Default for ImportOptions {
             by_fingerprint: true,
             conflict_policy: ConflictPolicy::Skip,
             preview: false,
-            target_profile: None,
         }
     }
 }
 
 impl ImportOptions {
     /// Default options for dashboard and first-run imports (skip on conflict; optional preview).
-    pub fn dashboard_import(
-        preview: bool,
-        target_profile: Option<String>,
-    ) -> Self {
+    pub fn dashboard_import(preview: bool) -> Self {
         Self {
             by_name: true,
             by_fingerprint: true,
             conflict_policy: ConflictPolicy::Skip,
             preview,
-            target_profile,
         }
     }
 }
@@ -393,7 +387,6 @@ pub async fn import_batch(
         target: "mcpmate::config::server::import",
         count = items.len(),
         preview = %opts.preview,
-        target_profile = ?opts.target_profile,
         "Starting server import batch"
     );
     let existing = ExistingIndex::build(db_pool).await?;
@@ -465,23 +458,6 @@ pub async fn import_batch(
                     error = %err,
                     "Failed to persist metadata for imported server"
                 );
-            }
-        }
-
-        // Associate to target profiles only when explicitly requested
-        if let Some(pid) = opts.target_profile.clone() {
-            if let Err(err) = crate::config::profile::add_server_to_profile(db_pool, &pid, &server_id, true).await {
-                tracing::error!(
-                    target: "mcpmate::config::server::import",
-                    server_id = %server_id,
-                    profile_id = %pid,
-                    error = %err,
-                    "Failed to associate imported server with target profile"
-                );
-                outcome
-                    .failed
-                    .insert(name.clone(), format!("Failed to associate with profile '{pid}': {err}"));
-                continue;
             }
         }
 
@@ -850,7 +826,7 @@ mod tests {
             }),
             Some(&connection_pool),
             items,
-            ImportOptions::dashboard_import(true, None),
+            ImportOptions::dashboard_import(true),
         )
         .await
         .expect("preview import");
@@ -899,7 +875,7 @@ mod tests {
             database,
             Some(&connection_pool),
             items,
-            ImportOptions::dashboard_import(false, None),
+            ImportOptions::dashboard_import(false),
         )
         .await
         .expect("persisted import returns its runtime convergence status");
@@ -919,5 +895,61 @@ mod tests {
                 .iter()
                 .any(|server| server.name == "docs")
         );
+    }
+
+    #[tokio::test]
+    async fn import_batch_does_not_mutate_profile_authoring_state() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory database");
+        crate::test_helpers::prepare_config_database(&pool).await;
+        sqlx::query(
+            "INSERT INTO profile (id, name, description, type, role, is_active)
+             VALUES ('profile-a', 'Profile A', '', 'shared', 'user', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let database = Arc::new(Database {
+            pool: pool.clone(),
+            path: std::path::PathBuf::new(),
+            capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
+        });
+        let items = ["docs", "search"]
+            .into_iter()
+            .map(|name| {
+                (
+                    name.to_string(),
+                    ServersImportConfig {
+                        kind: "stdio".to_string(),
+                        command: Some(format!("{name}-server")),
+                        args: None,
+                        url: None,
+                        env: None,
+                        headers: None,
+                        source: None,
+                        meta: None,
+                    },
+                )
+            })
+            .collect();
+        let outcome = import_batch(database, None, items, ImportOptions::dashboard_import(false))
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.imported.len(), 2);
+        let generation: i64 = sqlx::query_scalar("SELECT authoring_generation FROM profile WHERE id = 'profile-a'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(generation, 0);
+        let relationships: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM profile_server_relationships WHERE profile_id = 'profile-a'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(relationships, 0);
     }
 }

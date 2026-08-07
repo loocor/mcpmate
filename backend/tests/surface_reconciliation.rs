@@ -26,18 +26,38 @@ fn initialize() -> InitializeResult {
 }
 
 fn record(description: &str) -> CatalogRecord {
+    record_for_server("server-a", description)
+}
+
+fn record_for_server(
+    server_id: &str,
+    description: &str,
+) -> CatalogRecord {
     let tool: Tool = serde_json::from_value(json!({
         "name": "analyze",
         "description": description,
         "inputSchema": {"type": "object"}
     }))
     .unwrap();
-    CatalogRecord::materialize("server-a", "analyze", "fixture__analyze", CapabilityPayload::Tool(tool)).unwrap()
+    CatalogRecord::materialize(
+        server_id,
+        "analyze",
+        format!("{server_id}__analyze"),
+        CapabilityPayload::Tool(tool),
+    )
+    .unwrap()
 }
 
 fn observation(record: CatalogRecord) -> CapabilityObservation {
+    observation_for_server("server-a", record)
+}
+
+fn observation_for_server(
+    server_id: &str,
+    record: CatalogRecord,
+) -> CapabilityObservation {
     CapabilityObservation::new(
-        "server-a",
+        server_id,
         "fixture",
         "config-v1",
         initialize(),
@@ -73,6 +93,135 @@ async fn initialized_surface_pool() -> Pool<Sqlite> {
     pool
 }
 
+async fn initialized_scoped_reconciliation_fixture() -> Pool<Sqlite> {
+    let pool = initialized_surface_pool().await;
+    for server_id in ["server-a", "server-b", "server-z"] {
+        sqlx::query(
+            "INSERT INTO server_config (id, name, server_type, command, enabled) VALUES (?, ?, 'stdio', '', 1)",
+        )
+        .bind(server_id)
+        .bind(server_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO profile (id, name, description, type, role, is_active) \
+         VALUES ('profile-a', 'Profile A', '', 'shared', 'user', 1)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"
+        INSERT INTO client (
+            id, identifier, name, config_mode, approval_status, capability_source, selected_profile_ids
+        ) VALUES (
+            'consumer-a', 'client-a', 'Client A', 'hosted', 'approved', 'profiles', '["profile-a"]'
+        )
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let catalog = SqliteCapabilityCatalog::new(pool.clone());
+    let authoring = record_for_server("server-a", "version one");
+    let residual = record_for_server("server-b", "residual version");
+    let unrelated = record_for_server("server-z", "unrelated version one");
+    for (server_id, record) in [
+        ("server-a", authoring.clone()),
+        ("server-b", residual.clone()),
+        ("server-z", unrelated),
+    ] {
+        catalog
+            .commit_observation(observation_for_server(server_id, record))
+            .await
+            .unwrap();
+    }
+    sqlx::query("INSERT INTO profile_capability_refs (profile_id, ref_id, enabled) VALUES ('profile-a', ?, 1)")
+        .bind(authoring.ref_id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let manifest = SurfaceManifest::compile(
+        "client-a",
+        vec![
+            SurfaceManifestEntryInput::new(
+                authoring.ref_id.clone(),
+                authoring.capability_id.clone(),
+                authoring.kind(),
+                authoring.external_key.clone(),
+            ),
+            SurfaceManifestEntryInput::new(
+                residual.ref_id.clone(),
+                residual.capability_id.clone(),
+                residual.kind(),
+                residual.external_key.clone(),
+            ),
+        ],
+    )
+    .unwrap();
+    let store = SqliteSurfaceStore::new(pool.clone());
+    let mut transaction = pool.begin().await.unwrap();
+    store
+        .insert_manifest_in_transaction(&mut transaction, &manifest)
+        .await
+        .unwrap();
+    store
+        .publish_and_bind_in_transaction(
+            &mut transaction,
+            &SurfacePublication::new(
+                "publication-client-a-1",
+                "client-a",
+                manifest.manifest_id,
+                None,
+                "initial",
+                "test",
+                None,
+            ),
+            None,
+        )
+        .await
+        .unwrap();
+    transaction.commit().await.unwrap();
+    pool
+}
+
+async fn enqueue_scoped_consumer_job(pool: &Pool<Sqlite>) -> String {
+    CatalogSurfaceReconciler::new(pool.clone())
+        .reconcile(observation(record("version two")))
+        .await
+        .unwrap();
+    sqlx::query_scalar("SELECT idempotency_key FROM surface_reconciliation_jobs WHERE consumer_id = 'client-a'")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+async fn reconciliation_receipt(
+    pool: &Pool<Sqlite>,
+    idempotency_key: &str,
+) -> serde_json::Value {
+    let receipt: String =
+        sqlx::query_scalar("SELECT success_receipt FROM surface_reconciliation_jobs WHERE idempotency_key = ?")
+            .bind(idempotency_key)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    serde_json::from_str(&receipt).unwrap()
+}
+
+async fn run_reconciliation_worker(pool: &Pool<Sqlite>) {
+    assert!(
+        SurfaceReconciliationWorker::new(pool.clone(), "worker-a")
+            .run_once()
+            .await
+            .unwrap()
+    );
+}
+
 struct FailingOutboxDelivery;
 
 #[async_trait]
@@ -86,6 +235,104 @@ impl SurfaceOutboxDelivery for FailingOutboxDelivery {
             value: event.event_id.clone(),
         })
     }
+}
+
+#[tokio::test]
+async fn unrelated_server_revision_does_not_supersede_consumer_job() {
+    let pool = initialized_scoped_reconciliation_fixture().await;
+    let original_job = enqueue_scoped_consumer_job(&pool).await;
+    SqliteCapabilityCatalog::new(pool.clone())
+        .commit_observation(observation_for_server(
+            "server-z",
+            record_for_server("server-z", "unrelated version two"),
+        ))
+        .await
+        .unwrap();
+
+    run_reconciliation_worker(&pool).await;
+    let status: String = sqlx::query_scalar("SELECT status FROM surface_reconciliation_jobs WHERE idempotency_key = ?")
+        .bind(&original_job)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let job_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM surface_reconciliation_jobs WHERE consumer_id = 'client-a'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let receipt = reconciliation_receipt(&pool, &original_job).await;
+    assert_eq!(status, "succeeded");
+    assert_eq!(job_count, 1);
+    assert_ne!(
+        receipt.get("outcome").and_then(serde_json::Value::as_str),
+        Some("superseded")
+    );
+}
+
+#[tokio::test]
+async fn related_server_revision_supersedes_with_fresh_scoped_successor() {
+    let pool = initialized_scoped_reconciliation_fixture().await;
+    let original_job = enqueue_scoped_consumer_job(&pool).await;
+    SqliteCapabilityCatalog::new(pool.clone())
+        .commit_observation(observation(record("version three")))
+        .await
+        .unwrap();
+
+    run_reconciliation_worker(&pool).await;
+    let receipt = reconciliation_receipt(&pool, &original_job).await;
+    let successor_revision_set: String = sqlx::query_scalar(
+        "SELECT target_revision_set FROM surface_reconciliation_jobs \
+         WHERE consumer_id = 'client-a' AND idempotency_key <> ?",
+    )
+    .bind(&original_job)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(receipt["outcome"], "superseded");
+    assert_eq!(receipt["supersedeReason"], "catalog_dependency_changed");
+    assert_eq!(receipt["dependencyServerCount"], 2);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&successor_revision_set).unwrap(),
+        json!({"server-a": 3, "server-b": 1})
+    );
+}
+
+#[tokio::test]
+async fn binding_generation_change_supersedes_even_when_catalog_dependencies_match() {
+    let pool = initialized_scoped_reconciliation_fixture().await;
+    let original_job = enqueue_scoped_consumer_job(&pool).await;
+    let store = SqliteSurfaceStore::new(pool.clone());
+    let binding = store.load_binding("client-a").await.unwrap().unwrap();
+    let safe_manifest_id: String =
+        sqlx::query_scalar("SELECT manifest_id FROM surface_publications WHERE publication_id = ?")
+            .bind(&binding.active_publication_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let mut transaction = pool.begin().await.unwrap();
+    store
+        .publish_and_bind_in_transaction(
+            &mut transaction,
+            &SurfacePublication::new(
+                "publication-binding-race",
+                "client-a",
+                safe_manifest_id.parse().unwrap(),
+                None,
+                "binding_race",
+                "test",
+                Some(binding.active_publication_id),
+            ),
+            Some(binding.generation),
+        )
+        .await
+        .unwrap();
+    transaction.commit().await.unwrap();
+
+    run_reconciliation_worker(&pool).await;
+    let receipt = reconciliation_receipt(&pool, &original_job).await;
+    assert_eq!(receipt["outcome"], "superseded");
+    assert_eq!(receipt["supersedeReason"], "binding_generation_changed");
+    assert_eq!(receipt["dependencyServerCount"], 2);
 }
 
 #[tokio::test]
@@ -214,6 +461,19 @@ async fn catalog_and_all_consumer_safe_contractions_commit_or_roll_back_together
     catalog.commit_observation(observation(first.clone())).await.unwrap();
     let store = SqliteSurfaceStore::new(pool.clone());
     for consumer_id in ["consumer-a", "consumer-b"] {
+        sqlx::query(
+            r#"
+            INSERT INTO client (
+                id, identifier, name, config_mode, approval_status, capability_source, selected_profile_ids
+            ) VALUES (?, ?, ?, 'hosted', 'approved', 'activated', '[]')
+            "#,
+        )
+        .bind(consumer_id)
+        .bind(consumer_id)
+        .bind(consumer_id)
+        .execute(&pool)
+        .await
+        .unwrap();
         let manifest = SurfaceManifest::compile(
             consumer_id,
             vec![SurfaceManifestEntryInput::new(
@@ -358,6 +618,23 @@ async fn retired_server_reconciliation_converges_after_safe_contraction() {
         .expect("server retirement changes the catalog");
     transaction.commit().await.unwrap();
 
+    let (safe_generation, safe_entry_count): (i64, i64) = sqlx::query_as(
+        r#"
+        SELECT binding.generation, COUNT(entry.ref_id)
+        FROM consumer_surface_bindings binding
+        JOIN surface_publications publication
+          ON publication.publication_id = binding.active_publication_id
+        LEFT JOIN surface_manifest_entries entry
+          ON entry.manifest_id = publication.manifest_id
+        WHERE binding.consumer_id = 'client-a'
+        GROUP BY binding.generation
+        "#,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((safe_generation, safe_entry_count), (2, 0));
+
     let worker = SurfaceReconciliationWorker::new(pool.clone(), "worker-a");
     assert!(worker.run_once().await.unwrap());
     let status: String =
@@ -431,6 +708,7 @@ async fn durable_worker_materializes_and_records_a_success_receipt() {
         "profile-a",
         &[first.ref_id.to_string()],
         ProfileRelationshipAction::Enable,
+        0,
         std::collections::HashMap::from([("server-a".to_string(), 1)]),
         "test",
     )

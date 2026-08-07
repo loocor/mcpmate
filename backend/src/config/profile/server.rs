@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 use sqlx::{Pool, Sqlite};
 
-use crate::config::{models::ProfileServer, profile::capability_ref::NewRefPolicy};
+use crate::config::models::ProfileServer;
+#[cfg(test)]
+use crate::config::profile::capability_ref::NewRefPolicy;
 
 pub async fn get_profile_servers(
     pool: &Pool<Sqlite>,
@@ -22,7 +24,8 @@ pub async fn get_profile_servers(
     .context("Failed to fetch Profile server relationships")
 }
 
-pub async fn add_server_to_profile(
+#[cfg(test)]
+pub(crate) async fn add_server_to_profile(
     pool: &Pool<Sqlite>,
     profile_id: &str,
     server_id: &str,
@@ -53,7 +56,8 @@ pub async fn add_server_to_profile(
     Ok(format!("{profile_id}/{server_id}"))
 }
 
-pub async fn set_server_relationship(
+#[cfg(test)]
+pub(crate) async fn set_server_relationship(
     pool: &Pool<Sqlite>,
     profile_id: &str,
     server_id: &str,
@@ -78,7 +82,8 @@ pub async fn set_server_relationship(
     Ok(())
 }
 
-pub async fn remove_server_from_profile(
+#[cfg(test)]
+pub(crate) async fn remove_server_from_profile(
     pool: &Pool<Sqlite>,
     profile_id: &str,
     server_id: &str,
@@ -103,6 +108,7 @@ pub async fn remove_server_from_profile(
     Ok(result.rows_affected() == 1)
 }
 
+#[cfg(test)]
 async fn server_name(
     pool: &Pool<Sqlite>,
     server_id: &str,
@@ -115,6 +121,7 @@ async fn server_name(
         .ok_or_else(|| anyhow::anyhow!("Server '{}' does not exist", server_id))
 }
 
+#[cfg(test)]
 async fn known_server_name(
     pool: &Pool<Sqlite>,
     server_id: &str,

@@ -1,22 +1,52 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import {
+	useCallback,
+	useEffect,
+	useId,
+	useMemo,
+	useReducer,
+	useRef,
+	useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { usePageTranslations } from "../lib/i18n/usePageTranslations";
 import { useNavigate } from "react-router-dom";
 import { configSuitsApi, serversApi } from "../lib/api";
 import { notifyError, notifySuccess } from "../lib/notify";
+import { profileSyncErrorTranslationKey } from "../lib/profile-sync-error";
+import {
+	buildProfileServerAssignmentChanges,
+	buildProfileServerTransferItems,
+	buildProfileAuthoringSaveRequest,
+	createProfileAuthoringConflictState,
+	profileFormDraftFromAuthoringView,
+	reduceProfileAuthoringConflict,
+	shouldResetProfileAuthoringState,
+	submitProfileAuthoring,
+	type ProfileFormDraft,
+	type ProfileServerAssignmentChanges,
+	type ProfileServerPresentationLabels,
+} from "../lib/profile-authoring-ui";
 import type {
 	ConfigSuit,
 	ConfigSuitPrompt,
 	ConfigSuitResource,
 	ConfigSuitServer,
 	ConfigSuitTool,
-	CatalogRevisionSet,
-	CreateConfigSuitRequest,
-	UpdateConfigSuitRequest,
+	ServerSummary,
 } from "../lib/types";
 import { Button } from "./ui/button";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "./ui/alert-dialog";
 import {
 	Drawer,
 	DrawerContent,
@@ -27,6 +57,7 @@ import {
 } from "./ui/drawer";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
+import { ScrollArea } from "./ui/scroll-area";
 import {
 	Select,
 	SelectContent,
@@ -48,18 +79,100 @@ const arraysEqual = (a: string[], b: string[]) => {
 	return a.every((id) => setB.has(id));
 };
 
-const syncSuitServers = async (
-	suitId: string,
-	next: string[],
-	sourceRevisionSet: CatalogRevisionSet,
-) => {
-	await configSuitsApi.bulkServers(
-		suitId,
-		next,
-		"replace",
-		sourceRevisionSet,
+interface ProfileAuthoringConflictSummaryProps {
+	changes: ProfileServerAssignmentChanges;
+	labels: {
+		added: string;
+		removed: string;
+		unchanged: string;
+	};
+}
+
+export function ProfileAuthoringConflictSummary({
+	changes,
+	labels,
+}: ProfileAuthoringConflictSummaryProps) {
+	if (changes.added.length === 0 && changes.removed.length === 0) {
+		return <p className="text-sm text-muted-foreground">{labels.unchanged}</p>;
+	}
+
+	return (
+		<ScrollArea className="h-56 rounded-md border">
+			<div className="flex flex-col gap-4 p-3">
+				{changes.added.length > 0 && (
+					<section className="flex flex-col gap-2">
+						<h4 className="text-sm font-medium">{labels.added}</h4>
+						<ul className="flex flex-col gap-1 text-sm text-muted-foreground">
+							{changes.added.map((server) => (
+								<li key={server.id}>{server.name}</li>
+							))}
+						</ul>
+					</section>
+				)}
+				{changes.removed.length > 0 && (
+					<section className="flex flex-col gap-2">
+						<h4 className="text-sm font-medium">{labels.removed}</h4>
+						<ul className="flex flex-col gap-1 text-sm text-muted-foreground">
+							{changes.removed.map((server) => (
+								<li key={server.id}>{server.name}</li>
+							))}
+						</ul>
+					</section>
+				)}
+			</div>
+		</ScrollArea>
 	);
-};
+}
+
+
+interface ProfileServerTransferProps {
+	servers: ServerSummary[];
+	selectedServerIds: string[];
+	labels: ProfileServerPresentationLabels;
+	onChange: (targetKeys: string[]) => void;
+	onItemInfo?: (item: TransferItem) => void;
+	leftTitle: string;
+	rightTitle: string;
+	searchPlaceholder: string;
+	emptyText: string;
+	disabled: boolean;
+	loading: boolean;
+}
+
+export function ProfileServerTransfer({
+	servers,
+	selectedServerIds,
+	labels,
+	onChange,
+	onItemInfo,
+	leftTitle,
+	rightTitle,
+	searchPlaceholder,
+	emptyText,
+	disabled,
+	loading,
+}: ProfileServerTransferProps) {
+	const dataSource = buildProfileServerTransferItems(
+		servers,
+		new Set(selectedServerIds),
+		labels,
+	);
+	return (
+		<Transfer
+			dataSource={dataSource}
+			targetKeys={selectedServerIds}
+			onChange={onChange}
+			onItemInfo={onItemInfo}
+			leftTitle={leftTitle}
+			rightTitle={rightTitle}
+			searchPlaceholder={searchPlaceholder}
+			emptyText={emptyText}
+			disabled={disabled}
+			loading={loading}
+			className="flex-1"
+		/>
+	);
+}
 
 const formatProfileTypeLabel = (value: string) =>
 	value
@@ -90,16 +203,7 @@ export function ProfileFormDrawer({
 	const navigate = useNavigate();
 
 	// Form state
-	const [formData, setFormData] = useState<{
-		name: string;
-		description: string;
-		suit_type: string;
-		multi_select: boolean;
-		priority: number;
-		is_active: boolean;
-		is_default: boolean;
-		clone_from_id: string;
-	}>({
+	const [formData, setFormData] = useState<ProfileFormDraft>({
 		name: "",
 		description: "",
 		suit_type: restrictProfileType || "shared",
@@ -124,6 +228,21 @@ export function ProfileFormDrawer({
 	const [serverSelectionTouched, setServerSelectionTouched] = useState(false);
 	const [cloneSelectionApplied, setCloneSelectionApplied] = useState(false);
 	const [isClosing, setIsClosing] = useState(false);
+	const [conflictState, dispatchConflict] = useReducer(
+		reduceProfileAuthoringConflict,
+		undefined,
+		createProfileAuthoringConflictState,
+	);
+	const {
+		baselineView: authoringBaselineView,
+		latestView: latestAuthoringView,
+		dialogOpen: conflictDialogOpen,
+	} = conflictState;
+	const resetIdentityRef = useRef({
+		open: false,
+		mode,
+		profileId: suit?.id ?? null,
+	});
 
 	const isHostAppProfile = restrictProfileType === "host_app" || suit?.suit_type === "host_app";
 
@@ -155,6 +274,7 @@ export function ProfileFormDrawer({
 		setServerSelectionTouched(false);
 		setCloneSelectionApplied(false);
 		setSelectedServerIds([]);
+		dispatchConflict({ type: "reset" });
 
 		if (mode === "edit" && suit) {
 			setFormData({
@@ -211,28 +331,39 @@ export function ProfileFormDrawer({
 
 	// Reset form data when dialog opens or mode/suit changes
 	useEffect(() => {
-		if (open) {
+		const nextIdentity = {
+			open,
+			mode,
+			profileId: suit?.id ?? null,
+		};
+		const shouldReset = shouldResetProfileAuthoringState(
+			resetIdentityRef.current,
+			nextIdentity,
+		);
+		resetIdentityRef.current = nextIdentity;
+		if (shouldReset) {
 			resetAllStates();
-		} else {
+		}
+		if (!open) {
+			if (suit?.id) {
+				queryClient.removeQueries({
+					queryKey: ["profileAuthoringView", suit.id],
+					exact: true,
+				});
+			}
 			// 关闭时清理查询缓存，防止状态残留
 			setTimeout(() => {
 				queryClient.removeQueries({
 					queryKey: ["configSuitDrawerServers"],
 					exact: true,
 				});
-				if (mode === "edit" && suit?.id) {
-					queryClient.removeQueries({
-						queryKey: ["configSuitDrawerProfileServers", suit.id],
-						exact: true,
-					});
-				}
 				queryClient.removeQueries({
 					queryKey: ["configSuitClonePreview"],
 					exact: false,
 				});
 			}, 200);
 		}
-	}, [open, mode, suit, resetAllStates, queryClient]);
+	}, [open, mode, suit?.id, resetAllStates, queryClient]);
 
 	// Fetch all suits for cloning option
 	const { data: suitsResponse } = useQuery({
@@ -250,12 +381,12 @@ export function ProfileFormDrawer({
 		},
 	);
 
-	const { data: suitServersResponse, isLoading: isLoadingSuitServers } =
+	const { data: authoringView, isLoading: isLoadingAuthoringView } =
 		useQuery({
-			queryKey: ["configSuitDrawerProfileServers", suit?.id],
+			queryKey: ["profileAuthoringView", suit?.id],
 			queryFn: () =>
 				suit?.id
-					? configSuitsApi.getServers(suit.id)
+					? configSuitsApi.getAuthoringView(suit.id)
 					: Promise.resolve(undefined),
 			enabled: open && mode === "edit" && !!suit?.id,
 			staleTime: 15_000,
@@ -318,20 +449,17 @@ export function ProfileFormDrawer({
 			return;
 		}
 		if (mode === "edit") {
-			if (!suitServersResponse?.servers || selectionInitialized) {
+			if (!authoringView || selectionInitialized) {
 				return;
 			}
-			// 选择所有归属于Profile的服务器（不考虑启用状态）
-			// 这里管理的是归属关系，不是启用状态
-			const allProfileServers = suitServersResponse.servers.map(
-				(server) => server.id,
-			);
-			setSelectedServerIds(allProfileServers);
+			setFormData(profileFormDraftFromAuthoringView(authoringView));
+			setSelectedServerIds(authoringView.server_ids);
+			dispatchConflict({ type: "baselineLoaded", view: authoringView });
 			setSelectionInitialized(true);
 		} else if (mode === "create" && !selectionInitialized) {
 			setSelectionInitialized(true);
 		}
-	}, [open, mode, selectionInitialized, suitServersResponse]);
+	}, [open, mode, selectionInitialized, authoringView]);
 
 	useEffect(() => {
 		if (!open || mode !== "create") {
@@ -362,154 +490,52 @@ export function ProfileFormDrawer({
 		cloneSelectionApplied,
 	]);
 
-	// Create mutation
-	const createMutation = useMutation({
-		mutationFn: async ({
-			data,
-			selectedServers,
-		}: {
-			data: CreateConfigSuitRequest;
-			selectedServers: string[];
-		}) => {
-			const sourceRevisionSet = suitsResponse?.source_revision_set;
-			if (!sourceRevisionSet) {
-				throw new Error(
-					"Capability catalog revisions are not loaded. Refresh profiles and retry.",
-				);
+	const authoringMutation = useMutation({
+		mutationFn: submitProfileAuthoring,
+		onSuccess: (result) => {
+			if (result.status === "conflict") {
+				dispatchConflict({
+					type: "conflictReceived",
+					view: result.latestView,
+				});
+				return;
 			}
-			const desiredActive = data.is_active === true;
-			const desiredDefault = data.is_default === true;
-			const result = await configSuitsApi.createSuit({
-				...data,
-				is_active: false,
-				is_default: false,
-			});
-			const createdId = result.data?.id;
-			if (createdId) {
-				await syncSuitServers(
-					createdId,
-					selectedServers,
-					sourceRevisionSet,
-				);
-				if (desiredActive || desiredDefault) {
-					await configSuitsApi.activateSuit(createdId, sourceRevisionSet);
-				}
-				if (desiredDefault) {
-					await configSuitsApi.updateSuit(createdId, {
-						is_default: true,
-					});
-				}
-			}
-			return { createdId };
-		},
-		onSuccess: ({ createdId }) => {
+			const profileId = result.data.profile.id;
 			queryClient.invalidateQueries({ queryKey: ["configSuits"] });
-			if (createdId) {
-				queryClient.invalidateQueries({ queryKey: ["configSuit", createdId] });
+			if (profileId) {
+				queryClient.invalidateQueries({ queryKey: ["configSuit", profileId] });
 				queryClient.invalidateQueries({
-					queryKey: ["configSuitServers", createdId],
+					queryKey: ["configSuitServers", profileId],
+				});
+				queryClient.invalidateQueries({
+					queryKey: ["profileAuthoringView", profileId],
 				});
 			}
 			notifySuccess(
-				t("profiles:form.messages.created", { defaultValue: "Created" }),
-				t("profiles:form.messages.createdDescription", {
-					defaultValue: "Profile created successfully",
-				}),
+				mode === "create"
+					? t("profiles:form.messages.created", { defaultValue: "Created" })
+					: t("profiles:form.messages.updated", { defaultValue: "Updated" }),
+				mode === "create"
+					? t("profiles:form.messages.createdDescription", {
+							defaultValue: "Profile created successfully",
+						})
+					: t("profiles:form.messages.updatedDescription", {
+							defaultValue: "Profile updated successfully",
+						}),
 			);
 			closeDrawer();
 			onSuccess?.();
 		},
 		onError: (error: Error) => {
 			notifyError(
-				t("profiles:form.messages.createFailed", {
-					defaultValue: "Create failed",
-				}),
-				error.message ||
-					t("profiles:form.messages.createFailed", {
-						defaultValue: "Create failed",
-					}),
-			);
-		},
-	});
-
-	// Update mutation
-	const updateMutation = useMutation({
-		mutationFn: async ({
-			id,
-			data,
-			nextServers,
-		}: {
-			id: string;
-			data: UpdateConfigSuitRequest;
-			nextServers: string[];
-		}) => {
-			const sourceRevisionSet =
-				suit?.source_revision_set ?? suitsResponse?.source_revision_set;
-			if (!sourceRevisionSet) {
-				throw new Error(
-					"Capability catalog revisions are not loaded. Refresh profiles and retry.",
-				);
-			}
-			const requestedActive = data.is_active;
-			const requestedDefault = data.is_default;
-			const assignDefaultAfterActivation =
-				requestedDefault === true && requestedActive === true;
-			const metadataUpdates = {
-				...data,
-				is_active: undefined,
-				is_default: assignDefaultAfterActivation
-					? undefined
-					: requestedDefault,
-			};
-			const hasFieldUpdates = Object.values(metadataUpdates).some(
-				(value) => value !== undefined,
-			);
-			if (hasFieldUpdates) {
-				await configSuitsApi.updateSuit(id, metadataUpdates);
-			}
-			await syncSuitServers(
-				id,
-				nextServers,
-				sourceRevisionSet,
-			);
-			if (requestedActive !== undefined) {
-				if (requestedActive) {
-					await configSuitsApi.activateSuit(id, sourceRevisionSet);
-				} else {
-					await configSuitsApi.deactivateSuit(id, sourceRevisionSet);
-				}
-			}
-			if (assignDefaultAfterActivation) {
-				await configSuitsApi.updateSuit(id, { is_default: true });
-			}
-			return { id };
-		},
-		onSuccess: ({ id }) => {
-			queryClient.invalidateQueries({ queryKey: ["configSuits"] });
-			if (id) {
-				queryClient.invalidateQueries({ queryKey: ["configSuit", id] });
-				queryClient.invalidateQueries({
-					queryKey: ["configSuitServers", id],
-				});
-			}
-			notifySuccess(
-				t("profiles:form.messages.updated", { defaultValue: "Updated" }),
-				t("profiles:form.messages.updatedDescription", {
-					defaultValue: "Profile updated successfully",
-				}),
-			);
-			closeDrawer();
-			onSuccess?.();
-		},
-		onError: (error: Error) => {
-			notifyError(
-				t("profiles:form.messages.updateFailed", {
-					defaultValue: "Update failed",
-				}),
-				error.message ||
-					t("profiles:form.messages.updateFailed", {
-						defaultValue: "Update failed",
-					}),
+				mode === "create"
+					? t("profiles:form.messages.createFailed", {
+							defaultValue: "Create failed",
+						})
+					: t("profiles:form.messages.updateFailed", {
+							defaultValue: "Update failed",
+						}),
+				t(profileSyncErrorTranslationKey(error)),
 			);
 		},
 	});
@@ -536,125 +562,139 @@ export function ProfileFormDrawer({
 		}
 
 		if (mode === "create") {
-			const createData: CreateConfigSuitRequest = {
-				name: formData.name,
-				description: formData.description || undefined,
-				suit_type: formData.suit_type,
-				multi_select: formData.multi_select,
-				priority: formData.priority,
-				is_active: formData.is_active,
-				is_default: formData.is_default,
-				clone_from_id:
-					formData.clone_from_id && formData.clone_from_id !== "none"
-						? formData.clone_from_id
-						: undefined,
-			};
-			createMutation.mutate({
-				data: createData,
-				selectedServers: selectedServerIds,
+			const request = buildProfileAuthoringSaveRequest({
+				mode,
+				profileId: null,
+				draft: formData,
+				serverIds: selectedServerIds,
 			});
-		} else if (suit) {
-			const updateData: UpdateConfigSuitRequest = {
-				name: formData.name !== suit.name ? formData.name : undefined,
-				description:
-					formData.description !== (suit.description || "")
-						? formData.description
-						: undefined,
-				suit_type:
-					formData.suit_type !== suit.suit_type
-						? formData.suit_type
-						: undefined,
-				multi_select:
-					formData.multi_select !== suit.multi_select
-						? formData.multi_select
-						: undefined,
-				priority:
-					formData.priority !== suit.priority ? formData.priority : undefined,
-				is_active:
-					formData.is_active !== suit.is_active
-						? formData.is_active
-						: undefined,
-				is_default:
-					formData.is_default !== suit.is_default
-						? formData.is_default
-						: undefined,
-			};
+			authoringMutation.mutate(request);
+		} else if (suit && authoringBaselineView) {
+			if (latestAuthoringView) {
+				dispatchConflict({ type: "saveRequested" });
+				return;
+			}
 			const currentTargetKeys = targetServerKeys;
 			const selectionChanged = !arraysEqual(
 				selectedServerIds,
 				currentTargetKeys,
 			);
-			const hasFieldUpdates = Object.values(updateData).some(
-				(value) => value !== undefined,
-			);
-			if (!selectionChanged && !hasFieldUpdates) {
+			const current = authoringBaselineView.profile;
+			const hasFieldUpdates =
+				formData.name !== current.name ||
+				formData.description !== (current.description || "") ||
+				formData.suit_type !== current.suit_type ||
+				formData.multi_select !== current.multi_select ||
+				formData.priority !== current.priority ||
+				formData.is_active !== current.is_active ||
+				formData.is_default !== current.is_default;
+			if (!latestAuthoringView && !selectionChanged && !hasFieldUpdates) {
 				closeDrawer();
 				return;
 			}
-			updateMutation.mutate({
-				id: suit.id,
-				data: updateData,
-				nextServers: selectedServerIds,
-			});
+			authoringMutation.mutate(
+				buildProfileAuthoringSaveRequest({
+					mode,
+					profileId: suit.id,
+					draft: formData,
+					serverIds: selectedServerIds,
+					authoringView: authoringBaselineView,
+				}),
+			);
 		}
 	};
 
-	const isMutating = createMutation.isPending || updateMutation.isPending;
+	const isMutating = authoringMutation.isPending;
 	const detailsStepValid = isHostAppProfile || formData.name.trim().length > 0;
 
-	const profileServers = useMemo(
-		() => suitServersResponse?.servers ?? [],
-		[suitServersResponse?.servers],
-	);
 	const allServers = useMemo(
 		() => allServersResponse?.servers ?? [],
 		[allServersResponse?.servers],
 	);
+	const serverAssignmentChanges = useMemo(
+		() =>
+			authoringBaselineView && latestAuthoringView
+				? buildProfileServerAssignmentChanges(
+						authoringBaselineView,
+						latestAuthoringView,
+						allServers,
+					)
+				: { added: [], removed: [] },
+		[authoringBaselineView, latestAuthoringView, allServers],
+	);
 
-	const transferDataSource = useMemo((): TransferItem[] => {
-		const serverMap = new Map<string, TransferItem>();
-
-		// 首先处理所有可用的服务器
-		allServers.forEach((server) => {
-			const serverType =
-				server.server_type || t("status.unknown", { defaultValue: "Unknown" });
-			serverMap.set(server.id, {
-				id: server.id,
-				name: server.name || server.id,
-				description: `${serverType} • ${t("status.status", { defaultValue: "Status" })}: ${server.status || t("status.unknown", { defaultValue: "Unknown" })}`,
-				type: serverType,
-				status: server.status,
-			});
-		});
-
-		// 然后处理配置文件中的服务器（如果不在全量列表中）
-		profileServers.forEach((server) => {
-			if (!serverMap.has(server.id)) {
-				serverMap.set(server.id, {
-					id: server.id,
-					name: server.name || server.id,
-					description: `${t("status.status", { defaultValue: "Status" })}: ${server.enabled ? t("status.enabled", { defaultValue: "Enabled" }) : t("status.disabled", { defaultValue: "Disabled" })}`,
-					status: server.enabled ? "enabled" : "disabled",
-				});
-			}
-		});
-
-		return Array.from(serverMap.values()).sort((a, b) =>
-			a.name.localeCompare(b.name),
+	const handleLoadLatest = () => {
+		if (!latestAuthoringView || !suit) {
+			return;
+		}
+		setFormData(profileFormDraftFromAuthoringView(latestAuthoringView));
+		setSelectedServerIds(latestAuthoringView.server_ids);
+		queryClient.setQueryData(
+			["profileAuthoringView", suit.id],
+			latestAuthoringView,
 		);
-	}, [allServers, profileServers, t]);
+		dispatchConflict({ type: "loadLatest" });
+	};
+
+	const handleOverwrite = () => {
+		if (!latestAuthoringView || !suit || !authoringBaselineView) {
+			return;
+		}
+		dispatchConflict({ type: "overwriteStarted" });
+		authoringMutation.mutate(
+			buildProfileAuthoringSaveRequest({
+				mode: "edit",
+				profileId: suit.id,
+				draft: formData,
+				serverIds: selectedServerIds,
+				authoringView: authoringBaselineView,
+				expectedAuthoringGeneration:
+					latestAuthoringView.profile.authoring_generation,
+			}),
+		);
+	};
+
+	const serverPresentationLabels: ProfileServerPresentationLabels = {
+		configuration: t("profiles:form.serverState.configuration", {
+			defaultValue: "Configuration",
+		}),
+		catalog: t("profiles:form.serverState.catalog", {
+			defaultValue: "Catalog",
+		}),
+		profile: t("profiles:form.serverState.profile", {
+			defaultValue: "Profile",
+		}),
+		enabled: t("status.enabled", { defaultValue: "Enabled" }),
+		disabled: t("status.disabled", { defaultValue: "Disabled" }),
+		notReported: t("profiles:form.serverState.notReported", {
+			defaultValue: "Not reported",
+		}),
+		ready: t("status.ready", { defaultValue: "Ready" }),
+		unavailable: t("profiles:form.serverState.unavailable", {
+			defaultValue: "Unavailable",
+		}),
+		notObserved: t("profiles:form.serverState.notObserved", {
+			defaultValue: "Not observed",
+		}),
+		selected: t("profiles:form.serverState.selected", {
+			defaultValue: "Selected",
+		}),
+		notSelected: t("profiles:form.serverState.notSelected", {
+			defaultValue: "Not selected",
+		}),
+	};
 
 	// 获取当前已经纳入管理的服务器 ID 列表
 	const targetServerKeys = useMemo(() => {
-		return profileServers.map((server) => server.id); // 包含所有在Profile中的服务器（无论启用停用）
-	}, [profileServers]);
+		return authoringBaselineView?.server_ids ?? [];
+	}, [authoringBaselineView?.server_ids]);
 
 	const selectedServerCount = targetServerKeys.length;
-	const totalServerCount = transferDataSource.length;
+	const totalServerCount = allServers.length;
 	const isServersStepLoading =
 		step === "servers" &&
 		(isLoadingAllServers ||
-			(mode === "edit" && !selectionInitialized && isLoadingSuitServers));
+			(mode === "edit" && !selectionInitialized && isLoadingAuthoringView));
 
 	const primaryDisabled =
 		isMutating ||
@@ -1242,9 +1282,10 @@ export function ProfileFormDrawer({
 											})}
 										</div>
 									) : (
-										<Transfer
-											dataSource={transferDataSource}
-											targetKeys={selectedServerIds}
+										<ProfileServerTransfer
+											servers={allServers}
+											selectedServerIds={selectedServerIds}
+											labels={serverPresentationLabels}
 											onChange={handleTransferChange}
 											onItemInfo={handleServerInfo}
 											leftTitle={t(
@@ -1264,7 +1305,6 @@ export function ProfileFormDrawer({
 											})}
 											disabled={isMutating}
 											loading={isServersStepLoading}
-											className="flex-1"
 										/>
 									)}
 								</div>
@@ -1330,6 +1370,61 @@ export function ProfileFormDrawer({
 					</DrawerFooter>
 				</form>
 			</DrawerContent>
+			<AlertDialog
+				open={conflictDialogOpen}
+				onOpenChange={(nextOpen) =>
+					dispatchConflict({
+						type: nextOpen ? "saveRequested" : "dialogCancelled",
+					})
+				}
+			>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>
+							{t("profiles:form.conflict.title", {
+								defaultValue: "Profile modified elsewhere",
+							})}
+						</AlertDialogTitle>
+						<AlertDialogDescription>
+							{t("profiles:form.conflict.description", {
+								defaultValue:
+									"Load the latest Profile and discard this draft, or overwrite it with your current draft.",
+							})}
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<ProfileAuthoringConflictSummary
+						changes={serverAssignmentChanges}
+						labels={{
+							added: t("profiles:form.conflict.serversAdded", {
+								defaultValue: "Servers added elsewhere",
+							}),
+							removed: t("profiles:form.conflict.serversRemoved", {
+								defaultValue: "Servers removed elsewhere",
+							}),
+							unchanged: t("profiles:form.conflict.serversUnchanged", {
+								defaultValue: "Server assignments are unchanged.",
+							}),
+						}}
+					/>
+					<AlertDialogFooter>
+						<AlertDialogCancel>
+							{t("profiles:form.conflict.cancel", {
+								defaultValue: "Cancel",
+							})}
+						</AlertDialogCancel>
+						<AlertDialogAction onClick={handleLoadLatest}>
+							{t("profiles:form.conflict.loadLatest", {
+								defaultValue: "Load latest version",
+							})}
+						</AlertDialogAction>
+						<AlertDialogAction onClick={handleOverwrite}>
+							{t("profiles:form.conflict.overwrite", {
+								defaultValue: "Overwrite with current draft",
+							})}
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 		</Drawer>
 	);
 }
