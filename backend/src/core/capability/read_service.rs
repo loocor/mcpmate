@@ -396,6 +396,8 @@ struct ManagementDiscoveryCoordinator {
     gate: Mutex<()>,
     completed_generation: AtomicU64,
     last_outcome: StdMutex<Option<(u64, SharedManagementOutcome)>>,
+    #[cfg(test)]
+    observed_generation: tokio::sync::Semaphore,
 }
 
 impl ManagementDiscoveryCoordinator {
@@ -404,6 +406,8 @@ impl ManagementDiscoveryCoordinator {
             gate: Mutex::new(()),
             completed_generation: AtomicU64::new(0),
             last_outcome: StdMutex::new(None),
+            #[cfg(test)]
+            observed_generation: tokio::sync::Semaphore::new(0),
         }
     }
 }
@@ -1412,6 +1416,8 @@ impl CapabilityReadService {
         let coordinator =
             management_discovery_coordinator(self.coordination_scope, &ctx.server_id, &config_fingerprint);
         let observed_generation = coordinator.completed_generation.load(Ordering::Acquire);
+        #[cfg(test)]
+        coordinator.observed_generation.add_permits(1);
         let _guard = coordinator.gate.lock().await;
         let current_generation = coordinator.completed_generation.load(Ordering::Acquire);
         if current_generation > observed_generation {
@@ -2021,7 +2027,7 @@ mod tests {
     use super::{
         CapabilityAttemptError, CapabilityCommitFailure, CapabilityProjectionFailure, CapabilityReadBackend,
         CapabilityReadError, CapabilityReadService, DiscoveryAttemptFailure, RuntimeCapabilityReadBackend,
-        apply_owner_runtime_failure,
+        apply_owner_runtime_failure, management_discovery_coordinator,
     };
     use crate::config::database::Database;
     use crate::core::capability::{
@@ -2996,6 +3002,81 @@ mod tests {
                 .has_failures()
         );
         assert_eq!(backend.commits.load(Ordering::Relaxed), 1);
+        assert_eq!(provider.fresh_calls.load(Ordering::Relaxed), 1);
+
+        drop(service);
+        drop(provider);
+        fixture.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn concurrent_cache_misses_share_one_failing_management_discovery() {
+        let backend = Arc::new(FakeBackend::new(Ok(None)));
+        let fixture = test_peer().await;
+        let provider = Arc::new(FakeProvider::new(fixture.peer.clone()));
+        provider
+            .set_fresh(Err(CapabilityOwnerError::Other {
+                reason: "fixture upstream unavailable".to_string(),
+            }))
+            .await;
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        provider.pause_fresh_owner_with(gate.clone()).await;
+        let service = Arc::new(CapabilityReadService::with_backend(
+            backend.clone(),
+            provider.clone(),
+            16,
+        ));
+        let coordinator = management_discovery_coordinator(16, "server-1", "test-config");
+        let first = {
+            let service = service.clone();
+            tokio::spawn(async move { service.list_all_kinds("server-1", None).await })
+        };
+        provider
+            .fresh_started
+            .acquire()
+            .await
+            .expect("one discovery owner starts")
+            .forget();
+        coordinator
+            .observed_generation
+            .acquire()
+            .await
+            .expect("first request records its observed generation")
+            .forget();
+        let second = {
+            let service = service.clone();
+            tokio::spawn(async move { service.list_all_kinds("server-1", None).await })
+        };
+        coordinator
+            .observed_generation
+            .acquire()
+            .await
+            .expect("second request observes the in-flight generation")
+            .forget();
+        assert_eq!(
+            provider.fresh_calls.load(Ordering::Relaxed),
+            1,
+            "both cache misses must overlap the sole fresh discovery"
+        );
+        gate.add_permits(1);
+
+        for task in [first, second] {
+            let error = task
+                .await
+                .expect("concurrent read joins")
+                .expect_err("shared failed discovery remains visible");
+            assert!(matches!(
+                error,
+                CapabilityReadError::DiscoveryFailed {
+                    fresh: Some(failure),
+                    ..
+                } if matches!(
+                    &failure.error,
+                    CapabilityAttemptError::Owner(CapabilityOwnerError::Other { reason })
+                        if reason == "fixture upstream unavailable"
+                )
+            ));
+        }
         assert_eq!(provider.fresh_calls.load(Ordering::Relaxed), 1);
 
         drop(service);
