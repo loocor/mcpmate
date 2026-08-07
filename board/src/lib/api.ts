@@ -2895,6 +2895,14 @@ export async function associateImportedServersWithProfile(
 	return addServersToProfile(profileId, serverIds);
 }
 
+export async function completeServerImportForProfile(
+	profileId: string | null,
+	stats: ImportStats,
+): Promise<void> {
+	await associateImportedServersWithProfile(profileId, stats.importedServers);
+	assertCompleteServerImport(stats);
+}
+
 export type ProfileAssociationErrorCode =
 	| "imported_server_missing"
 	| "imported_server_ambiguous";

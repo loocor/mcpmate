@@ -345,6 +345,12 @@ export function ProfileFormDrawer({
 			resetAllStates();
 		}
 		if (!open) {
+			if (suit?.id) {
+				queryClient.removeQueries({
+					queryKey: ["profileAuthoringView", suit.id],
+					exact: true,
+				});
+			}
 			// 关闭时清理查询缓存，防止状态残留
 			setTimeout(() => {
 				queryClient.removeQueries({
@@ -648,38 +654,35 @@ export function ProfileFormDrawer({
 		);
 	};
 
-	const serverPresentationLabels = useMemo<ProfileServerPresentationLabels>(
-		() => ({
-			configuration: t("profiles:form.serverState.configuration", {
-				defaultValue: "Configuration",
-			}),
-			catalog: t("profiles:form.serverState.catalog", {
-				defaultValue: "Catalog",
-			}),
-			profile: t("profiles:form.serverState.profile", {
-				defaultValue: "Profile",
-			}),
-			enabled: t("status.enabled", { defaultValue: "Enabled" }),
-			disabled: t("status.disabled", { defaultValue: "Disabled" }),
-			notReported: t("profiles:form.serverState.notReported", {
-				defaultValue: "Not reported",
-			}),
-			ready: t("status.ready", { defaultValue: "Ready" }),
-			unavailable: t("profiles:form.serverState.unavailable", {
-				defaultValue: "Unavailable",
-			}),
-			notObserved: t("profiles:form.serverState.notObserved", {
-				defaultValue: "Not observed",
-			}),
-			selected: t("profiles:form.serverState.selected", {
-				defaultValue: "Selected",
-			}),
-			notSelected: t("profiles:form.serverState.notSelected", {
-				defaultValue: "Not selected",
-			}),
+	const serverPresentationLabels: ProfileServerPresentationLabels = {
+		configuration: t("profiles:form.serverState.configuration", {
+			defaultValue: "Configuration",
 		}),
-		[t],
-	);
+		catalog: t("profiles:form.serverState.catalog", {
+			defaultValue: "Catalog",
+		}),
+		profile: t("profiles:form.serverState.profile", {
+			defaultValue: "Profile",
+		}),
+		enabled: t("status.enabled", { defaultValue: "Enabled" }),
+		disabled: t("status.disabled", { defaultValue: "Disabled" }),
+		notReported: t("profiles:form.serverState.notReported", {
+			defaultValue: "Not reported",
+		}),
+		ready: t("status.ready", { defaultValue: "Ready" }),
+		unavailable: t("profiles:form.serverState.unavailable", {
+			defaultValue: "Unavailable",
+		}),
+		notObserved: t("profiles:form.serverState.notObserved", {
+			defaultValue: "Not observed",
+		}),
+		selected: t("profiles:form.serverState.selected", {
+			defaultValue: "Selected",
+		}),
+		notSelected: t("profiles:form.serverState.notSelected", {
+			defaultValue: "Not selected",
+		}),
+	};
 
 	// 获取当前已经纳入管理的服务器 ID 列表
 	const targetServerKeys = useMemo(() => {

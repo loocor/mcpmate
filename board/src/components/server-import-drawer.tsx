@@ -2,8 +2,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-	assertCompleteServerImport,
-	associateImportedServersWithProfile,
+	completeServerImportForProfile,
 	extractImportStats,
 	serversApi,
 } from "../lib/api";
@@ -199,11 +198,7 @@ export function ServerImportDrawer({
 					: (res as { status?: string })?.status === "success" ||
 					!("error" in (res ?? {}));
 			if (didSucceed) {
-				assertCompleteServerImport(stats);
-				await associateImportedServersWithProfile(
-					targetProfileId,
-					stats.importedServers,
-				);
+				await completeServerImportForProfile(targetProfileId, stats);
 				const { importedCount, skippedCount, skippedServers, skippedDetails } =
 					stats;
 				const skippedSummary = summarizeSkipped(skippedDetails, t);

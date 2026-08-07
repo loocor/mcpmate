@@ -2,8 +2,7 @@ import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ServerInstallDraft } from "../../hooks/use-server-install-pipeline";
 import {
-	assertCompleteServerImport,
-	associateImportedServersWithProfile,
+	completeServerImportForProfile,
 	extractImportStats,
 	serversApi,
 	type ImportStats,
@@ -289,11 +288,7 @@ export function useOperatorServerImport({
 				setPhase("ready");
 				return false;
 			}
-			assertCompleteServerImport(stats);
-			await associateImportedServersWithProfile(
-				targetProfileId,
-				stats.importedServers,
-			);
+			await completeServerImportForProfile(targetProfileId, stats);
 
 			const { importedCount, skippedCount } = stats;
 			const skippedDescription = buildSkippedInstallDescription(stats, t);

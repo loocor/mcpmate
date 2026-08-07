@@ -90,8 +90,7 @@ import {
 import {
   auditApi,
   assertCompleteCapabilityBatch,
-  assertCompleteServerImport,
-  associateImportedServersWithProfile,
+  completeServerImportForProfile,
   clientsApi,
   configSuitsApi,
   extractImportStats,
@@ -1678,11 +1677,7 @@ export function ClientDetailPage() {
         );
       }
       const stats = extractImportStats(resp);
-      assertCompleteServerImport(stats);
-      await associateImportedServersWithProfile(
-        targetProfileId,
-        stats.importedServers,
-      );
+      await completeServerImportForProfile(targetProfileId, stats);
       return {
         imported_count: stats.importedCount,
         imported_servers: stats.importedServers,

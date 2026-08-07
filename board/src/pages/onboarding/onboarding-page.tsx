@@ -23,8 +23,7 @@ import { Segment, type SegmentOption } from "../../components/ui/segment";
 import { TooltipProvider } from "../../components/ui/tooltip";
 import {
   clientsApi,
-  assertCompleteServerImport,
-  associateImportedServersWithProfile,
+  completeServerImportForProfile,
   extractImportStats,
   runtimeApi,
   serversApi,
@@ -558,8 +557,6 @@ export function OnboardingPage() {
         // regardless of the autoAddServerToDefaultProfile setting (which defaults to false for new users).
         // The default anchor is seeded at app init, so it must already exist before onboarding runs.
         const targetProfileId = await resolveActiveDefaultProfileId();
-        const importedServerNames: string[] = [];
-
         if (hasDiscoveryServerConfigs) {
           const response = await serversApi.importServers({
             mcpServers: selectedDiscoveryServerConfigs,
@@ -574,8 +571,7 @@ export function OnboardingPage() {
             throw new Error(err ? stringifyError(err) : "Server import failed");
           }
           const stats = extractImportStats(response);
-          assertCompleteServerImport(stats);
-          importedServerNames.push(...stats.importedServers);
+          await completeServerImportForProfile(targetProfileId, stats);
         }
 
         for (const [clientIdentifier, selectedServerNames] of selectedServerNamesByClient) {
@@ -595,13 +591,8 @@ export function OnboardingPage() {
             throw new Error(err ? stringifyError(err) : "Server import failed");
           }
           const stats = extractImportStats(response);
-          assertCompleteServerImport(stats);
-          importedServerNames.push(...stats.importedServers);
+          await completeServerImportForProfile(targetProfileId, stats);
         }
-        await associateImportedServersWithProfile(
-          targetProfileId,
-          importedServerNames,
-        );
         await qc.invalidateQueries({ queryKey: ["servers"] });
         if (targetProfileId) {
           await qc.invalidateQueries({ queryKey: ["configSuits"] });

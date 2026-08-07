@@ -1,8 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-	assertCompleteServerImport,
-	associateImportedServersWithProfile,
+	completeServerImportForProfile,
 	extractImportStats,
 	serversApi,
   systemApi,
@@ -355,10 +354,9 @@ export function useServerInstallPipeline(
 							!("error" in (result ?? {}));
 				if (didSucceed) {
 					const stats = extractImportStats(result);
-					assertCompleteServerImport(stats);
-					await associateImportedServersWithProfile(
+					await completeServerImportForProfile(
 						effectiveTargetProfileId,
-						stats.importedServers,
+						stats,
 					);
 					setImportResult({ success: true });
 					const {

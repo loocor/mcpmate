@@ -98,6 +98,10 @@ import { DEFAULT_ANCHOR_ROLE } from "../../lib/default-profile";
 import { notifyError, notifySuccess } from "../../lib/notify";
 import { handleProfileCapabilityMutationError } from "../../lib/profile-capability-conflict";
 import {
+	requireSelectedCapabilityRevisionSet,
+	type CapabilityRevisionSource,
+} from "../../lib/profile-capability-revisions";
+import {
 	ProfileSyncClientError,
 	profileSyncErrorTranslationKey,
 } from "../../lib/profile-sync-error";
@@ -126,35 +130,6 @@ type ProfileFlatCapabilityItem = CapabilityRecord & {
 	__profileCapabilityKind: CapabilityKind;
 };
 
-function requireMatchingRevisionSet(
-	revisionSets: Array<CatalogRevisionSet | undefined>,
-): CatalogRevisionSet {
-	const available = revisionSets.filter(
-		(value): value is CatalogRevisionSet => value !== undefined,
-	);
-	if (available.length !== revisionSets.length || available.length === 0) {
-		throw new ProfileSyncClientError("catalog_snapshot_missing");
-	}
-	const canonical = JSON.stringify(
-		Object.entries(available[0]).sort(([left], [right]) =>
-			left.localeCompare(right),
-		),
-	);
-	if (
-		available.some(
-			(value) =>
-				JSON.stringify(
-					Object.entries(value).sort(([left], [right]) =>
-						left.localeCompare(right),
-					),
-				) !== canonical,
-		)
-	) {
-		throw new ProfileSyncClientError("catalog_snapshot_mismatch");
-	}
-	return available[0];
-}
-
 function requireMatchingAuthoringGeneration(
 	generations: Array<number | undefined>,
 ): number {
@@ -168,6 +143,20 @@ function requireMatchingAuthoringGeneration(
 		throw new ProfileSyncClientError("profile_authoring_state_mismatch");
 	}
 	return available[0];
+}
+
+function requireCapabilityRevisionSet(
+	selectedIds: string[],
+	items: Array<{ id: string; server_id: string }> | undefined,
+	sourceRevisionSet: CatalogRevisionSet | undefined,
+): CatalogRevisionSet {
+	return requireSelectedCapabilityRevisionSet([
+		{
+			selectedIds,
+			items: items ?? [],
+			sourceRevisionSet,
+		},
+	]);
 }
 
 function capabilityDetailsCacheToken(items: ProfileFlatCapabilityItem[]) {
@@ -429,14 +418,18 @@ export function ProfileDetailPage() {
 				},
 			);
 			const action = enable ? "enable" : "disable";
-			const revisionSets: Array<CatalogRevisionSet | undefined> = [];
+			const revisionSources: CapabilityRevisionSource[] = [];
 			const authoringGenerations: Array<number | undefined> = [];
 			if (grouped.tools.length) {
 				const response = queryClient.getQueryData<ConfigSuitToolsResponse>([
-						"configSuitTools",
-						profileId,
-					]);
-				revisionSets.push(response?.source_revision_set);
+					"configSuitTools",
+					profileId,
+				]);
+				revisionSources.push({
+					selectedIds: grouped.tools,
+					items: response?.tools ?? [],
+					sourceRevisionSet: response?.source_revision_set,
+				});
 				authoringGenerations.push(response?.authoring_generation);
 			}
 			if (grouped.resources.length) {
@@ -444,7 +437,11 @@ export function ProfileDetailPage() {
 						"configSuitResources",
 						profileId,
 					]);
-				revisionSets.push(response?.source_revision_set);
+				revisionSources.push({
+					selectedIds: grouped.resources,
+					items: response?.resources ?? [],
+					sourceRevisionSet: response?.source_revision_set,
+				});
 				authoringGenerations.push(response?.authoring_generation);
 			}
 			if (grouped.prompts.length) {
@@ -452,7 +449,11 @@ export function ProfileDetailPage() {
 						"configSuitPrompts",
 						profileId,
 					]);
-				revisionSets.push(response?.source_revision_set);
+				revisionSources.push({
+					selectedIds: grouped.prompts,
+					items: response?.prompts ?? [],
+					sourceRevisionSet: response?.source_revision_set,
+				});
 				authoringGenerations.push(response?.authoring_generation);
 			}
 			if (grouped.templates.length) {
@@ -460,10 +461,14 @@ export function ProfileDetailPage() {
 						"configSuitResourceTemplates",
 						profileId,
 					]);
-				revisionSets.push(response?.source_revision_set);
+				revisionSources.push({
+					selectedIds: grouped.templates,
+					items: response?.templates ?? [],
+					sourceRevisionSet: response?.source_revision_set,
+				});
 				authoringGenerations.push(response?.authoring_generation);
 			}
-			const revisionSet = requireMatchingRevisionSet(revisionSets);
+			const revisionSet = requireSelectedCapabilityRevisionSet(revisionSources);
 			const authoringGeneration = requireMatchingAuthoringGeneration(authoringGenerations);
 			await configSuitsApi.bulkCapabilities(
 				profileId!,
@@ -849,7 +854,11 @@ export function ProfileDetailPage() {
 					requireMatchingAuthoringGeneration([
 						toolsResponse?.authoring_generation,
 					]),
-					requireMatchingRevisionSet([toolsResponse?.source_revision_set]),
+					requireCapabilityRevisionSet(
+						[toolId],
+						toolsResponse?.tools,
+						toolsResponse?.source_revision_set,
+					),
 				)
 				: configSuitsApi.disableTool(
 					profileId!,
@@ -857,7 +866,11 @@ export function ProfileDetailPage() {
 					requireMatchingAuthoringGeneration([
 						toolsResponse?.authoring_generation,
 					]),
-					requireMatchingRevisionSet([toolsResponse?.source_revision_set]),
+					requireCapabilityRevisionSet(
+						[toolId],
+						toolsResponse?.tools,
+						toolsResponse?.source_revision_set,
+					),
 				);
 		},
 		onSuccess: () => {
@@ -896,7 +909,11 @@ export function ProfileDetailPage() {
 					requireMatchingAuthoringGeneration([
 						resourcesResponse?.authoring_generation,
 					]),
-					requireMatchingRevisionSet([resourcesResponse?.source_revision_set]),
+					requireCapabilityRevisionSet(
+						[resourceId],
+						resourcesResponse?.resources,
+						resourcesResponse?.source_revision_set,
+					),
 				)
 				: configSuitsApi.disableResource(
 					profileId!,
@@ -904,7 +921,11 @@ export function ProfileDetailPage() {
 					requireMatchingAuthoringGeneration([
 						resourcesResponse?.authoring_generation,
 					]),
-					requireMatchingRevisionSet([resourcesResponse?.source_revision_set]),
+					requireCapabilityRevisionSet(
+						[resourceId],
+						resourcesResponse?.resources,
+						resourcesResponse?.source_revision_set,
+					),
 				);
 		},
 		onSuccess: () => {
@@ -943,7 +964,11 @@ export function ProfileDetailPage() {
 					requireMatchingAuthoringGeneration([
 						promptsResponse?.authoring_generation,
 					]),
-					requireMatchingRevisionSet([promptsResponse?.source_revision_set]),
+					requireCapabilityRevisionSet(
+						[promptId],
+						promptsResponse?.prompts,
+						promptsResponse?.source_revision_set,
+					),
 				)
 				: configSuitsApi.disablePrompt(
 					profileId!,
@@ -951,7 +976,11 @@ export function ProfileDetailPage() {
 					requireMatchingAuthoringGeneration([
 						promptsResponse?.authoring_generation,
 					]),
-					requireMatchingRevisionSet([promptsResponse?.source_revision_set]),
+					requireCapabilityRevisionSet(
+						[promptId],
+						promptsResponse?.prompts,
+						promptsResponse?.source_revision_set,
+					),
 				);
 		},
 		onSuccess: () => {
@@ -1435,7 +1464,11 @@ export function ProfileDetailPage() {
 					requireMatchingAuthoringGeneration([
 						templatesResponse?.authoring_generation,
 					]),
-					requireMatchingRevisionSet([templatesResponse?.source_revision_set]),
+					requireCapabilityRevisionSet(
+						[templateId],
+						templatesResponse?.templates,
+						templatesResponse?.source_revision_set,
+					),
 				)
 				: configSuitsApi.disableResourceTemplate(
 					profileId!,
@@ -1443,7 +1476,11 @@ export function ProfileDetailPage() {
 					requireMatchingAuthoringGeneration([
 						templatesResponse?.authoring_generation,
 					]),
-					requireMatchingRevisionSet([templatesResponse?.source_revision_set]),
+					requireCapabilityRevisionSet(
+						[templateId],
+						templatesResponse?.templates,
+						templatesResponse?.source_revision_set,
+					),
 				),
 		onSuccess: () => {
 			refreshProfileCapabilitySurface();

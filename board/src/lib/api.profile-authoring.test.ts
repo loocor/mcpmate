@@ -307,6 +307,95 @@ describe("Profile authoring API", () => {
 		});
 	});
 
+	test("associates committed imports before reporting import completion errors", async () => {
+		const requestedPaths: string[] = [];
+		globalThis.fetch = async (input) => {
+			const url = new URL(String(input), "http://localhost");
+			requestedPaths.push(url.pathname);
+			if (url.pathname.endsWith("/api/mcp/servers/list")) {
+				return Response.json({
+					success: true,
+					data: {
+						servers: [{ id: "server-a", name: "Imported A", enabled: true }],
+					},
+				});
+			}
+			if (url.pathname.endsWith("/api/mcp/profile/authoring/view")) {
+				return Response.json({
+					success: true,
+					data: {
+						profile: {
+							id: "profile-a",
+							name: "Profile A",
+							profile_type: "shared",
+							multi_select: true,
+							priority: 50,
+							is_active: true,
+							is_default: false,
+							authoring_generation: 7,
+							allowed_operations: [],
+						},
+						server_ids: [],
+					},
+				});
+			}
+			return Response.json({
+				success: true,
+				data: {
+					profile: {
+						id: "profile-a",
+						name: "Profile A",
+						profile_type: "shared",
+						multi_select: true,
+						priority: 50,
+						is_active: true,
+						is_default: false,
+						authoring_generation: 8,
+						allowed_operations: [],
+					},
+				},
+			});
+		};
+
+		for (const failure of [
+			{
+				failedCount: 1,
+				failedServers: ["Failed B"],
+				runtimeSyncError: null,
+				expectedMessage: "1 server import(s) failed",
+			},
+			{
+				failedCount: 0,
+				failedServers: [],
+				runtimeSyncError: "pool update failed",
+				expectedMessage:
+					"Servers were imported, but runtime synchronization failed: pool update failed",
+			},
+		]) {
+			requestedPaths.length = 0;
+			const error = await apiModule
+				.completeServerImportForProfile("profile-a", {
+					importedCount: 1,
+					importedServers: ["Imported A"],
+					skippedCount: 0,
+					skippedServers: [],
+					skippedDetails: [],
+					failedCount: failure.failedCount,
+					failedServers: failure.failedServers,
+					runtimeSyncError: failure.runtimeSyncError,
+				})
+				.catch((value: unknown) => value);
+
+			expect(requestedPaths).toEqual([
+				"/api/mcp/servers/list",
+				"/api/mcp/profile/authoring/view",
+				"/api/mcp/profile/authoring/save",
+			]);
+			expect(error).toBeInstanceOf(Error);
+			expect(error).toMatchObject({ message: failure.expectedMessage });
+		}
+	});
+
 	test("keeps Profile state out of Server create requests", async () => {
 		let requestBody: unknown;
 		globalThis.fetch = async (_input, init) => {
