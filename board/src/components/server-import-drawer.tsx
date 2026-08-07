@@ -3,11 +3,13 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	assertCompleteServerImport,
+	associateImportedServersWithProfile,
 	extractImportStats,
 	serversApi,
 } from "../lib/api";
 import { resolveAutoAddTargetProfileId } from "../lib/default-profile";
 import { notifyError, notifyInfo, notifySuccess } from "../lib/notify";
+import { profileSyncErrorTranslationKey } from "../lib/profile-sync-error";
 import { formatNameList, summarizeSkipped } from "../lib/server-import-utils";
 import {
 	resolveImportDrawerOpen,
@@ -189,10 +191,7 @@ export function ServerImportDrawer({
 					useAppStore.getState().dashboardSettings
 						.autoAddServerToDefaultProfile,
 			});
-			const importPayload = targetProfileId
-				? { ...p.payload, target_profile_id: targetProfileId }
-				: p.payload;
-			const res = await serversApi.importServers(importPayload);
+			const res = await serversApi.importServers(p.payload);
 			const stats = extractImportStats(res);
 			const didSucceed =
 				typeof res?.success === "boolean"
@@ -201,6 +200,10 @@ export function ServerImportDrawer({
 					!("error" in (res ?? {}));
 			if (didSucceed) {
 				assertCompleteServerImport(stats);
+				await associateImportedServersWithProfile(
+					targetProfileId,
+					stats.importedServers,
+				);
 				const { importedCount, skippedCount, skippedServers, skippedDetails } =
 					stats;
 				const skippedSummary = summarizeSkipped(skippedDetails, t);
@@ -230,7 +233,7 @@ export function ServerImportDrawer({
 			}
 			notifyError("Import failed", String(res.error ?? "Unknown error"));
 		} catch (e) {
-			notifyError("Import failed", String(e));
+			notifyError("Import failed", t(profileSyncErrorTranslationKey(e)));
 		} finally {
 			importInFlightRef.current = false;
 			setImporting(false);

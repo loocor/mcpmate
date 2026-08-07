@@ -113,7 +113,7 @@ export interface ServerSummary {
   id: string;
   name: string;
   server_type?: string;
-	status: string;
+	status?: string;
 	auth_mode?: string | null;
 	enabled?: boolean;
   unify_direct_exposure_eligible?: boolean;
@@ -878,35 +878,41 @@ export interface ConfigSuit {
   priority: number;
   is_active: boolean;
   is_default: boolean;
+  authoring_generation: number;
   role?: string;
   allowed_operations: string[];
-  source_revision_set?: CatalogRevisionSet;
 }
 
 export interface ConfigSuitListResponse {
   suits: ConfigSuit[];
-  source_revision_set: CatalogRevisionSet;
 }
 
-export interface CreateConfigSuitRequest {
+export interface ApiConflictDetails {
+  currentAuthoringGeneration?: number;
+  dependencyServerIds?: string[];
+}
+
+export interface ProfileAuthoringView {
+  profile: ConfigSuit;
+  server_ids: string[];
+}
+
+export interface ProfileAuthoringSaveRequest {
+  id: string | null;
+  expected_authoring_generation: number | null;
   name: string;
-  description?: string;
-  suit_type: string;
-  multi_select?: boolean;
-  priority?: number;
-  is_active?: boolean;
-  is_default?: boolean;
-  clone_from_id?: string;
+  description: string | null;
+  profile_type: string;
+  multi_select: boolean;
+  priority: number;
+  is_active: boolean;
+  is_default: boolean;
+  server_ids: string[];
+  clone_from_id: string | null;
 }
 
-export interface UpdateConfigSuitRequest {
-  name?: string;
-  description?: string;
-  suit_type?: string;
-  multi_select?: boolean;
-  priority?: number;
-  is_active?: boolean;
-  is_default?: boolean;
+export interface ProfileAuthoringSaveResponse {
+  profile: ConfigSuit;
 }
 
 export interface ConfigSuitServer {
@@ -920,7 +926,7 @@ export interface ConfigSuitServersResponse {
   suit_id: string;
   suit_name: string;
   servers: ConfigSuitServer[];
-  source_revision_set: CatalogRevisionSet;
+  authoring_generation: number;
 }
 
 export interface ConfigSuitTool {
@@ -941,6 +947,7 @@ export interface ConfigSuitToolsResponse {
   suit_name: string;
   tools: ConfigSuitTool[];
   source_revision_set: CatalogRevisionSet;
+  authoring_generation: number;
 }
 
 export interface ConfigSuitResource {
@@ -961,6 +968,7 @@ export interface ConfigSuitResourcesResponse {
   suit_name: string;
   resources: ConfigSuitResource[];
   source_revision_set: CatalogRevisionSet;
+  authoring_generation: number;
 }
 
 export interface ConfigSuitResourceTemplate {
@@ -981,6 +989,7 @@ export interface ConfigSuitResourceTemplatesResponse {
   suit_name: string;
   templates: ConfigSuitResourceTemplate[];
   source_revision_set: CatalogRevisionSet;
+  authoring_generation: number;
 }
 
 export interface ConfigSuitPrompt {
@@ -1001,6 +1010,7 @@ export interface ConfigSuitPromptsResponse {
   suit_name: string;
   prompts: ConfigSuitPrompt[];
   source_revision_set: CatalogRevisionSet;
+  authoring_generation: number;
 }
 
 export interface BatchOperationRequest {

@@ -4,10 +4,11 @@ import { Plus } from "lucide-react";
 import React from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
-import { configSuitsApi, requireProfileRevisionSet } from "../../lib/api";
+import { configSuitsApi } from "../../lib/api";
 import { DEFAULT_ANCHOR_ROLE } from "../../lib/default-profile";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { notifyError, notifySuccess } from "../../lib/notify";
+import { profileSyncErrorTranslationKey } from "../../lib/profile-sync-error";
 import type { ConfigSuit } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import {
@@ -150,12 +151,12 @@ export function OperatorProfilesRowDetail({
 			if (nextActive) {
 				await configSuitsApi.activateSuit(
 					profile.id,
-					requireProfileRevisionSet(profile),
+					profile.authoring_generation,
 				);
 			} else {
 				await configSuitsApi.deactivateSuit(
 					profile.id,
-					requireProfileRevisionSet(profile),
+					profile.authoring_generation,
 				);
 			}
 		},
@@ -191,7 +192,7 @@ export function OperatorProfilesRowDetail({
 					: t("profiles:messages.deactivationFailed", {
 							defaultValue: "Deactivation failed",
 						}),
-				error instanceof Error ? error.message : String(error),
+				t(profileSyncErrorTranslationKey(error)),
 			);
 		},
 		onSettled: () => {

@@ -1,7 +1,6 @@
 import { resolveApiUrl } from "../../lib/api";
 import type {
 	ClientCheckData,
-	CatalogRevisionSet,
 	ConfigSuit,
 	ConfigSuitListResponse,
 	ServerListResponse,
@@ -18,7 +17,6 @@ interface ProfileListPayload {
 	profile: OperatorProfileRow[];
 	total: number;
 	timestamp: string;
-	source_revision_set: CatalogRevisionSet;
 }
 
 interface OperatorProfileRow {
@@ -31,6 +29,7 @@ interface OperatorProfileRow {
 	is_active: boolean;
 	is_default: boolean;
 	role?: string | null;
+	authoring_generation: number;
 	allowed_operations: string[];
 }
 
@@ -116,7 +115,6 @@ function readStringArray(record: Record<string, unknown>, field: string, context
 function profileRowToConfigSuit(
 	row: unknown,
 	index: number,
-	sourceRevisionSet: CatalogRevisionSet,
 ): ConfigSuit {
 	const context = `Operator profile row ${index}`;
 	assertRecord(row, context);
@@ -130,9 +128,9 @@ function profileRowToConfigSuit(
 		priority: readNumber(row, "priority", context),
 		is_active: readBoolean(row, "is_active", context),
 		is_default: readBoolean(row, "is_default", context),
-		role: readOptionalString(row, "role", context),
-		allowed_operations: readStringArray(row, "allowed_operations", context),
-		source_revision_set: sourceRevisionSet,
+	role: readOptionalString(row, "role", context),
+	authoring_generation: readNumber(row, "authoring_generation", context),
+	allowed_operations: readStringArray(row, "allowed_operations", context),
 	};
 }
 
@@ -141,17 +139,10 @@ export async function listOperatorProfiles(): Promise<ConfigSuitListResponse> {
 	if (!Array.isArray(data.profile)) {
 		throw new Error("Operator profiles response is missing profile list");
 	}
-	assertRecord(data.source_revision_set, "Operator profile revision set");
-	for (const [serverId, revision] of Object.entries(data.source_revision_set)) {
-		if (!serverId || typeof revision !== "number" || !Number.isSafeInteger(revision)) {
-			throw new Error("Operator profile revision set is malformed");
-		}
-	}
 	return {
 		suits: data.profile.map((profile, index) =>
-			profileRowToConfigSuit(profile, index, data.source_revision_set),
+			profileRowToConfigSuit(profile, index),
 		),
-		source_revision_set: data.source_revision_set,
 	};
 }
 

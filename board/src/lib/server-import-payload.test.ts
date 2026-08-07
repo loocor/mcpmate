@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { buildMcpServersImportBodyFromDrafts } from "./server-import-payload";
+import {
+	buildClientServersImportRequest,
+	buildDraftServersImportRequest,
+	buildMcpServersImportBodyFromDrafts,
+} from "./server-import-payload";
 
 describe("server import payload", () => {
 	test("preserves remote headers in the shared import request payload", () => {
@@ -51,6 +55,29 @@ describe("server import payload", () => {
 					type: "streamable_http",
 					url: "https://beta.example.com/mcp",
 				},
+			},
+		});
+	});
+
+	test("keeps Profile assignment out of server import payloads", () => {
+		expect(
+			buildClientServersImportRequest({
+				clientIdentifier: "client-a",
+				selectedServerNames: ["alpha"],
+				targetProfileId: "profile-a",
+			}),
+		).toEqual({
+			client_identifier: "client-a",
+			selected_server_names: ["alpha"],
+		});
+		expect(
+			buildDraftServersImportRequest({
+				drafts: [{ name: "alpha", kind: "stdio", command: "alpha" }],
+				targetProfileId: "profile-a",
+			}),
+		).toEqual({
+			mcpServers: {
+				alpha: { type: "stdio", command: "alpha" },
 			},
 		});
 	});

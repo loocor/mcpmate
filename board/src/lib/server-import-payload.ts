@@ -6,23 +6,18 @@ export type ServersImportRequestBody = {
 	mcpServers?: Record<string, unknown>;
 	client_identifier?: string;
 	selected_server_names?: string[];
-	target_profile_id?: string | null;
 	dry_run?: boolean;
 };
 
 export function buildClientServersImportRequest(init: {
 	clientIdentifier: string;
 	selectedServerNames: string[];
-	targetProfileId?: string | null;
 	dryRun?: boolean;
 }): ServersImportRequestBody {
 	const body: ServersImportRequestBody = {
 		client_identifier: init.clientIdentifier,
 		selected_server_names: init.selectedServerNames,
 	};
-	if (init.targetProfileId) {
-		body.target_profile_id = init.targetProfileId;
-	}
 	if (init.dryRun) {
 		body.dry_run = true;
 	}
@@ -80,16 +75,12 @@ export function buildMcpServersImportBodyFromDrafts(
 export function buildDraftServersImportRequest(init: {
 	drafts: ServerInstallDraft[];
 	selectedDraftNames?: Set<string> | string[];
-	targetProfileId?: string | null;
 	dryRun?: boolean;
 }): ServersImportRequestBody {
 	const body: ServersImportRequestBody = buildMcpServersImportBodyFromDrafts(
 		init.drafts,
 		init.selectedDraftNames,
 	);
-	if (init.targetProfileId) {
-		body.target_profile_id = init.targetProfileId;
-	}
 	if (init.dryRun) {
 		body.dry_run = true;
 	}

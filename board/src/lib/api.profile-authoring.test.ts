@@ -1,0 +1,331 @@
+import { afterEach, describe, expect, test } from "bun:test";
+
+import * as apiModule from "./api";
+import { configSuitsApi, serversApi } from "./api";
+
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+	globalThis.fetch = originalFetch;
+});
+
+describe("Profile authoring API", () => {
+	test("preserves profile conflict status code and details", async () => {
+		globalThis.fetch = async () =>
+			new Response(
+				JSON.stringify({
+					error: {
+						message: "Profile was changed by another author",
+						status: 409,
+						code: "profile_authoring_changed",
+						details: { currentAuthoringGeneration: 13 },
+					},
+				}),
+				{ status: 409, statusText: "Conflict" },
+			);
+
+		const error = await configSuitsApi
+			.getAuthoringView("profile-a")
+			.catch((value: unknown) => value);
+
+		expect(error?.constructor?.name).toBe("ApiRequestError");
+		expect(error).toMatchObject({
+			status: 409,
+			code: "profile_authoring_changed",
+			details: { currentAuthoringGeneration: 13 },
+			message: "Profile was changed by another author",
+		});
+	});
+
+	test("preserves ordinary error status and message", async () => {
+		globalThis.fetch = async () =>
+			new Response(
+				JSON.stringify({
+					error: {
+						message: "Profile not found",
+						status: 404,
+					},
+				}),
+				{ status: 404, statusText: "Not Found" },
+			);
+
+		const error = await configSuitsApi
+			.getAuthoringView("missing")
+			.catch((value: unknown) => value);
+
+		expect(error?.constructor?.name).toBe("ApiRequestError");
+		expect(error).toMatchObject({
+			status: 404,
+			message: "Profile not found",
+		});
+	});
+
+	test("maps every Profile writer to its generation-aware request shape", async () => {
+		const requests: Array<{ url: string; body: unknown }> = [];
+		globalThis.fetch = async (input, init) => {
+			requests.push({
+				url: String(input),
+				body: init?.body ? JSON.parse(String(init.body)) : undefined,
+			});
+			return Response.json({ success: true, data: {} });
+		};
+
+		await configSuitsApi.activateSuit("profile-a", 12);
+		await configSuitsApi.deactivateSuit("profile-a", 13);
+		await configSuitsApi.deleteSuit("profile-a", 14);
+		await configSuitsApi.enableServer("profile-a", "server-a", 15);
+		await configSuitsApi.enableTool(
+			"profile-a",
+			"tool-a",
+			16,
+			{ "server-a": 4 },
+		);
+
+		expect(
+			requests.map(({ url }) => new URL(url, "http://localhost").pathname),
+		).toEqual([
+			"/api/mcp/profile/manage",
+			"/api/mcp/profile/manage",
+			"/api/mcp/profile/delete",
+			"/api/mcp/profile/servers/manage",
+			"/api/mcp/profile/tools/manage",
+		]);
+		expect(requests.map(({ body }) => body)).toEqual([
+		{
+				ids: ["profile-a"],
+				action: "activate",
+				expected_authoring_generations: { "profile-a": 12 },
+		},
+		{
+				ids: ["profile-a"],
+				action: "deactivate",
+				expected_authoring_generations: { "profile-a": 13 },
+		},
+		{
+			id: "profile-a",
+			expected_authoring_generation: 14,
+		},
+		{
+				profile_id: "profile-a",
+				component_ids: ["server-a"],
+				action: "enable",
+				expected_authoring_generation: 15,
+		},
+		{
+				profile_id: "profile-a",
+				component_ids: ["tool-a"],
+				action: "enable",
+				expected_authoring_generation: 16,
+				source_revision_set: { "server-a": 4 },
+		},
+		]);
+	});
+
+	test("associates discovered imported servers with one current Profile save", async () => {
+		const requests: Array<{ url: string; body: unknown }> = [];
+		globalThis.fetch = async (input, init) => {
+			const url = String(input);
+			requests.push({
+				url,
+				body: init?.body ? JSON.parse(String(init.body)) : undefined,
+			});
+			if (url.includes("/api/mcp/servers/list")) {
+				return Response.json({
+					success: true,
+					data: {
+						servers: [
+							{ id: "server-a", name: "Imported A", enabled: true },
+							{ id: "server-z", name: "Unrelated", enabled: true },
+						],
+					},
+				});
+			}
+			if (url.includes("/api/mcp/profile/authoring/view")) {
+				return Response.json({
+					success: true,
+					data: {
+						profile: {
+							id: "profile-a",
+							name: "Profile A",
+							description: null,
+							profile_type: "shared",
+							multi_select: true,
+							priority: 50,
+							is_active: true,
+							is_default: false,
+							authoring_generation: 7,
+							role: "user",
+							allowed_operations: ["update"],
+						},
+						server_ids: ["server-existing"],
+					},
+				});
+			}
+			return Response.json({
+				success: true,
+				data: {
+					profile: {
+						id: "profile-a",
+						name: "Profile A",
+						description: null,
+						profile_type: "shared",
+						multi_select: true,
+						priority: 50,
+						is_active: true,
+						is_default: false,
+						authoring_generation: 8,
+						role: "user",
+						allowed_operations: ["update"],
+					},
+				},
+			});
+		};
+
+		await apiModule.associateImportedServersWithProfile(
+			"profile-a",
+			["Imported A"],
+		);
+
+		expect(
+			requests.map(({ url }) => new URL(url, "http://localhost").pathname),
+		).toEqual([
+			"/api/mcp/servers/list",
+			"/api/mcp/profile/authoring/view",
+			"/api/mcp/profile/authoring/save",
+		]);
+		expect(requests[2]?.body).toEqual({
+			id: "profile-a",
+			expected_authoring_generation: 7,
+			name: "Profile A",
+			description: null,
+			profile_type: "shared",
+			multi_select: true,
+			priority: 50,
+			is_active: true,
+			is_default: false,
+			server_ids: ["server-existing", "server-a"],
+			clone_from_id: null,
+		});
+	});
+
+	test("resolves an imported server from the second server-list page", async () => {
+		const requestedOffsets: string[] = [];
+		let saveBody: unknown;
+		globalThis.fetch = async (input, init) => {
+			const url = new URL(String(input), "http://localhost");
+			if (url.pathname.endsWith("/api/mcp/servers/list")) {
+				const offset = url.searchParams.get("offset") ?? "";
+				requestedOffsets.push(offset);
+				const servers =
+					offset === "0"
+						? Array.from({ length: 100 }, (_, index) => ({
+								id: `filler-${index}`,
+								name: `Filler ${index}`,
+								enabled: true,
+							}))
+						: [{ id: "server-target", name: "Imported Target", enabled: true }];
+				return Response.json({ success: true, data: { servers } });
+			}
+			if (url.pathname.endsWith("/api/mcp/profile/authoring/view")) {
+				return Response.json({
+					success: true,
+					data: {
+						profile: {
+							id: "profile-a",
+							name: "Profile A",
+							profile_type: "shared",
+							multi_select: true,
+							priority: 50,
+							is_active: true,
+							is_default: false,
+							authoring_generation: 7,
+							allowed_operations: [],
+						},
+						server_ids: [],
+					},
+				});
+			}
+			saveBody = init?.body ? JSON.parse(String(init.body)) : undefined;
+			return Response.json({
+				success: true,
+				data: {
+					profile: {
+						id: "profile-a",
+						name: "Profile A",
+						profile_type: "shared",
+						multi_select: true,
+						priority: 50,
+						is_active: true,
+						is_default: false,
+						authoring_generation: 8,
+						allowed_operations: [],
+					},
+				},
+			});
+		};
+
+		await apiModule.associateImportedServersWithProfile(
+			"profile-a",
+			["Imported Target"],
+		);
+
+		expect(requestedOffsets).toEqual(["0", "100"]);
+		expect(saveBody).toMatchObject({ server_ids: ["server-target"] });
+	});
+
+	test("returns a stable error when an imported server is missing", async () => {
+		globalThis.fetch = async () =>
+			Response.json({ success: true, data: { servers: [] } });
+
+		const error = await apiModule
+			.associateImportedServersWithProfile("profile-a", ["Missing"])
+			.catch((value: unknown) => value);
+
+		expect(error).toMatchObject({
+			code: "imported_server_missing",
+		});
+	});
+
+	test("returns a stable error when an imported server name is ambiguous", async () => {
+		globalThis.fetch = async () =>
+			Response.json({
+				success: true,
+				data: {
+					servers: [
+						{ id: "server-a", name: "Duplicate", enabled: true },
+						{ id: "server-b", name: "Duplicate", enabled: true },
+					],
+				},
+			});
+
+		const error = await apiModule
+			.associateImportedServersWithProfile("profile-a", ["Duplicate"])
+			.catch((value: unknown) => value);
+
+		expect(error).toMatchObject({
+			code: "imported_server_ambiguous",
+		});
+	});
+
+	test("keeps Profile state out of Server create requests", async () => {
+		let requestBody: unknown;
+		globalThis.fetch = async (_input, init) => {
+			requestBody = init?.body ? JSON.parse(String(init.body)) : undefined;
+			return Response.json({ success: true, data: {} });
+		};
+
+		await serversApi.createServer({
+			name: "server-a",
+			kind: "stdio",
+			command: "server-a",
+			enabled: true,
+			profile_ids: ["profile-a"],
+		});
+
+		expect(requestBody).toEqual({
+			name: "server-a",
+			server_type: "stdio",
+			command: "server-a",
+		});
+	});
+});

@@ -24,10 +24,12 @@ import { TooltipProvider } from "../../components/ui/tooltip";
 import {
   clientsApi,
   assertCompleteServerImport,
+  associateImportedServersWithProfile,
   extractImportStats,
   runtimeApi,
   serversApi,
 } from "../../lib/api";
+import { profileSyncErrorTranslationKey } from "../../lib/profile-sync-error";
 import {
   adminDiscoveryClientToUpdatePayload,
   clientTagsForDetected,
@@ -556,11 +558,11 @@ export function OnboardingPage() {
         // regardless of the autoAddServerToDefaultProfile setting (which defaults to false for new users).
         // The default anchor is seeded at app init, so it must already exist before onboarding runs.
         const targetProfileId = await resolveActiveDefaultProfileId();
+        const importedServerNames: string[] = [];
 
         if (hasDiscoveryServerConfigs) {
           const response = await serversApi.importServers({
             mcpServers: selectedDiscoveryServerConfigs,
-            target_profile_id: targetProfileId,
           });
           if (
             response &&
@@ -573,6 +575,7 @@ export function OnboardingPage() {
           }
           const stats = extractImportStats(response);
           assertCompleteServerImport(stats);
+          importedServerNames.push(...stats.importedServers);
         }
 
         for (const [clientIdentifier, selectedServerNames] of selectedServerNamesByClient) {
@@ -580,7 +583,6 @@ export function OnboardingPage() {
             buildClientServersImportRequest({
               clientIdentifier,
               selectedServerNames,
-              targetProfileId,
             }),
           );
           if (
@@ -594,7 +596,12 @@ export function OnboardingPage() {
           }
           const stats = extractImportStats(response);
           assertCompleteServerImport(stats);
+          importedServerNames.push(...stats.importedServers);
         }
+        await associateImportedServersWithProfile(
+          targetProfileId,
+          importedServerNames,
+        );
         await qc.invalidateQueries({ queryKey: ["servers"] });
         if (targetProfileId) {
           await qc.invalidateQueries({ queryKey: ["configSuits"] });
@@ -642,7 +649,7 @@ export function OnboardingPage() {
     } catch (error) {
       notifyError(
         t("servers.importErrorTitle", { defaultValue: "Server import failed" }),
-        error instanceof Error ? error.message : String(error),
+        t(profileSyncErrorTranslationKey(error)),
       );
       setCompleting(false);
     }
@@ -655,6 +662,7 @@ export function OnboardingPage() {
     state.selectedClients,
     state.selectedServers,
     t,
+		i18n.language,
   ]);
 
   const handleLanguageChange = useCallback(

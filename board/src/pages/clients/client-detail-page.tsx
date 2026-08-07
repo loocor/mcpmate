@@ -91,6 +91,7 @@ import {
   auditApi,
   assertCompleteCapabilityBatch,
   assertCompleteServerImport,
+  associateImportedServersWithProfile,
   clientsApi,
   configSuitsApi,
   extractImportStats,
@@ -99,6 +100,7 @@ import {
 import { resolveAutoAddTargetProfileId } from "../../lib/default-profile";
 import { buildClientServersImportRequest } from "../../lib/server-import-payload";
 import { invalidateServerCatalogAfterImport } from "../../lib/server-query-cache";
+import { profileSyncErrorTranslationKey } from "../../lib/profile-sync-error";
 import { mapDashboardSettingsToClientBackupPolicy } from "../../lib/client-backup-policy";
 import {
   applyClientConfigWithResolvedSelection,
@@ -1661,7 +1663,6 @@ export function ClientDetailPage() {
         buildClientServersImportRequest({
           clientIdentifier: identifier,
           selectedServerNames,
-          targetProfileId,
         }),
       );
       if (
@@ -1678,6 +1679,10 @@ export function ClientDetailPage() {
       }
       const stats = extractImportStats(resp);
       assertCompleteServerImport(stats);
+      await associateImportedServersWithProfile(
+        targetProfileId,
+        stats.importedServers,
+      );
       return {
         imported_count: stats.importedCount,
         imported_servers: stats.importedServers,
@@ -1736,7 +1741,7 @@ export function ClientDetailPage() {
         t("detail.notifications.importFailed.title", {
           defaultValue: "Import failed",
         }),
-        String(e),
+        t(profileSyncErrorTranslationKey(e)),
       ),
   });
 

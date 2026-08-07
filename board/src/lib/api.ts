@@ -47,7 +47,6 @@ import type {
 	ConfigSuitServersResponse,
 	ConfigSuitTool,
 	ConfigSuitToolsResponse,
-	CreateConfigSuitRequest,
 	InspectorSessionCloseData,
 	InspectorSessionOpenData,
 	InspectorToolCallCancelData,
@@ -99,6 +98,10 @@ import type {
 	PasswordStatusResp,
 	PasswordSetResp,
 	PasswordVerifyResp,
+	ProfileAuthoringSaveRequest,
+	ProfileAuthoringSaveResponse,
+	ProfileAuthoringView,
+	ApiConflictDetails,
 	SecretUsage,
 	SecretUsageListResp,
 	OAuthCallbackRequest,
@@ -113,7 +116,6 @@ import type {
 	CapabilityTokenLedgerResponse,
 	TokenEstimateResponse,
 	ToolDetail,
-	UpdateConfigSuitRequest,
 	LlmProviderConfig,
 	LlmProviderCreateInput,
 	LlmProviderModelPreviewInput,
@@ -500,12 +502,10 @@ interface ProfileApiRow {
 	is_default?: boolean;
 	role?: string | null;
 	allowed_operations?: string[];
+	authoring_generation: number;
 }
 
-function profileRowToConfigSuit(
-	p: ProfileApiRow,
-	sourceRevisionSet?: CatalogRevisionSet,
-): ConfigSuit {
+function profileRowToConfigSuit(p: ProfileApiRow): ConfigSuit {
 	return {
 		id: p.id,
 		name: p.name,
@@ -515,21 +515,10 @@ function profileRowToConfigSuit(
 		priority: p.priority ?? 0,
 		is_active: p.is_active ?? false,
 		is_default: p.is_default ?? false,
+		authoring_generation: p.authoring_generation,
 		role: p.role ?? undefined,
 		allowed_operations: p.allowed_operations ?? [],
-		source_revision_set: sourceRevisionSet,
 	};
-}
-
-export function requireProfileRevisionSet(
-	profile: ConfigSuit,
-): CatalogRevisionSet {
-	if (!profile.source_revision_set) {
-		throw new Error(
-			"Capability catalog revisions are not loaded. Refresh profiles and retry.",
-		);
-	}
-	return profile.source_revision_set;
 }
 
 function asOptionalString(v: unknown): string | undefined {
@@ -565,25 +554,57 @@ interface NotificationData {
 	event?: string;
 }
 
+export class ApiRequestError extends Error {
+	readonly status: number;
+	readonly code?: string;
+	readonly details?: ApiConflictDetails;
+
+	constructor(
+		message: string,
+		status: number,
+		code?: string,
+		details?: ApiConflictDetails,
+	) {
+		super(message);
+		this.name = "ApiRequestError";
+		this.status = status;
+		this.code = code;
+		this.details = details;
+	}
+}
+
 // Enhanced error handling utility
-function createApiError(response: Response, parsed?: unknown): Error {
+function createApiError(response: Response, parsed?: unknown): ApiRequestError {
 	if (parsed && typeof parsed === "object") {
 		const obj = parsed as Record<string, unknown>;
 		if (typeof obj.message === "string") {
-			return new Error(obj.message);
+			return new ApiRequestError(obj.message, response.status);
 		}
 		if (obj.error && typeof obj.error === "object") {
-			const errorObj = obj.error as { message?: unknown };
+			const errorObj = obj.error as Record<string, unknown>;
 			if (typeof errorObj.message === "string") {
-				return new Error(errorObj.message);
+				return new ApiRequestError(
+					errorObj.message,
+					response.status,
+					typeof errorObj.code === "string" ? errorObj.code : undefined,
+					errorObj.details && typeof errorObj.details === "object"
+						? (errorObj.details as ApiConflictDetails)
+						: undefined,
+				);
 			}
 		}
 	}
-	return new Error(`API Error: ${response.status} ${response.statusText}`);
+	return new ApiRequestError(
+		`API Error: ${response.status} ${response.statusText}`,
+		response.status,
+	);
 }
 
 /** True when fetchApi failed with an HTTP 404 (e.g. older backend without a route). */
 export function isApiNotFoundError(error: unknown): boolean {
+	if (error instanceof ApiRequestError) {
+		return error.status === 404;
+	}
 	if (!(error instanceof Error)) {
 		return false;
 	}
@@ -1263,8 +1284,19 @@ export const secretsApi = {
 
 // Server Management API
 export const serversApi = {
-	getAll: async (): Promise<ServerListResponse> => {
-		const resp = await fetchApi<ServerListResp>("/api/mcp/servers/list");
+	getAll: async (query?: {
+		limit?: number;
+		offset?: number;
+	}): Promise<ServerListResponse> => {
+		const search = new URLSearchParams();
+		if (query?.limit !== undefined) {
+			search.set("limit", String(query.limit));
+		}
+		if (query?.offset !== undefined) {
+			search.set("offset", String(query.offset));
+		}
+		const suffix = search.size > 0 ? `?${search}` : "";
+		const resp = await fetchApi<ServerListResp>(`/api/mcp/servers/list${suffix}`);
 		const rawServers = Array.isArray(resp?.data?.servers)
 			? resp.data.servers
 			: [];
@@ -1566,17 +1598,14 @@ export const serversApi = {
 	createServer: async (serverConfig: Partial<MCPServerConfig>) => {
 		const sc = serverConfig as {
 			url?: string;
-			enabled?: boolean;
 			unify_direct_exposure_eligible?: boolean;
 		};
 		const serverType = (serverConfig.kind || "stdio") as string;
 		const base: Record<string, unknown> = {
 			name: serverConfig.name,
 			server_type: serverType,
-			enabled: sc.enabled ?? undefined,
 			unify_direct_exposure_eligible:
 				sc.unify_direct_exposure_eligible ?? undefined,
-			profile_ids: serverConfig.profile_ids ?? undefined,
 			source: serverConfig.source ?? undefined,
 		};
 		if (serverType === "stdio") {
@@ -1694,7 +1723,6 @@ export const serversApi = {
 		mcpServers?: Record<string, unknown>;
 		client_identifier?: string;
 		selected_server_names?: string[];
-		target_profile_id?: string | null;
 		dry_run?: boolean;
 	}): Promise<ApiWrapper<ServersImportData>> => {
 		return await fetchApi(`/api/mcp/servers/import`, {
@@ -2451,17 +2479,10 @@ export const configSuitsApi = {
 				profile: ProfileApiRow[];
 				total: number;
 				timestamp: string;
-				source_revision_set: CatalogRevisionSet;
 			}>
 		>("/api/mcp/profile/list");
 		const data = extractApiData(response);
-		const suits: ConfigSuit[] = data.profile.map((profile) =>
-			profileRowToConfigSuit(profile, data.source_revision_set),
-		);
-		return {
-			suits,
-			source_revision_set: data.source_revision_set,
-		};
+		return { suits: data.profile.map(profileRowToConfigSuit) };
 	},
 
 	getSuit: async (id: string): Promise<ConfigSuit> => {
@@ -2469,7 +2490,6 @@ export const configSuitsApi = {
 		const response = await fetchApi<
 			ApiWrapper<{
 				profile: ProfileApiRow;
-				source_revision_set: CatalogRevisionSet;
 			}>
 		>(
 			`/api/mcp/profile/details?${q}`,
@@ -2478,63 +2498,38 @@ export const configSuitsApi = {
 		if (!data.profile) {
 			throw new Error("Profile details response missing profile");
 		}
-		return profileRowToConfigSuit(data.profile, data.source_revision_set);
+		return profileRowToConfigSuit(data.profile);
 	},
 
-	createSuit: async (
-		data: CreateConfigSuitRequest,
-	): Promise<ApiResponse<ConfigSuit>> => {
-		const payload = {
-			name: data.name,
-			description: data.description ?? null,
-			profile_type: data.suit_type,
-			multi_select: data.multi_select ?? null,
-			priority: data.priority ?? null,
-			is_active: data.is_active ?? null,
-			is_default: data.is_default ?? null,
-			clone_from_id: data.clone_from_id ?? null,
+	getAuthoringView: async (id: string): Promise<ProfileAuthoringView> => {
+		const query = new URLSearchParams({ id });
+		const response = await fetchApi<
+			ApiWrapper<{ profile: ProfileApiRow; server_ids: string[] }>
+		>(`/api/mcp/profile/authoring/view?${query}`);
+		const data = extractApiData(response);
+		return {
+			profile: profileRowToConfigSuit(data.profile),
+			server_ids: data.server_ids,
 		};
-		const response = await fetchApi<ApiWrapper<ProfileApiRow>>(
-			"/api/mcp/profile/create",
-			{
-				method: "POST",
-				body: JSON.stringify(payload),
-			},
-		);
-		const p = extractApiData(response);
-		const result = profileRowToConfigSuit(p);
-		return { status: "success", message: "Profile created", data: result };
 	},
 
-	updateSuit: async (
-		id: string,
-		data: UpdateConfigSuitRequest,
-	): Promise<ApiResponse<ConfigSuit>> => {
-		const payload = {
-			id,
-			name: data.name ?? null,
-			description: data.description ?? null,
-			profile_type: data.suit_type ?? null,
-			multi_select: data.multi_select ?? null,
-			priority: data.priority ?? null,
-			is_active: data.is_active ?? null,
-			is_default: data.is_default ?? null,
-		};
-		const response = await fetchApi<ApiWrapper<ProfileApiRow>>(
-			`/api/mcp/profile/update`,
+	saveAuthoring: async (
+		request: ProfileAuthoringSaveRequest,
+	): Promise<ProfileAuthoringSaveResponse> => {
+		const response = await fetchApi<ApiWrapper<{ profile: ProfileApiRow }>>(
+			"/api/mcp/profile/authoring/save",
 			{
 				method: "POST",
-				body: JSON.stringify(payload),
+				body: JSON.stringify(request),
 			},
 		);
-		const p = extractApiData(response);
-		const result = profileRowToConfigSuit(p);
-		return { status: "success", message: "Profile updated", data: result };
+		const data = extractApiData(response);
+		return { profile: profileRowToConfigSuit(data.profile) };
 	},
 
 	deleteSuit: async (
 		id: string,
-		sourceRevisionSet: CatalogRevisionSet,
+		expectedAuthoringGeneration: number,
 	): Promise<ApiResponse<void>> => {
 		const response = await fetchApi<ApiWrapper<void>>(
 			`/api/mcp/profile/delete`,
@@ -2542,7 +2537,7 @@ export const configSuitsApi = {
 				method: "DELETE",
 				body: JSON.stringify({
 					id,
-					source_revision_set: sourceRevisionSet,
+					expected_authoring_generation: expectedAuthoringGeneration,
 				}),
 			},
 		);
@@ -2555,10 +2550,10 @@ export const configSuitsApi = {
 
 	// Suit management operations
 	_manageSuits: async (
-		ids: string[],
+		expectedAuthoringGenerations: Record<string, number>,
 		action: "activate" | "deactivate",
-		sourceRevisionSet: CatalogRevisionSet,
 	) => {
+		const ids = Object.keys(expectedAuthoringGenerations);
 		const response = await fetchApi<ApiWrapper<unknown>>(
 			"/api/mcp/profile/manage",
 			{
@@ -2566,7 +2561,7 @@ export const configSuitsApi = {
 				body: JSON.stringify({
 					ids,
 					action,
-					source_revision_set: sourceRevisionSet,
+					expected_authoring_generations: expectedAuthoringGenerations,
 				}),
 			},
 		);
@@ -2578,16 +2573,22 @@ export const configSuitsApi = {
 		};
 	},
 
-	activateSuit: (id: string, sourceRevisionSet: CatalogRevisionSet) =>
-		configSuitsApi._manageSuits([id], "activate", sourceRevisionSet),
-	deactivateSuit: (id: string, sourceRevisionSet: CatalogRevisionSet) =>
-		configSuitsApi._manageSuits([id], "deactivate", sourceRevisionSet),
+	activateSuit: (id: string, expectedAuthoringGeneration: number) =>
+		configSuitsApi._manageSuits(
+			{ [id]: expectedAuthoringGeneration },
+			"activate",
+		),
+	deactivateSuit: (id: string, expectedAuthoringGeneration: number) =>
+		configSuitsApi._manageSuits(
+			{ [id]: expectedAuthoringGeneration },
+			"deactivate",
+		),
 
 	// Batch operations
-	batchActivate: (ids: string[], sourceRevisionSet: CatalogRevisionSet) =>
-		configSuitsApi._manageSuits(ids, "activate", sourceRevisionSet),
-	batchDeactivate: (ids: string[], sourceRevisionSet: CatalogRevisionSet) =>
-		configSuitsApi._manageSuits(ids, "deactivate", sourceRevisionSet),
+	batchActivate: (expectedAuthoringGenerations: Record<string, number>) =>
+		configSuitsApi._manageSuits(expectedAuthoringGenerations, "activate"),
+	batchDeactivate: (expectedAuthoringGenerations: Record<string, number>) =>
+		configSuitsApi._manageSuits(expectedAuthoringGenerations, "deactivate"),
 
 	// Suit content management
 	getServers: async (suitId: string): Promise<ConfigSuitServersResponse> => {
@@ -2597,7 +2598,7 @@ export const configSuitsApi = {
 				profile_id: string;
 				profile_name: string;
 				servers: ConfigSuitServer[];
-				source_revision_set: CatalogRevisionSet;
+				authoring_generation: number;
 			}>
 		>(`/api/mcp/profile/servers/list?${q}`);
 		const data = extractApiData(response);
@@ -2605,7 +2606,7 @@ export const configSuitsApi = {
 			suit_id: data.profile_id,
 			suit_name: data.profile_name,
 			servers: data.servers || [],
-			source_revision_set: data.source_revision_set,
+			authoring_generation: data.authoring_generation,
 		};
 	},
 
@@ -2617,6 +2618,7 @@ export const configSuitsApi = {
 				profile_name: string;
 				tools: ProfileCapabilityWire<ConfigSuitTool>[];
 				source_revision_set: CatalogRevisionSet;
+				authoring_generation: number;
 			}>
 		>(`/api/mcp/profile/tools/list?${q}`);
 		const data = extractApiData(response);
@@ -2625,6 +2627,7 @@ export const configSuitsApi = {
 			suit_name: data.profile_name,
 			tools: (data.tools || []).map(profileCapabilityFromWire),
 			source_revision_set: data.source_revision_set,
+			authoring_generation: data.authoring_generation,
 		};
 	},
 
@@ -2638,6 +2641,7 @@ export const configSuitsApi = {
 				profile_name: string;
 				resources: ProfileCapabilityWire<ConfigSuitResource>[];
 				source_revision_set: CatalogRevisionSet;
+				authoring_generation: number;
 			}>
 		>(`/api/mcp/profile/resources/list?${q}`);
 		const data = extractApiData(response);
@@ -2646,6 +2650,7 @@ export const configSuitsApi = {
 			suit_name: data.profile_name,
 			resources: (data.resources || []).map(profileCapabilityFromWire),
 			source_revision_set: data.source_revision_set,
+			authoring_generation: data.authoring_generation,
 		};
 	},
 
@@ -2657,6 +2662,7 @@ export const configSuitsApi = {
 				profile_name: string;
 				prompts: ProfileCapabilityWire<ConfigSuitPrompt>[];
 				source_revision_set: CatalogRevisionSet;
+				authoring_generation: number;
 			}>
 		>(`/api/mcp/profile/prompts/list?${q}`);
 		const data = extractApiData(response);
@@ -2665,6 +2671,7 @@ export const configSuitsApi = {
 			suit_name: data.profile_name,
 			prompts: (data.prompts || []).map(profileCapabilityFromWire),
 			source_revision_set: data.source_revision_set,
+			authoring_generation: data.authoring_generation,
 		};
 	},
 
@@ -2678,6 +2685,7 @@ export const configSuitsApi = {
 				profile_name: string;
 				templates: ProfileCapabilityWire<ConfigSuitResourceTemplate>[];
 				source_revision_set: CatalogRevisionSet;
+				authoring_generation: number;
 			}>
 		>(`/api/mcp/profile/resource-templates/list?${q}`);
 		const data = extractApiData(response);
@@ -2686,35 +2694,33 @@ export const configSuitsApi = {
 			suit_name: data.profile_name,
 			templates: (data.templates || []).map(profileCapabilityFromWire),
 			source_revision_set: data.source_revision_set,
+			authoring_generation: data.authoring_generation,
 		};
 	},
 
 	// Component management operations
-	_manageComponent: (
-    endpoint:
-      "servers" | "tools" | "resources" | "prompts" | "resource-templates",
+	_manageServers: (
 		suitId: string,
-		componentId: string,
-		action: "enable" | "disable" | "remove",
-		sourceRevisionSet: CatalogRevisionSet,
+		componentIds: string[],
+		action: "enable" | "disable" | "remove" | "replace",
+		expectedAuthoringGeneration: number,
 	) =>
-		fetchApi<ApiResponse<null>>(`/api/mcp/profile/${endpoint}/manage`, {
+		fetchApi<ApiResponse<null>>("/api/mcp/profile/servers/manage", {
 			method: "POST",
 			body: JSON.stringify({
 				profile_id: suitId,
-				component_ids: [componentId],
+				component_ids: componentIds,
 				action,
-				source_revision_set: sourceRevisionSet,
+				expected_authoring_generation: expectedAuthoringGeneration,
 			}),
 		}),
 
-	// Batch manage multiple component ids in one request for reliability/perf
-	_manageComponentsBatch: (
-    endpoint:
-      "servers" | "tools" | "resources" | "prompts" | "resource-templates",
+	_manageCapabilities: (
+		endpoint: "tools" | "resources" | "prompts" | "resource-templates" | "capabilities",
 		suitId: string,
 		componentIds: string[],
-		action: "enable" | "disable",
+		action: "enable" | "disable" | "remove",
+		expectedAuthoringGeneration: number,
 		sourceRevisionSet: CatalogRevisionSet,
 	) =>
 		fetchApi<ApiResponse<null>>(`/api/mcp/profile/${endpoint}/manage`, {
@@ -2723,6 +2729,7 @@ export const configSuitsApi = {
 				profile_id: suitId,
 				component_ids: componentIds,
 				action,
+				expected_authoring_generation: expectedAuthoringGeneration,
 				source_revision_set: sourceRevisionSet,
 			}),
 		}),
@@ -2730,94 +2737,177 @@ export const configSuitsApi = {
 		suitId: string,
 		componentIds: string[],
 		action: "enable" | "disable",
+		expectedAuthoringGeneration: number,
 		sourceRevisionSet: CatalogRevisionSet,
-	) =>
-		fetchApi<ApiResponse<null>>("/api/mcp/profile/capabilities/manage", {
-			method: "POST",
-			body: JSON.stringify({
-				profile_id: suitId,
-				component_ids: componentIds,
-				action,
-				source_revision_set: sourceRevisionSet,
-			}),
-		}),
+	) => configSuitsApi._manageCapabilities(
+		"capabilities",
+		suitId,
+		componentIds,
+		action,
+		expectedAuthoringGeneration,
+		sourceRevisionSet,
+	),
 
-	enableServer: (suitId: string, serverId: string, revisions: CatalogRevisionSet) =>
-		configSuitsApi._manageComponent("servers", suitId, serverId, "enable", revisions),
-	disableServer: (suitId: string, serverId: string, revisions: CatalogRevisionSet) =>
-		configSuitsApi._manageComponent("servers", suitId, serverId, "disable", revisions),
-	removeServer: (suitId: string, serverId: string, revisions: CatalogRevisionSet) =>
-		configSuitsApi._manageComponent("servers", suitId, serverId, "remove", revisions),
-	// Some backends only support single-id manage for servers; do per-id with best-effort batching
+	enableServer: (suitId: string, serverId: string, expectedAuthoringGeneration: number) =>
+		configSuitsApi._manageServers(suitId, [serverId], "enable", expectedAuthoringGeneration),
+	disableServer: (suitId: string, serverId: string, expectedAuthoringGeneration: number) =>
+		configSuitsApi._manageServers(suitId, [serverId], "disable", expectedAuthoringGeneration),
+	removeServer: (suitId: string, serverId: string, expectedAuthoringGeneration: number) =>
+		configSuitsApi._manageServers(suitId, [serverId], "remove", expectedAuthoringGeneration),
 	bulkServers: async (
 		suitId: string,
 		ids: string[],
 		action: "enable" | "disable" | "remove" | "replace",
-		revisions: CatalogRevisionSet,
-	) =>
-		fetchApi<ApiResponse<null>>("/api/mcp/profile/servers/manage", {
-			method: "POST",
-			body: JSON.stringify({
-				profile_id: suitId,
-				component_ids: ids,
-				action,
-				source_revision_set: revisions,
-			}),
-		}),
-	enableTool: (suitId: string, toolId: string, revisions: CatalogRevisionSet) =>
-		configSuitsApi._manageComponent("tools", suitId, toolId, "enable", revisions),
-	disableTool: (suitId: string, toolId: string, revisions: CatalogRevisionSet) =>
-		configSuitsApi._manageComponent("tools", suitId, toolId, "disable", revisions),
+		expectedAuthoringGeneration: number,
+	) => configSuitsApi._manageServers(suitId, ids, action, expectedAuthoringGeneration),
+	enableTool: (suitId: string, toolId: string, expectedAuthoringGeneration: number, revisions: CatalogRevisionSet) =>
+		configSuitsApi._manageCapabilities("tools", suitId, [toolId], "enable", expectedAuthoringGeneration, revisions),
+	disableTool: (suitId: string, toolId: string, expectedAuthoringGeneration: number, revisions: CatalogRevisionSet) =>
+		configSuitsApi._manageCapabilities("tools", suitId, [toolId], "disable", expectedAuthoringGeneration, revisions),
 	bulkTools: (
 		suitId: string,
 		ids: string[],
 		action: "enable" | "disable",
+		expectedAuthoringGeneration: number,
 		revisions: CatalogRevisionSet,
-	) => configSuitsApi._manageComponentsBatch("tools", suitId, ids, action, revisions),
-	enableResource: (suitId: string, resourceId: string, revisions: CatalogRevisionSet) =>
-		configSuitsApi._manageComponent("resources", suitId, resourceId, "enable", revisions),
-	disableResource: (suitId: string, resourceId: string, revisions: CatalogRevisionSet) =>
-		configSuitsApi._manageComponent("resources", suitId, resourceId, "disable", revisions),
+	) => configSuitsApi._manageCapabilities("tools", suitId, ids, action, expectedAuthoringGeneration, revisions),
+	enableResource: (suitId: string, resourceId: string, expectedAuthoringGeneration: number, revisions: CatalogRevisionSet) =>
+		configSuitsApi._manageCapabilities("resources", suitId, [resourceId], "enable", expectedAuthoringGeneration, revisions),
+	disableResource: (suitId: string, resourceId: string, expectedAuthoringGeneration: number, revisions: CatalogRevisionSet) =>
+		configSuitsApi._manageCapabilities("resources", suitId, [resourceId], "disable", expectedAuthoringGeneration, revisions),
 	bulkResources: (
 		suitId: string,
 		ids: string[],
 		action: "enable" | "disable",
+		expectedAuthoringGeneration: number,
 		revisions: CatalogRevisionSet,
-	) => configSuitsApi._manageComponentsBatch("resources", suitId, ids, action, revisions),
-	enableResourceTemplate: (suitId: string, id: string, revisions: CatalogRevisionSet) =>
-		configSuitsApi._manageComponent("resource-templates", suitId, id, "enable", revisions),
-	disableResourceTemplate: (suitId: string, id: string, revisions: CatalogRevisionSet) =>
-    configSuitsApi._manageComponent(
+	) => configSuitsApi._manageCapabilities("resources", suitId, ids, action, expectedAuthoringGeneration, revisions),
+	enableResourceTemplate: (suitId: string, id: string, expectedAuthoringGeneration: number, revisions: CatalogRevisionSet) =>
+		configSuitsApi._manageCapabilities("resource-templates", suitId, [id], "enable", expectedAuthoringGeneration, revisions),
+	disableResourceTemplate: (suitId: string, id: string, expectedAuthoringGeneration: number, revisions: CatalogRevisionSet) =>
+		configSuitsApi._manageCapabilities(
       "resource-templates",
       suitId,
-      id,
+		[id],
       "disable",
+		expectedAuthoringGeneration,
       revisions,
     ),
 	bulkResourceTemplates: (
 		suitId: string,
 		ids: string[],
 		action: "enable" | "disable",
+		expectedAuthoringGeneration: number,
 		revisions: CatalogRevisionSet,
 	) =>
-		configSuitsApi._manageComponentsBatch(
+		configSuitsApi._manageCapabilities(
 			"resource-templates",
 			suitId,
 			ids,
 			action,
+			expectedAuthoringGeneration,
 			revisions,
 		),
-	enablePrompt: (suitId: string, promptId: string, revisions: CatalogRevisionSet) =>
-		configSuitsApi._manageComponent("prompts", suitId, promptId, "enable", revisions),
-	disablePrompt: (suitId: string, promptId: string, revisions: CatalogRevisionSet) =>
-		configSuitsApi._manageComponent("prompts", suitId, promptId, "disable", revisions),
+	enablePrompt: (suitId: string, promptId: string, expectedAuthoringGeneration: number, revisions: CatalogRevisionSet) =>
+		configSuitsApi._manageCapabilities("prompts", suitId, [promptId], "enable", expectedAuthoringGeneration, revisions),
+	disablePrompt: (suitId: string, promptId: string, expectedAuthoringGeneration: number, revisions: CatalogRevisionSet) =>
+		configSuitsApi._manageCapabilities("prompts", suitId, [promptId], "disable", expectedAuthoringGeneration, revisions),
 	bulkPrompts: (
 		suitId: string,
 		ids: string[],
 		action: "enable" | "disable",
+		expectedAuthoringGeneration: number,
 		revisions: CatalogRevisionSet,
-	) => configSuitsApi._manageComponentsBatch("prompts", suitId, ids, action, revisions),
+	) => configSuitsApi._manageCapabilities("prompts", suitId, ids, action, expectedAuthoringGeneration, revisions),
 };
+
+export async function addServersToProfile(
+	profileId: string,
+	serverIds: string[],
+): Promise<ProfileAuthoringSaveResponse | null> {
+	if (serverIds.length === 0) {
+		return null;
+	}
+	const view = await configSuitsApi.getAuthoringView(profileId);
+	const nextServerIds = Array.from(
+		new Set([...view.server_ids, ...serverIds]),
+	);
+	if (nextServerIds.length === view.server_ids.length) {
+		return null;
+	}
+	const profile = view.profile;
+	return configSuitsApi.saveAuthoring({
+		id: profile.id,
+		expected_authoring_generation: profile.authoring_generation,
+		name: profile.name,
+		description: profile.description ?? null,
+		profile_type: profile.suit_type,
+		multi_select: profile.multi_select,
+		priority: profile.priority,
+		is_active: profile.is_active,
+		is_default: profile.is_default,
+		server_ids: nextServerIds,
+		clone_from_id: null,
+	});
+}
+
+export async function associateImportedServersWithProfile(
+	profileId: string | null,
+	importedServerNames: string[],
+): Promise<ProfileAuthoringSaveResponse | null> {
+	if (!profileId || importedServerNames.length === 0) {
+		return null;
+	}
+	const importedNames = new Set(importedServerNames);
+	const matches = new Map<string, string[]>();
+	const pageLimit = 100;
+	let offset = 0;
+	while (true) {
+		const { servers } = await serversApi.getAll({ limit: pageLimit, offset });
+		for (const server of servers) {
+			if (!importedNames.has(server.name)) {
+				continue;
+			}
+			const ids = matches.get(server.name) ?? [];
+			ids.push(server.id);
+			matches.set(server.name, ids);
+		}
+		const ambiguous = Array.from(matches.values()).some(
+			(ids) => ids.length > 1,
+		);
+		if (ambiguous) {
+			throw new ProfileAssociationError("imported_server_ambiguous");
+		}
+		if (
+			Array.from(importedNames).every((name) => matches.has(name)) ||
+			servers.length < pageLimit
+		) {
+			break;
+		}
+		offset += pageLimit;
+	}
+	const serverIds = Array.from(importedNames).flatMap(
+		(name) => matches.get(name) ?? [],
+	);
+	if (serverIds.length !== importedNames.size) {
+		throw new ProfileAssociationError("imported_server_missing");
+	}
+	return addServersToProfile(profileId, serverIds);
+}
+
+export type ProfileAssociationErrorCode =
+	| "imported_server_missing"
+	| "imported_server_ambiguous";
+
+export class ProfileAssociationError extends Error {
+	readonly code: ProfileAssociationErrorCode;
+
+	constructor(code: ProfileAssociationErrorCode) {
+		super(code);
+		this.name = "ProfileAssociationError";
+		this.code = code;
+	}
+}
 
 // WebSocket Notifications Service
 export class NotificationsService {

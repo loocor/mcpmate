@@ -29,8 +29,8 @@ export function findActiveDefaultProfile(
  * Imperative variant: fetch the active default-anchor profile id from the
  * backend. Returns `null` when the anchor is missing or inactive.
  *
- * `configSuitsApi.getAll()` already swallows network errors and returns
- * `{ suits: [] }`, so this helper never throws.
+ * Resolution failures remain visible to the caller so an intended Profile
+ * association cannot be silently skipped.
  */
 export async function resolveActiveDefaultProfileId(): Promise<string | null> {
 	const { suits } = await configSuitsApi.getAll();
@@ -42,9 +42,8 @@ export async function resolveActiveDefaultProfileId(): Promise<string | null> {
  *
  * Returns the active default-anchor profile id when auto-add is enabled,
  * `null` when the setting is off or no active anchor is available. Callers
- * forward the result as `target_profile_id` to `POST /api/mcp/servers/import`
- * (or `profile_ids` on `PUT /api/mcp/servers/:id`), so that server creation
- * and profile linking happen atomically in the same backend transaction.
+ * complete Server import/discovery first, then use the Profile authoring API
+ * to associate the resolved Server IDs with this Profile.
  *
  * The default anchor is seeded during backend init, so the only normal
  * reasons for `null` here are (a) auto-add is off, or (b) the user has
@@ -56,15 +55,7 @@ export async function resolveAutoAddTargetProfileId(opts: {
 	if (!opts.autoAddEnabled) {
 		return null;
 	}
-	try {
-		return await resolveActiveDefaultProfileId();
-	} catch (error) {
-		console.warn(
-			"Failed to resolve default profile for auto-add; skipping link",
-			error,
-		);
-		return null;
-	}
+	return resolveActiveDefaultProfileId();
 }
 
 /**

@@ -42,7 +42,6 @@ import { PageToolbarSelect } from "../../components/ui/page-toolbar-select";
 import { ProfileSuitGridCard } from "./components/profile-suit-grid-card";
 import {
 	configSuitsApi,
-	requireProfileRevisionSet,
 	serversApi,
 	surfaceReviewsApi,
 } from "../../lib/api";
@@ -59,6 +58,7 @@ import {
 } from "../../lib/hooks/use-responsive-catalog-pagination";
 import { useUrlFilter, useUrlView } from "../../lib/hooks/use-url-state";
 import { notifyError, notifySuccess } from "../../lib/notify";
+import { profileSyncErrorTranslationKey } from "../../lib/profile-sync-error";
 import { useAppStore } from "../../lib/store";
 import { getProfileReviewCount } from "../../lib/surface-reviews";
 import type {
@@ -291,7 +291,7 @@ export function ProfilePage() {
 	// Suit activation mutation
 	const activateSuitMutation = useMutation({
 		mutationFn: (suit: ConfigSuit) =>
-			configSuitsApi.activateSuit(suit.id, requireProfileRevisionSet(suit)),
+			configSuitsApi.activateSuit(suit.id, suit.authoring_generation),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["configSuits"] });
 			notifySuccess(
@@ -308,7 +308,7 @@ export function ProfilePage() {
 				t("profiles:messages.activationFailed", {
 					defaultValue: "Activation failed",
 				}),
-				`${t("profiles:messages.activationFailedDescription", { defaultValue: "Failed to activate profile" })}: ${error instanceof Error ? error.message : String(error)}`,
+				t(profileSyncErrorTranslationKey(error)),
 			);
 		},
 	});
@@ -316,7 +316,7 @@ export function ProfilePage() {
 	// Suit deactivation mutation
 	const deactivateSuitMutation = useMutation({
 		mutationFn: (suit: ConfigSuit) =>
-			configSuitsApi.deactivateSuit(suit.id, requireProfileRevisionSet(suit)),
+			configSuitsApi.deactivateSuit(suit.id, suit.authoring_generation),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["configSuits"] });
 			notifySuccess(
@@ -333,7 +333,7 @@ export function ProfilePage() {
 				t("profiles:messages.deactivationFailed", {
 					defaultValue: "Deactivation failed",
 				}),
-				`${t("profiles:messages.deactivationFailedDescription", { defaultValue: "Failed to deactivate profile" })}: ${error instanceof Error ? error.message : String(error)}`,
+				t(profileSyncErrorTranslationKey(error)),
 			);
 		},
 	});
