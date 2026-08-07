@@ -197,7 +197,7 @@ export function ProfileFormDrawer({
 	onSuccess,
 	restrictProfileType,
 }: ProfileFormDrawerProps) {
-	const { t, i18n } = useTranslation();
+	const { t } = useTranslation();
 	usePageTranslations("profiles");
 	const queryClient = useQueryClient();
 	const navigate = useNavigate();
@@ -678,7 +678,7 @@ export function ProfileFormDrawer({
 				defaultValue: "Not selected",
 			}),
 		}),
-		[t, i18n.language],
+		[t],
 	);
 
 	// 获取当前已经纳入管理的服务器 ID 列表

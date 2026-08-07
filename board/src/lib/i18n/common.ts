@@ -54,6 +54,7 @@ export const commonTranslations = {
 			},
 		},
 		profileSyncErrors: {
+			importFailedTitle: "Import failed",
 			pendingPublishTitle: "Server publish failed",
 			importedServerMissing:
 				"An imported server could not be found. Refresh the server list and try again.",
@@ -194,6 +195,7 @@ export const commonTranslations = {
 			},
 		},
 		profileSyncErrors: {
+			importFailedTitle: "导入失败",
 			pendingPublishTitle: "服务器发布失败",
 			importedServerMissing: "找不到已导入的服务器。请刷新服务器列表后重试。",
 			importedServerAmbiguous:
@@ -330,6 +332,7 @@ export const commonTranslations = {
 			},
 		},
 		profileSyncErrors: {
+			importFailedTitle: "インポートに失敗しました",
 			pendingPublishTitle: "サーバーの公開に失敗しました",
 			importedServerMissing:
 				"インポートしたサーバーが見つかりません。サーバー一覧を更新して再試行してください。",

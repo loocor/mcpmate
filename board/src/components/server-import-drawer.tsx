@@ -231,9 +231,15 @@ export function ServerImportDrawer({
 				onOpenChange(false);
 				return;
 			}
-			notifyError("Import failed", String(res.error ?? "Unknown error"));
+			notifyError(
+				t("profileSyncErrors.importFailedTitle"),
+				String(res.error ?? "Unknown error"),
+			);
 		} catch (e) {
-			notifyError("Import failed", t(profileSyncErrorTranslationKey(e)));
+			notifyError(
+				t("profileSyncErrors.importFailedTitle"),
+				t(profileSyncErrorTranslationKey(e)),
+			);
 		} finally {
 			importInFlightRef.current = false;
 			setImporting(false);

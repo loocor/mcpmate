@@ -106,6 +106,7 @@ describe("Profile synchronization error copy", () => {
 		for (const locale of ["en", "zh-CN", "ja-JP"] as const) {
 			await i18n.changeLanguage(locale);
 			for (const key of [
+				"profileSyncErrors.importFailedTitle",
 				"profileSyncErrors.importedServerMissing",
 				"profileSyncErrors.importedServerAmbiguous",
 				"profileSyncErrors.catalogSnapshotMismatch",
