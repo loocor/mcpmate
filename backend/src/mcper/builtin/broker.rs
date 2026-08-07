@@ -1711,12 +1711,7 @@ impl BrokerService {
         match capability_kind {
             SurfaceKind::Tool => self.broker_tool_call_inner(context, capability_name, arguments).await,
             SurfaceKind::Prompt => self.broker_prompt_call(context, capability_name, arguments).await,
-            SurfaceKind::Resource => {
-                if !arguments.is_empty() {
-                    return Ok(UcanError::resource_arguments_not_supported(capability_name).to_call_tool_result());
-                }
-                self.broker_resource_read(context, capability_name).await
-            }
+            SurfaceKind::Resource => self.broker_resource_read(context, capability_name, arguments).await,
             SurfaceKind::ResourceTemplate => {
                 match self.find_visible_resource_template(context, capability_name).await {
                     Err(error) if is_catalog_authority_error(&error) => {
@@ -1846,6 +1841,20 @@ impl BrokerService {
 
         match handle.await_response().await {
             Ok(rmcp::model::ServerResult::CallToolResult(mut result)) => {
+                if result.is_error == Some(true) {
+                    let error = anyhow!("upstream CallToolResult marked is_error=true: {:?}", result.content);
+                    tracing::warn!(
+                        capability_kind = "tool",
+                        capability_name = tool_name,
+                        server_id,
+                        server_name,
+                        error = %error,
+                        "Upstream capability invocation returned an error result"
+                    );
+                    self.record_usage_evidence(&server_id, mcpmate_capability_store::CapabilityKind::Tools, &error)
+                        .await;
+                    return Ok(UcanError::upstream_error("tool", tool_name).to_call_tool_result());
+                }
                 crate::core::capability::resource_uri::rewrite_call_tool_result(
                     &self.database.pool,
                     &server_id,
@@ -2525,6 +2534,7 @@ impl BrokerService {
         &self,
         context: &ClientBuiltinContext,
         resource_uri: &str,
+        arguments: serde_json::Map<String, serde_json::Value>,
     ) -> Result<CallToolResult> {
         let resource_entry = match self.find_visible_resource(context, resource_uri).await {
             Err(error) if is_catalog_authority_error(&error) => {
@@ -2541,6 +2551,9 @@ impl BrokerService {
             }
             Ok(Some(resource_entry)) => resource_entry,
         };
+        if !arguments.is_empty() {
+            return Ok(UcanError::resource_arguments_not_supported(resource_uri).to_call_tool_result());
+        }
         let client_context = context.as_client_context();
         let visibility = ProfileVisibilityService::new(Some(self.database.clone()), None);
         let snapshot = visibility

@@ -1,4 +1,4 @@
-use std::{path::Path, str::FromStr, sync::Arc};
+use std::{collections::HashMap, path::Path, str::FromStr, sync::Arc};
 
 use axum::{Json, extract::State};
 use mcpmate::{
@@ -16,7 +16,7 @@ use mcpmate::{
         server,
     },
     core::{
-        capability::naming,
+        capability::{AffinityKey, ConnectionSelection, naming},
         models::Config,
         pool::UpstreamConnectionPool,
         profile::ConfigApplicationStateManager,
@@ -98,6 +98,11 @@ for line in sys.stdin:
             reply(request_id, {"resources": []})
         else:
             reply(request_id, {"resourceTemplates": []})
+    elif method == "tools/call" and state_path.read_text(encoding="utf-8").strip() == "tool_error":
+        reply(request_id, {
+            "content": [{"type": "text", "text": "fixture upstream tool failure"}],
+            "isError": True
+        })
     else:
         fail(request_id)
 "#;
@@ -425,6 +430,20 @@ async fn ucan_partial_catalog_preserves_healthy_entries_returns_structured_error
         .await
         .expect("incomplete call must return a structured UCan result"),
     );
+    assert_catalog_incomplete(
+        call_ucan(
+            &proxy,
+            &context,
+            MCPMATE_UCAN_CALL_TOOL,
+            json!({
+                "capability_kind": "resource",
+                "capability_name": "missing_resource",
+                "arguments": {"unexpected": true}
+            }),
+        )
+        .await
+        .expect("partial catalog unknown resource call must remain authoritative"),
+    );
 
     std::fs::write(&failed_state, "ready").expect("restore upstream fixture behavior");
     let app_state = build_app_state(database.clone(), proxy.connection_pool.clone());
@@ -504,6 +523,83 @@ async fn ucan_details_keeps_capability_not_found_for_an_unknown_item_in_a_comple
     );
     assert_eq!(result.is_error, Some(true));
     assert_eq!(text_json(&result)["error_code"], "capability_not_found");
+
+    let result = complete_result(
+        call_ucan(
+            &proxy,
+            &context,
+            MCPMATE_UCAN_CALL_TOOL,
+            json!({
+                "capability_kind": "resource",
+                "capability_name": "missing_resource",
+                "arguments": {"unexpected": true}
+            }),
+        )
+        .await
+        .expect("complete catalog unknown resource call must be a structured UCan result"),
+    );
+    assert_eq!(result.is_error, Some(true));
+    assert_eq!(text_json(&result)["error_code"], "capability_not_found");
+
+    drop((client_service, server_service));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn ucan_call_converts_upstream_error_results_to_a_generic_error() {
+    let temp_dir = TempDir::new().expect("create test directory");
+    let database = open_database(&temp_dir).await;
+    let script = write_upstream_fixture(&temp_dir);
+    let state = temp_dir.path().join("tool-error.state");
+    std::fs::write(&state, "ready").expect("write initial fixture state");
+    insert_stdio_server(&database, &script, &state, "server-tool-error", "tool_error").await;
+    let (_, upstream_config) =
+        mcpmate::core::foundation::loader::load_server_config_strict(&database, "server-tool-error", None)
+            .await
+            .expect("load upstream config for the broker fixture");
+    let mut proxy = ProxyServer::new(Arc::new(Config {
+        mcp_servers: HashMap::from([("server-tool-error".to_string(), upstream_config)]),
+        ..Default::default()
+    }));
+    proxy
+        .set_database((*database).clone())
+        .await
+        .expect("initialize proxy with builtin UCan services");
+    refresh_catalog(database.clone(), proxy.connection_pool.clone(), "server-tool-error").await;
+    let profile_id = insert_profiles_client(&database, &["server-tool-error"]).await;
+    materialize_ucan_surface(&proxy, &profile_id).await;
+    bind_client(&proxy, profile_id).await;
+    UpstreamConnectionPool::ensure_connected_coordinated(
+        &proxy.connection_pool,
+        &ConnectionSelection {
+            server_id: "server-tool-error".to_string(),
+            affinity_key: AffinityKey::Default,
+        },
+    )
+    .await
+    .expect("connect upstream tool fixture");
+    std::fs::write(&state, "tool_error").expect("configure upstream tool error response");
+    let (context, client_service, server_service) = downstream_request_context().await;
+
+    let result = complete_result(
+        call_ucan(
+            &proxy,
+            &context,
+            MCPMATE_UCAN_CALL_TOOL,
+            json!({"capability_kind": "tool", "capability_name": "tool_error_tool", "arguments": {}}),
+        )
+        .await
+        .expect("upstream error result must be converted to a UCan result"),
+    );
+    assert_eq!(result.is_error, Some(true));
+    assert_eq!(text_json(&result)["error_code"], "upstream_error");
+    assert!(
+        !result.content.iter().any(|content| {
+            matches!(content, ContentBlock::Text(text) if text.text.contains("fixture upstream tool failure"))
+        }),
+        "downstream error must not expose the upstream error content: {:?}",
+        result.content
+    );
 
     drop((client_service, server_service));
 }

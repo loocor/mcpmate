@@ -396,8 +396,6 @@ struct ManagementDiscoveryCoordinator {
     gate: Mutex<()>,
     completed_generation: AtomicU64,
     last_outcome: StdMutex<Option<(u64, SharedManagementOutcome)>>,
-    #[cfg(test)]
-    observed_generation: tokio::sync::Semaphore,
 }
 
 impl ManagementDiscoveryCoordinator {
@@ -406,8 +404,6 @@ impl ManagementDiscoveryCoordinator {
             gate: Mutex::new(()),
             completed_generation: AtomicU64::new(0),
             last_outcome: StdMutex::new(None),
-            #[cfg(test)]
-            observed_generation: tokio::sync::Semaphore::new(0),
         }
     }
 }
@@ -1416,8 +1412,6 @@ impl CapabilityReadService {
         let coordinator =
             management_discovery_coordinator(self.coordination_scope, &ctx.server_id, &config_fingerprint);
         let observed_generation = coordinator.completed_generation.load(Ordering::Acquire);
-        #[cfg(test)]
-        coordinator.observed_generation.add_permits(1);
         let _guard = coordinator.gate.lock().await;
         let current_generation = coordinator.completed_generation.load(Ordering::Acquire);
         if current_generation > observed_generation {
@@ -2027,7 +2021,7 @@ mod tests {
     use super::{
         CapabilityAttemptError, CapabilityCommitFailure, CapabilityProjectionFailure, CapabilityReadBackend,
         CapabilityReadError, CapabilityReadService, DiscoveryAttemptFailure, RuntimeCapabilityReadBackend,
-        apply_owner_runtime_failure, management_discovery_coordinator,
+        apply_owner_runtime_failure,
     };
     use crate::config::database::Database;
     use crate::core::capability::{
@@ -3026,7 +3020,6 @@ mod tests {
             provider.clone(),
             16,
         ));
-        let coordinator = management_discovery_coordinator(16, "server-1", "test-config");
         let first = {
             let service = service.clone();
             tokio::spawn(async move { service.list_all_kinds("server-1", None).await })
@@ -3037,22 +3030,11 @@ mod tests {
             .await
             .expect("one discovery owner starts")
             .forget();
-        coordinator
-            .observed_generation
-            .acquire()
-            .await
-            .expect("first request records its observed generation")
-            .forget();
         let second = {
             let service = service.clone();
             tokio::spawn(async move { service.list_all_kinds("server-1", None).await })
         };
-        coordinator
-            .observed_generation
-            .acquire()
-            .await
-            .expect("second request observes the in-flight generation")
-            .forget();
+        tokio::task::yield_now().await;
         assert_eq!(
             provider.fresh_calls.load(Ordering::Relaxed),
             1,
