@@ -329,6 +329,30 @@ fn build_app_state(
     })
 }
 
+async fn initialize_proxy(database: &Database) -> ProxyServer {
+    let mut proxy = ProxyServer::new(Arc::new(Config::default()));
+    proxy
+        .set_database(database.clone())
+        .await
+        .expect("initialize proxy with builtin UCan services");
+    proxy
+}
+
+async fn prepare_ucan_context(
+    proxy: &ProxyServer,
+    database: &Database,
+    server_ids: &[&str],
+) -> (
+    RequestContext<RoleServer>,
+    RunningService<RoleClient, ()>,
+    RunningService<RoleServer, DownstreamContextServer>,
+) {
+    let profile_id = insert_profiles_client(database, server_ids).await;
+    materialize_ucan_surface(proxy, &profile_id).await;
+    bind_client(proxy, profile_id).await;
+    downstream_request_context().await
+}
+
 async fn refresh_catalog(
     database: Arc<Database>,
     connection_pool: Arc<Mutex<UpstreamConnectionPool>>,
@@ -349,11 +373,7 @@ async fn refresh_catalog(
 async fn ucan_partial_catalog_preserves_healthy_entries_returns_structured_errors_and_recovers_after_forced_sync() {
     let temp_dir = TempDir::new().expect("create test directory");
     let database = open_database(&temp_dir).await;
-    let mut proxy = ProxyServer::new(Arc::new(Config::default()));
-    proxy
-        .set_database((*database).clone())
-        .await
-        .expect("initialize proxy with builtin UCan services");
+    let proxy = initialize_proxy(&database).await;
 
     let script = write_upstream_fixture(&temp_dir);
     let healthy_state = temp_dir.path().join("healthy.state");
@@ -376,10 +396,8 @@ async fn ucan_partial_catalog_preserves_healthy_entries_returns_structured_error
         failed_refresh.is_err(),
         "fixture failure must be recorded through the normal refresh path"
     );
-    let profile_id = insert_profiles_client(&database, &["server-healthy", "server-failed"]).await;
-    materialize_ucan_surface(&proxy, &profile_id).await;
-    bind_client(&proxy, profile_id).await;
-    let (context, client_service, server_service) = downstream_request_context().await;
+    let (context, client_service, server_service) =
+        prepare_ucan_context(&proxy, &database, &["server-healthy", "server-failed"]).await;
 
     let healthy_catalog = complete_result(
         call_ucan(
@@ -482,21 +500,14 @@ async fn ucan_partial_catalog_preserves_healthy_entries_returns_structured_error
 async fn ucan_details_keeps_capability_not_found_for_an_unknown_item_in_a_complete_catalog() {
     let temp_dir = TempDir::new().expect("create test directory");
     let database = open_database(&temp_dir).await;
-    let mut proxy = ProxyServer::new(Arc::new(Config::default()));
-    proxy
-        .set_database((*database).clone())
-        .await
-        .expect("initialize proxy with builtin UCan services");
+    let proxy = initialize_proxy(&database).await;
 
     let script = write_upstream_fixture(&temp_dir);
     let state = temp_dir.path().join("complete.state");
     std::fs::write(&state, "ready").expect("write complete fixture state");
     insert_stdio_server(&database, &script, &state, "server-complete", "complete").await;
     refresh_catalog(database.clone(), proxy.connection_pool.clone(), "server-complete").await;
-    let profile_id = insert_profiles_client(&database, &["server-complete"]).await;
-    materialize_ucan_surface(&proxy, &profile_id).await;
-    bind_client(&proxy, profile_id).await;
-    let (context, client_service, server_service) = downstream_request_context().await;
+    let (context, client_service, server_service) = prepare_ucan_context(&proxy, &database, &["server-complete"]).await;
 
     let result = complete_result(
         call_ucan(
