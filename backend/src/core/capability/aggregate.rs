@@ -63,11 +63,6 @@ impl AggregateListStatus {
         !self.failures.is_empty()
     }
 
-    pub(crate) fn failure_summary(&self) -> Option<String> {
-        self.has_failures()
-            .then(|| format!("{}: {}", self.capability, self.failures.join("; ")))
-    }
-
     pub(crate) fn finish(&self) -> Result<(), AggregateListError> {
         if self.attempted > 0 && self.attempted == self.failures.len() {
             return Err(AggregateListError {
@@ -105,21 +100,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn allows_partial_success() {
+    fn preserves_healthy_entries_when_another_upstream_listing_fails() {
         let mut status = AggregateListStatus::new("tools");
         status.record_failure("server-a", "alpha", "offline");
         status.record_success();
 
-        assert!(status.finish().is_ok());
+        assert!(status.finish_for_result(true).is_ok());
     }
 
     #[test]
-    fn fails_when_every_upstream_fails() {
+    fn never_treats_an_all_failed_listing_as_a_complete_empty_directory() {
         let mut status = AggregateListStatus::new("tools");
         status.record_failure("server-a", "alpha", "offline");
         status.record_failure("server-b", "beta", "timeout");
 
-        assert!(status.finish().is_err());
+        assert!(matches!(
+            status.finish_for_result(false),
+            Err(AggregateListCompletionError::AllFailed(_))
+        ));
     }
 
     #[test]
@@ -128,22 +126,14 @@ mod tests {
     }
 
     #[test]
-    fn reports_partial_listing_as_incomplete_for_authoritative_lookup() {
+    fn rejects_authoritative_negative_lookup_from_a_partial_listing() {
         let mut status = AggregateListStatus::new("tools");
         status.record_failure("server-a", "alpha", "offline");
         status.record_success();
 
-        assert!(status.finish().is_ok());
-        assert!(status.ensure_complete().is_err());
-    }
-
-    #[test]
-    fn rejects_empty_results_from_a_partial_listing() {
-        let mut status = AggregateListStatus::new("tools");
-        status.record_failure("server-a", "alpha", "offline");
-        status.record_success();
-
-        assert!(status.finish_for_result(false).is_err());
-        assert!(status.finish_for_result(true).is_ok());
+        assert!(matches!(
+            status.finish_for_result(false),
+            Err(AggregateListCompletionError::Incomplete(_))
+        ));
     }
 }
