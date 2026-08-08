@@ -398,9 +398,12 @@ async fn create_stdio_fixture_server(
         CREATE_SERVER_PATH,
         json!({
             "name": "inspector_fixture",
-            "server_type": "stdio",
-            "command": python.to_string_lossy(),
-            "args": [fixture.to_string_lossy()]
+            "transport": {
+                "kind": "stdio",
+                "command": python.to_string_lossy(),
+                "args": [fixture.to_string_lossy()],
+                "env": {}
+            }
         }),
     );
 
@@ -587,14 +590,17 @@ async fn proxy_list_connect_and_protocol_operation_receive_independent_timeouts(
                 CREATE_SERVER_PATH,
                 json!({
                     "name": "independent_list_timeout",
-                    "server_type": "stdio",
-                    "command": python.to_string_lossy(),
-                    "args": [
-                        fixture.to_string_lossy(),
-                        "0.00",
-                        "initialize,tools/list",
-                        "initialize=0.40,tools/list=1.20"
-                    ]
+                    "transport": {
+                        "kind": "stdio",
+                        "command": python.to_string_lossy(),
+                        "args": [
+                            fixture.to_string_lossy(),
+                            "0.00",
+                            "initialize,tools/list",
+                            "initialize=0.40,tools/list=1.20"
+                        ],
+                        "env": {}
+                    }
                 }),
             ))
             .await
@@ -653,14 +659,17 @@ async fn native_connect_and_protocol_operation_receive_independent_timeouts() {
                 CREATE_SERVER_PATH,
                 json!({
                     "name": "native_independent_timeout",
-                    "server_type": "stdio",
-                    "command": python.to_string_lossy(),
-                    "args": [
-                        fixture.to_string_lossy(),
-                        "0.00",
-                        "initialize,tools/list",
-                        "initialize=0.40,tools/list=1.20"
-                    ]
+                    "transport": {
+                        "kind": "stdio",
+                        "command": python.to_string_lossy(),
+                        "args": [
+                            fixture.to_string_lossy(),
+                            "0.00",
+                            "initialize,tools/list",
+                            "initialize=0.40,tools/list=1.20"
+                        ],
+                        "env": {}
+                    }
                 }),
             ))
             .await
@@ -789,9 +798,12 @@ async fn proxy_aggregate_list_rejects_empty_results_from_partial_inventory() {
                 CREATE_SERVER_PATH,
                 json!({
                     "name": "empty_tool_fixture",
-                    "server_type": "stdio",
-                    "command": python.to_string_lossy(),
-                    "args": [empty_fixture.to_string_lossy()]
+                    "transport": {
+                        "kind": "stdio",
+                        "command": python.to_string_lossy(),
+                        "args": [empty_fixture.to_string_lossy()],
+                        "env": {}
+                    }
                 }),
             ))
             .await
@@ -934,9 +946,12 @@ async fn inspector_create_server_is_immediately_usable_without_restart() {
         CREATE_SERVER_PATH,
         json!({
             "name": "inspector_fixture",
-            "server_type": "stdio",
-            "command": python.to_string_lossy(),
-            "args": [fixture.to_string_lossy()]
+            "transport": {
+                "kind": "stdio",
+                "command": python.to_string_lossy(),
+                "args": [fixture.to_string_lossy()],
+                "env": {}
+            }
         }),
     );
 

@@ -12,22 +12,21 @@ use crate::{
         ApiError,
         common::{internal_error, map_anyhow_error, map_database_error},
     },
-    common::server::ServerType,
-    config::server::{ImportOptions, ImportOutcome, SkippedServer, import::server_meta_from_payload, import_batch},
     config::server::{
-        get_server_headers, headers::has_non_empty_authorization_header, merge_env_for_update, merge_headers_for_update,
+        ImportOptions, ImportOutcome, SkippedServer, headers::has_non_empty_authorization_header,
+        import::server_meta_from_payload, import_batch,
     },
-    config::server::{replace_server_headers, upsert_server_headers},
     config::{
         database::Database,
+        models::{ServerTransportDraft, ValidatedTransport},
         server::{self},
     },
     core::secrets::{mcp_config_from_server, sync_server_secret_usages},
 };
 use axum::{Json, extract::State};
 use serde_json::{Map, Value};
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::{collections::HashMap, str::FromStr};
 
 async fn discover_server_capabilities(
     state: &Arc<AppState>,
@@ -49,23 +48,15 @@ async fn discover_server_capabilities(
     Ok(())
 }
 
-/// Validate server configuration
-#[inline]
-fn validate_server_config(
-    kind: &str,
-    command: &Option<String>,
-    url: &Option<String>,
-) -> Result<(), ApiError> {
-    match kind {
-        "stdio" if command.is_none() => Err(ApiError::BadRequest("Command is required for stdio servers".to_owned())),
-        "sse" | "streamable_http" if url.is_none() => {
-            Err(ApiError::BadRequest(format!("URL is required for {kind} servers")))
-        }
-        "stdio" | "sse" | "streamable_http" => Ok(()),
-        _ => Err(ApiError::BadRequest(format!(
-            "Invalid server type: {kind}. Must be one of: stdio, sse, streamable_http"
-        ))),
-    }
+fn validate_server_transport(draft: &ServerTransportDraft) -> Result<ValidatedTransport, ApiError> {
+    draft.validate().map_err(|diagnostics| {
+        let details = diagnostics
+            .into_iter()
+            .map(|diagnostic| format!("{} ({})", diagnostic.code, diagnostic.field))
+            .collect::<Vec<_>>()
+            .join(", ");
+        ApiError::BadRequest(format!("Invalid server transport: {details}"))
+    })
 }
 
 pub async fn remediate_server_namespace(
@@ -203,21 +194,6 @@ async fn clear_oauth_auth_source_for_manual_authorization(
     Ok(())
 }
 
-/// Create server model from configuration using strict ServerType enum
-#[inline]
-fn create_server_from_config(
-    name: String,
-    kind: ServerType,
-    command: Option<String>,
-    url: Option<String>,
-) -> Server {
-    match kind {
-        ServerType::Stdio => Server::new_stdio(name, command),
-        ServerType::Sse => Server::new_sse(name, url),
-        ServerType::StreamableHttp => Server::new_streamable_http(name, url),
-    }
-}
-
 async fn upsert_meta_payload(
     db: &Database,
     server_id: &str,
@@ -313,35 +289,31 @@ async fn delete_oauth_secrets_for_server_best_effort(
 
 /// Create a new MCP server configuration
 ///
-/// This endpoint creates a new MCP server configuration. Server types must strictly use the following standard formats:
-/// - `"stdio"`: Standard input/output server, launched via command line
-/// - `"sse"`: Legacy SSE HTTP server (persisted; protocol uses Streamable HTTP via rmcp)
-/// - `"streamable_http"`: Streamable HTTP server, connected via HTTP streaming
-///
-/// **Important**: The system will reject any non-standard formats such as "http", "streamable-http", "streamableHttp", etc.
+/// This endpoint creates a new MCP server configuration from a required tagged
+/// transport definition. The definition determines the applicable fields for
+/// stdio, legacy SSE, and Streamable HTTP transports.
 ///
 /// **Endpoint**: `POST /mcp/servers/create`
 ///
 /// # Parameters
-/// - `payload`: Server creation request containing server name, type, command or URL, etc.
+/// - `payload`: Server creation request containing a name and tagged transport.
 ///
 /// # Returns
 /// - Success: Returns detailed information of the created server
 /// - Failure: Returns specific error information and correction suggestions
 ///
 /// # Error Handling
-/// - 400 Bad Request: Server type format is incorrect or configuration is invalid
+/// - 400 Bad Request: Transport definition is invalid
 /// - 409 Conflict: Server name already exists
 /// - 500 Internal Server Error: Database operation failed
 ///
-/// # Server Type Validation
-/// The system will strictly validate server type formats. Any input that does not conform to standards will be rejected with detailed error information.
 pub async fn create_server(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<ServerCreateReq>,
 ) -> Result<Json<ServerDetailsResp>, ApiError> {
     let started_at = std::time::Instant::now();
     let db = common::get_database_from_state(&state)?;
+    let validated_transport = validate_server_transport(&payload.transport)?;
     let is_pending_import = payload.pending_import.unwrap_or(false);
 
     crate::config::server::validate_server_namespace(&payload.name)
@@ -361,20 +333,6 @@ pub async fn create_server(
         )));
     }
 
-    // Strictly validate server type format
-    let server_type = ServerType::from_str(&payload.server_type).map_err(|_| {
-        ApiError::BadRequest(format!(
-            "Invalid server type '{}'.\n\nCorrect format requirements:\n\
-                - Use \"stdio\" (not \"Stdio\" or other variants)\n\
-                - Use \"sse\" or \"streamable_http\" (lowercase; not \"http\", \"streamable-http\", or \"streamableHttp\")\n\n\
-                Please check your input and use the correct standard format.",
-            payload.server_type
-        ))
-    })?;
-
-    // Validate server configuration
-    validate_server_config(&payload.server_type, &payload.command, &payload.url)?;
-
     if let Some(server_id) = reusable_pending_server_id.as_deref() {
         delete_oauth_secrets_for_server_best_effort(&state, &db, server_id).await?;
         crate::config::server::delete_server_oauth_config(&db.pool, server_id)
@@ -385,13 +343,7 @@ pub async fn create_server(
             .map_err(map_anyhow_error)?;
     }
 
-    // Create server model using validated ServerType
-    let mut server = create_server_from_config(
-        payload.name.clone(),
-        server_type,
-        payload.command.clone(),
-        payload.url.clone(),
-    );
+    let mut server = Server::new(payload.name.clone(), validated_transport.server_type());
     if let Some(existing) = reusable_pending_server {
         server.id = existing.id.clone();
     }
@@ -402,55 +354,27 @@ pub async fn create_server(
         server.enabled = crate::common::status::EnabledStatus::Disabled;
     }
 
-    // Insert server into database
-    let server_id = crate::config::server::upsert_server(&db.pool, &server)
+    let runtime_headers = validated_transport.runtime_headers();
+    let server_id = crate::config::server::upsert_server_definition(&db.pool, &server, &payload.transport)
         .await
         .map_err(map_anyhow_error)?;
     crate::core::capability::resolver::upsert(&server_id, &payload.name).await;
 
-    // Persist default headers if provided
-    if reusable_pending_server.is_some() {
-        let empty_headers = std::collections::HashMap::new();
-        let headers = payload.headers.as_ref().unwrap_or(&empty_headers);
-        replace_server_headers(&db.pool, &server_id, headers)
-            .await
-            .map_err(map_anyhow_error)?;
-        clear_oauth_auth_source_for_manual_authorization(&state, &db, &server_id, headers).await?;
-    } else if let Some(headers) = &payload.headers {
-        if !headers.is_empty() {
-            upsert_server_headers(&db.pool, &server_id, headers)
-                .await
-                .map_err(map_anyhow_error)?;
-            clear_oauth_auth_source_for_manual_authorization(&state, &db, &server_id, headers).await?;
-        }
-    }
+    clear_oauth_auth_source_for_manual_authorization(&state, &db, &server_id, &runtime_headers).await?;
 
-    // Insert server arguments if provided
-    if reusable_pending_server.is_some() || payload.args.is_some() {
-        let empty_args: Vec<String> = Vec::new();
-        let args = payload.args.as_ref().unwrap_or(&empty_args);
-        crate::config::server::upsert_server_args(&db.pool, &server_id, args)
-            .await
-            .map_err(map_anyhow_error)?;
-    }
+    let server_row = crate::config::server::get_server_by_id(&db.pool, &server_id)
+        .await
+        .map_err(map_anyhow_error)?
+        .ok_or_else(|| internal_error("Server record missing after creation"))?;
 
-    // Insert server environment variables if provided
-    if reusable_pending_server.is_some() || payload.env.is_some() {
-        let empty_env = std::collections::HashMap::new();
-        let env = payload.env.as_ref().unwrap_or(&empty_env);
-        crate::config::server::upsert_server_env(&db.pool, &server_id, env)
-            .await
-            .map_err(map_anyhow_error)?;
-    }
-
-    sync_secret_usages_for_server(&state, &db, &server_id, &server).await?;
+    sync_secret_usages_for_server(&state, &db, &server_id, &server_row).await?;
 
     // Apply optional metadata payload
     if let Some(meta_payload) = payload.meta.as_ref() {
         upsert_meta_payload(&db, &server_id, meta_payload).await?;
     }
 
-    if !server.pending_import {
+    if !server_row.pending_import {
         let mut pool = state.connection_pool.lock().await;
         pool.sync_servers_from_active_profile()
             .await
@@ -458,16 +382,11 @@ pub async fn create_server(
     }
 
     // Initial capability discovery persists the transactional SQLite catalog.
-    if !server.pending_import {
+    if !server_row.pending_import {
         if let Err(error) = discover_server_capabilities(&state, db.clone(), &server_id).await {
             tracing::warn!(server_id = %server_id, error = %error, "Initial capability sync failed after server creation");
         }
     }
-
-    let server_row = crate::config::server::get_server_by_id(&db.pool, &server_id)
-        .await
-        .map_err(map_anyhow_error)?
-        .ok_or_else(|| internal_error("Server record missing after creation"))?;
 
     let server_name = server_row.name.clone();
     let source = server_row.source.clone();
@@ -549,24 +468,20 @@ pub async fn create_server(
 
 /// Update an existing MCP server configuration
 ///
-/// This endpoint updates an existing MCP server configuration. If updating the server type, it must strictly use standard formats:
-/// - `"stdio"`: Standard input/output server
-/// - `"sse"`: Legacy SSE HTTP server (persisted; protocol uses Streamable HTTP via rmcp)
-/// - `"streamable_http"`: Streamable HTTP server
-///
-/// **Important**: The system will reject any non-standard server type formats.
+/// This endpoint replaces an existing server's transport with a required tagged
+/// transport definition.
 ///
 /// **Endpoint**: `POST /mcp/servers/update`
 ///
 /// # Parameters
-/// - `payload`: Server update request containing fields to be updated
+/// - `payload`: Server update request containing the replacement transport.
 ///
 /// # Returns
 /// - Success: Returns detailed information of the updated server
 /// - Failure: Returns specific error information and correction suggestions
 ///
 /// # Error Handling
-/// - 400 Bad Request: Server type format is incorrect or configuration is invalid
+/// - 400 Bad Request: Transport definition is invalid
 /// - 404 Not Found: The specified server does not exist
 /// - 500 Internal Server Error: Database operation failed
 pub async fn update_server(
@@ -575,6 +490,7 @@ pub async fn update_server(
 ) -> Result<Json<ServerDetailsResp>, ApiError> {
     let started_at = std::time::Instant::now();
     validate_server_update_management_contract(&payload)?;
+    let validated_transport = validate_server_transport(&payload.transport)?;
     let db = common::get_database_from_state(&state)?;
 
     let id = payload.id.clone();
@@ -592,41 +508,8 @@ pub async fn update_server(
             .await
             .map_err(map_anyhow_error)?;
 
-    // Strictly validate server type format (if provided)
-    let validated_server_type = if let Some(ref kind) = payload.kind {
-        let server_type = ServerType::from_str(kind).map_err(|_| {
-            ApiError::BadRequest(format!(
-                "Invalid server type '{}'.\n\nCorrect format requirements:\n\
-                    - Use \"stdio\" (not \"Stdio\" or other variants)\n\
-                    - Use \"sse\" or \"streamable_http\" (lowercase; not \"http\", \"streamable-http\", or \"streamableHttp\")\n\n\
-                    Please check your input and use the correct standard format.",
-                kind
-            ))
-        })?;
-
-        let command = payload.command.as_ref().or(existing_server.command.as_ref());
-        let url = payload.url.as_ref().or(existing_server.url.as_ref());
-        validate_server_config(kind, &command.cloned(), &url.cloned())?;
-
-        Some(server_type)
-    } else {
-        None
-    };
-
     // Create updated server model
     let mut updated_server = existing_server.clone();
-
-    if let Some(server_type) = validated_server_type {
-        updated_server.server_type = server_type;
-    }
-
-    if let Some(command) = payload.command {
-        updated_server.command = Some(command);
-    }
-
-    if let Some(url) = payload.url {
-        updated_server.url = Some(url);
-    }
 
     if let Some(s) = payload.source {
         updated_server.source = Some(s);
@@ -639,40 +522,17 @@ pub async fn update_server(
         }
     }
 
-    // Update server in database
-    crate::config::server::upsert_server(&db.pool, &updated_server)
+    let runtime_headers = validated_transport.runtime_headers();
+    crate::config::server::upsert_server_definition(&db.pool, &updated_server, &payload.transport)
         .await
         .map_err(map_anyhow_error)?;
 
-    // Replace default headers if provided
-    if let Some(headers) = &payload.headers {
-        let existing_headers = get_server_headers(&db.pool, &server_id)
-            .await
-            .map_err(map_anyhow_error)?;
-        let merged_headers = merge_headers_for_update(headers, &existing_headers);
-        replace_server_headers(&db.pool, &server_id, &merged_headers)
-            .await
-            .map_err(map_anyhow_error)?;
-        clear_oauth_auth_source_for_manual_authorization(&state, &db, &server_id, &merged_headers).await?;
-    }
+    clear_oauth_auth_source_for_manual_authorization(&state, &db, &server_id, &runtime_headers).await?;
 
-    // Update server arguments if provided
-    if let Some(args) = &payload.args {
-        crate::config::server::upsert_server_args(&db.pool, &server_id, args)
-            .await
-            .map_err(map_anyhow_error)?;
-    }
-
-    // Update server environment variables if provided
-    if let Some(env) = &payload.env {
-        let existing_env = crate::config::server::get_server_env(&db.pool, &server_id)
-            .await
-            .map_err(map_anyhow_error)?;
-        let merged_env = merge_env_for_update(env, &existing_env);
-        crate::config::server::upsert_server_env(&db.pool, &server_id, &merged_env)
-            .await
-            .map_err(map_anyhow_error)?;
-    }
+    let updated_server = crate::config::server::get_server_by_id(&db.pool, &server_id)
+        .await
+        .map_err(map_anyhow_error)?
+        .ok_or_else(|| internal_error("Server record missing after update"))?;
 
     sync_secret_usages_for_server(&state, &db, &server_id, &updated_server).await?;
 
@@ -1047,9 +907,21 @@ mod tests {
     #[test]
     fn server_update_rejects_surface_management_bypasses() {
         for payload in [
-            serde_json::json!({"id": "server-a", "enabled": true}),
-            serde_json::json!({"id": "server-a", "profile_ids": ["profile-a"]}),
-            serde_json::json!({"id": "server-a", "unify_direct_exposure_eligible": true}),
+            serde_json::json!({
+                "id": "server-a",
+                "transport": {"kind": "stdio", "command": "server-a", "args": [], "env": {}},
+                "enabled": true
+            }),
+            serde_json::json!({
+                "id": "server-a",
+                "transport": {"kind": "stdio", "command": "server-a", "args": [], "env": {}},
+                "profile_ids": ["profile-a"]
+            }),
+            serde_json::json!({
+                "id": "server-a",
+                "transport": {"kind": "stdio", "command": "server-a", "args": [], "env": {}},
+                "unify_direct_exposure_eligible": true
+            }),
         ] {
             let request: ServerUpdateReq = serde_json::from_value(payload).unwrap();
             assert!(matches!(
@@ -1180,9 +1052,14 @@ mod tests {
             Json(
                 serde_json::from_value(serde_json::json!({
                     "id": server_id,
-                    "headers": {
-                        "Authorization": "Bearer manual-token",
-                        "X-Trace": "trace-1",
+                    "transport": {
+                        "kind": "http",
+                        "protocol": "streamable_http",
+                        "endpoint": "https://example.com/mcp",
+                        "headers": {
+                            "Authorization": {"kind": "literal", "value": "Bearer manual-token"},
+                            "X-Trace": {"kind": "literal", "value": "trace-1"}
+                        }
                     }
                 }))
                 .expect("decode update request"),
@@ -1215,6 +1092,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_server_returns_transport_diagnostics_without_persisting() {
+        let context = create_test_context().await;
+        let request = serde_json::from_value(serde_json::json!({
+            "name": "invalid_transport",
+            "transport": {
+                "kind": "stdio",
+                "args": [],
+                "env": {}
+            }
+        }))
+        .expect("decode tagged create request");
+
+        let error = create_server(State(context.app_state.clone()), Json(request))
+            .await
+            .expect_err("invalid transport must fail before persistence");
+
+        assert!(matches!(error, ApiError::BadRequest(message) if message.contains("stdio_command_missing (command)")));
+        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM server_config")
+            .fetch_one(&context.database.pool)
+            .await
+            .expect("count servers");
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
     async fn create_server_rejects_non_canonical_namespace_with_suggestion() {
         let context = create_test_context().await;
 
@@ -1223,8 +1125,12 @@ mod tests {
             Json(
                 serde_json::from_value(serde_json::json!({
                     "name": "Sequential Thinking-v2",
-                    "server_type": "streamable_http",
-                    "url": "https://example.com/mcp"
+                    "transport": {
+                        "kind": "http",
+                        "protocol": "streamable_http",
+                        "endpoint": "https://example.com/mcp",
+                        "headers": {}
+                    }
                 }))
                 .expect("decode create request"),
             ),
@@ -1254,8 +1160,12 @@ mod tests {
             Json(
                 serde_json::from_value(serde_json::json!({
                     "name": "OAuth Pending Server",
-                    "server_type": "streamable_http",
-                    "url": "https://example.com/mcp",
+                    "transport": {
+                        "kind": "http",
+                        "protocol": "streamable_http",
+                        "endpoint": "https://example.com/mcp",
+                        "headers": {}
+                    },
                     "pending_import": true
                 }))
                 .expect("decode pending import request"),
@@ -1289,8 +1199,12 @@ mod tests {
             Json(
                 serde_json::from_value(serde_json::json!({
                     "name": "stable_namespace",
-                    "server_type": "streamable_http",
-                    "url": "https://example.com/new"
+                    "transport": {
+                        "kind": "http",
+                        "protocol": "streamable_http",
+                        "endpoint": "https://example.com/new",
+                        "headers": {}
+                    }
                 }))
                 .expect("decode create request"),
             ),
@@ -1412,11 +1326,14 @@ for line in sys.stdin:
             Json(
                 serde_json::from_value(serde_json::json!({
                     "name": "manual_auth_create_server",
-                    "server_type": "streamable_http",
-                    "url": "https://example.com/mcp",
-                    "headers": {
-                        "Authorization": "Bearer manual-token",
-                        "X-Trace": "trace-1",
+                    "transport": {
+                        "kind": "http",
+                        "protocol": "streamable_http",
+                        "endpoint": "https://example.com/mcp",
+                        "headers": {
+                            "Authorization": {"kind": "literal", "value": "Bearer manual-token"},
+                            "X-Trace": {"kind": "literal", "value": "trace-1"}
+                        }
                     }
                 }))
                 .expect("decode create request"),

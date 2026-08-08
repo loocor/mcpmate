@@ -1,11 +1,12 @@
 use std::collections::{BTreeMap, HashMap};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{common::server::ServerType, core::models::MCPServerConfig};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ConfigValue {
     Literal { value: String },
@@ -21,14 +22,14 @@ impl ConfigValue {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HttpTransportKind {
     Sse,
     StreamableHttp,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ServerTransportDraft {
     Stdio {
@@ -67,6 +68,24 @@ pub enum ValidatedTransport {
 }
 
 impl ValidatedTransport {
+    pub fn server_type(&self) -> ServerType {
+        match self {
+            Self::Stdio { .. } => ServerType::Stdio,
+            Self::Sse { .. } => ServerType::Sse,
+            Self::StreamableHttp { .. } => ServerType::StreamableHttp,
+        }
+    }
+
+    pub fn runtime_headers(&self) -> HashMap<String, String> {
+        match self {
+            Self::Stdio { .. } => HashMap::new(),
+            Self::Sse { headers, .. } | Self::StreamableHttp { headers, .. } => headers
+                .iter()
+                .map(|(key, value)| (key.clone(), value.runtime_value()))
+                .collect(),
+        }
+    }
+
     pub fn to_mcp_config(&self) -> MCPServerConfig {
         match self {
             Self::Stdio { command, args, env } => MCPServerConfig {

@@ -2,6 +2,7 @@
 // Contains data models for MCP server endpoints
 
 use crate::common::{server::ServerType, types::ServerSource};
+use crate::config::models::ServerTransportDraft;
 use crate::config::server::import::{SkipReason, SkippedServer};
 use crate::macros::resp::api_resp;
 use schemars::JsonSchema;
@@ -946,39 +947,8 @@ pub struct ServerCreateReq {
     #[schemars(description = "Immutable MCPMate server namespace")]
     pub name: String,
 
-    /// Server type
-    ///
-    /// **Strict format requirements**: Only accepts the following three standard formats
-    /// - `"stdio"`: Standard input/output server, started by command line
-    /// - `"streamable_http"`: Streamable HTTP server, connected by HTTP stream
-    ///
-    /// **Note**: The system will reject any variant formats, such as "http", "streamableHttp", etc.
-    #[schemars(description = "Server type, must be stdio or streamable_http")]
-    #[schemars(regex(pattern = r"^(stdio|streamable_http)$"))]
-    pub server_type: String,
-
-    /// Startup command (only used for stdio type)
-    ///
-    /// Required when the server type is "stdio", specify the command to start the server
-    #[schemars(description = "Server startup command (required for stdio type)")]
-    pub command: Option<String>,
-
-    /// Server URL (only used for streamable_http types)
-    ///
-    /// Required when the server type is "streamable_http"
-    #[schemars(description = "Server URL (required for streamable_http types)")]
-    pub url: Option<String>,
-
-    /// Command arguments (only used for stdio type)
-    #[schemars(description = "List of arguments passed to the command (optional for stdio type)")]
-    pub args: Option<Vec<String>>,
-
-    /// Environment variables (only used for stdio type)
-    #[schemars(description = "Environment variables to set (optional for stdio type)")]
-    pub env: Option<HashMap<String, String>>,
-    /// Default HTTP headers for HTTP
-    #[serde(default)]
-    pub headers: Option<HashMap<String, String>>,
+    #[schemars(description = "Tagged server transport definition")]
+    pub transport: ServerTransportDraft,
 
     #[serde(default)]
     #[schemars(description = "Whether this server is a hidden pre-import record")]
@@ -1001,7 +971,7 @@ pub struct ServerCreateReq {
 
 /// MCP Server Update Request
 ///
-/// Request parameters for updating an existing MCP server configuration. If updating the server type, it must strictly use standard formats.
+/// Request parameters for updating an existing MCP server configuration with a complete tagged transport definition.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Request parameters for updating MCP server")]
 #[serde(deny_unknown_fields)]
@@ -1011,35 +981,8 @@ pub struct ServerUpdateReq {
     #[schemars(description = "ID of the server to update")]
     pub id: String,
 
-    /// Server type (optional update)
-    ///
-    /// **Strict format requirements**: If provided, only accepts the following three standard formats
-    /// - `"stdio"`: Standard input/output server
-    /// - `"streamable_http"`: Streamable HTTP server
-    ///
-    /// **Important**: Any non-standard format will be rejected and return a 400 error
-    #[schemars(description = "Server type, if provided must be stdio or streamable_http")]
-    #[schemars(regex(pattern = r"^(stdio|streamable_http)$"))]
-    pub kind: Option<String>,
-
-    /// Launch command (optional update)
-    #[schemars(description = "Server launch command")]
-    pub command: Option<String>,
-
-    /// Server URL (optional update)
-    #[schemars(description = "Server URL")]
-    pub url: Option<String>,
-
-    /// Command arguments (optional update)
-    #[schemars(description = "List of arguments passed to the command")]
-    pub args: Option<Vec<String>>,
-
-    /// Environment variables (optional update)
-    #[schemars(description = "Environment variables to set")]
-    pub env: Option<HashMap<String, String>>,
-    /// Default HTTP headers for HTTP (replace semantics)
-    #[serde(default)]
-    pub headers: Option<HashMap<String, String>>,
+    #[schemars(description = "Tagged server transport definition")]
+    pub transport: ServerTransportDraft,
 
     /// Optional target profiles to associate or update
     #[serde(default)]
@@ -1074,9 +1017,78 @@ mod server_update_request_tests {
     use super::{ServerCreateReq, ServerUpdateReq, ServersImportReq};
 
     #[test]
+    fn server_definition_requests_require_tagged_transport() {
+        let create = serde_json::json!({
+            "name": "server_a",
+            "transport": {
+                "kind": "stdio",
+                "command": "server-a",
+                "args": ["--serve"],
+                "env": {}
+            }
+        });
+        let update = serde_json::json!({
+            "id": "server-a",
+            "transport": {
+                "kind": "http",
+                "protocol": "streamable_http",
+                "endpoint": "https://example.com/mcp",
+                "headers": {}
+            }
+        });
+
+        serde_json::from_value::<ServerCreateReq>(create).expect("tagged create transport must decode");
+        serde_json::from_value::<ServerUpdateReq>(update).expect("tagged update transport must decode");
+
+        for payload in [
+            serde_json::json!({
+                "name": "server_a",
+                "server_type": "stdio",
+                "command": "server-a"
+            }),
+            serde_json::json!({
+                "name": "server_a",
+                "kind": "streamable_http",
+                "url": "https://example.com/mcp"
+            }),
+        ] {
+            assert!(
+                serde_json::from_value::<ServerCreateReq>(payload).is_err(),
+                "flat create transport payload must be rejected"
+            );
+        }
+
+        for payload in [
+            serde_json::json!({
+                "id": "server-a",
+                "server_type": "stdio",
+                "command": "server-a"
+            }),
+            serde_json::json!({
+                "id": "server-a",
+                "kind": "streamable_http",
+                "url": "https://example.com/mcp"
+            }),
+        ] {
+            assert!(
+                serde_json::from_value::<ServerUpdateReq>(payload).is_err(),
+                "flat update transport payload must be rejected"
+            );
+        }
+    }
+
+    #[test]
     fn update_request_rejects_namespace_changes() {
         for field in ["name", "namespace"] {
-            let mut payload = serde_json::json!({ "id": "server-a" });
+            let mut payload = serde_json::json!({
+                "id": "server-a",
+                "transport": {
+                    "kind": "stdio",
+                    "command": "server-a",
+                    "args": [],
+                    "env": {}
+                }
+            });
             payload[field] = serde_json::json!("renamed_namespace");
             let error = serde_json::from_value::<ServerUpdateReq>(payload)
                 .expect_err("namespace is not part of the update contract");
@@ -1089,8 +1101,12 @@ mod server_update_request_tests {
     fn server_install_requests_reject_profile_association_fields() {
         let create_payload = serde_json::json!({
             "name": "server-a",
-            "server_type": "stdio",
-            "command": "server-a"
+            "transport": {
+                "kind": "stdio",
+                "command": "server-a",
+                "args": [],
+                "env": {}
+            }
         });
         for (field, value) in [
             ("profile_ids", serde_json::json!(["profile-a"])),
