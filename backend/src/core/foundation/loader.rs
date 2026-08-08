@@ -7,11 +7,10 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 
 use crate::{
-    common::server::ServerType,
     config::{
         database::Database,
         models::Server,
-        server::{ServerEnabledService, get_server_args, get_server_env, headers::has_non_empty_authorization_header},
+        server::{ServerEnabledService, headers::has_non_empty_authorization_header},
     },
     core::profile::merge::ProfileMerger,
     core::{
@@ -55,99 +54,16 @@ enum StartupServerSource {
     ActiveProfile,
 }
 
-#[derive(Clone, Copy)]
-struct StartupSkipReason {
-    code: &'static str,
-    detail: &'static str,
-}
-
-fn startup_skip_reason(
-    server: &Server,
-    args_degraded: bool,
-    env_degraded: bool,
-    headers_degraded: bool,
-) -> Option<StartupSkipReason> {
-    if env_degraded {
-        return Some(StartupSkipReason {
-            code: "server_env_unavailable",
-            detail: "server environment variables could not be loaded",
-        });
-    }
-
-    if headers_degraded {
-        return Some(StartupSkipReason {
-            code: "server_headers_unavailable",
-            detail: "server headers could not be safely materialized",
-        });
-    }
-
-    if server.server_type == ServerType::Stdio {
-        if args_degraded {
-            return Some(StartupSkipReason {
-                code: "stdio_args_unavailable",
-                detail: "stdio server arguments could not be loaded",
-            });
-        }
-        if server.command.as_deref().is_none_or(str::is_empty) {
-            return Some(StartupSkipReason {
-                code: "stdio_command_missing",
-                detail: "stdio server has no command configured",
-            });
-        }
-    }
-
-    if matches!(server.server_type, ServerType::Sse | ServerType::StreamableHttp)
-        && server.url.as_deref().is_none_or(str::is_empty)
-    {
-        return Some(StartupSkipReason {
-            code: "remote_url_missing",
-            detail: "remote server has no URL configured",
-        });
-    }
-
-    if args_degraded {
-        return Some(StartupSkipReason {
-            code: "server_args_unavailable",
-            detail: "server arguments could not be loaded",
-        });
-    }
-
-    None
-}
-
 fn has_manual_authorization(headers: Option<&HashMap<String, String>>) -> bool {
     headers.is_some_and(has_non_empty_authorization_header)
-}
-
-fn warn_degraded_server_field(
-    server_id: &str,
-    server_name: &str,
-    degraded_field: &'static str,
-    reason_code: &'static str,
-    action_taken: &'static str,
-    error: impl std::fmt::Display,
-    message: &'static str,
-) {
-    tracing::warn!(
-        component = STARTUP_DIAGNOSTIC_COMPONENT,
-        phase = STARTUP_DIAGNOSTIC_PHASE,
-        server_id = %server_id,
-        server_name = %server_name,
-        degraded = true,
-        startup_continues = true,
-        server_startup_allowed = true,
-        degraded_field,
-        reason_code,
-        action_taken,
-        error = %error,
-        "{message}"
-    );
 }
 
 fn warn_omit_server_from_startup(
     server_id: &str,
     server_name: &str,
-    reason: StartupSkipReason,
+    reason_code: &'static str,
+    detail: &'static str,
+    error: Option<&anyhow::Error>,
 ) {
     tracing::warn!(
         component = STARTUP_DIAGNOSTIC_COMPONENT,
@@ -159,158 +75,47 @@ fn warn_omit_server_from_startup(
         server_startup_allowed = false,
         degraded_field = "server_config",
         action_taken = "omit_server_from_startup_pool",
-        reason_code = reason.code,
-        detail = reason.detail,
+        reason_code,
+        detail,
+        error = error.map(std::string::ToString::to_string),
         "Omitting server from startup pool configuration"
     );
 }
 
-fn degraded_load_error<T>(
-    server_id: &str,
-    server_name: &str,
-    degrade: bool,
-    degraded_field: &'static str,
-    reason_code: &'static str,
-    warn_message: &'static str,
-    error: anyhow::Error,
-    error_context: &'static str,
-) -> Result<DegradedLoad<Option<T>>> {
-    if degrade {
-        warn_degraded_server_field(
-            server_id,
-            server_name,
-            degraded_field,
-            reason_code,
-            "skip_server_field",
-            &error,
-            warn_message,
-        );
-        Ok((None, true))
-    } else {
-        Err(error).context(error_context)
-    }
-}
-
-fn optional_nonempty_map(map: HashMap<String, String>) -> Option<HashMap<String, String>> {
-    if map.is_empty() { None } else { Some(map) }
-}
-
-async fn load_optional_string_map(
-    server_id: &str,
-    server_name: &str,
-    degrade: bool,
-    degraded_field: &'static str,
-    reason_code: &'static str,
-    warn_message: &'static str,
-    error_context: &'static str,
-    load: impl std::future::Future<Output = Result<HashMap<String, String>>>,
-) -> Result<DegradedLoad<Option<HashMap<String, String>>>> {
-    match load.await {
-        Ok(map) => Ok((optional_nonempty_map(map), false)),
-        Err(error) => degraded_load_error(
-            server_id,
-            server_name,
-            degrade,
-            degraded_field,
-            reason_code,
-            warn_message,
-            error,
-            error_context,
-        ),
-    }
-}
-
-async fn load_server_args(
-    pool: &sqlx::Pool<sqlx::Sqlite>,
-    server_id: &str,
-    server_name: &str,
-    degrade: bool,
-) -> Result<DegradedLoad<Option<Vec<String>>>> {
-    match get_server_args(pool, server_id).await {
-        Ok(server_args) if server_args.is_empty() => Ok((None, false)),
-        Ok(server_args) => {
-            let mut sorted_args: Vec<_> = server_args.into_iter().collect();
-            sorted_args.sort_by_key(|arg| arg.arg_index);
-            Ok((Some(sorted_args.into_iter().map(|arg| arg.arg_value).collect()), false))
-        }
-        Err(error) => degraded_load_error(
-            server_id,
-            server_name,
-            degrade,
-            "args",
-            "server_args_load_failed",
-            "Skipping server arguments while loading startup configuration",
-            error,
-            "Failed to get server arguments",
-        ),
-    }
-}
-
-async fn load_server_env(
-    pool: &sqlx::Pool<sqlx::Sqlite>,
-    server_id: &str,
-    server_name: &str,
-    degrade: bool,
-) -> Result<DegradedLoad<Option<HashMap<String, String>>>> {
-    load_optional_string_map(
-        server_id,
-        server_name,
-        degrade,
-        "env",
-        "server_env_load_failed",
-        "Skipping server environment variables while loading startup configuration",
-        "Failed to get server environment variables",
-        get_server_env(pool, server_id),
-    )
-    .await
-}
-
 async fn load_server_headers(
-    pool: &sqlx::Pool<sqlx::Sqlite>,
     oauth_manager: &OAuthManager,
     server_id: &str,
     server_name: &str,
+    manual_headers: Option<HashMap<String, String>>,
     degrade: bool,
 ) -> Result<DegradedLoad<Option<HashMap<String, String>>>> {
-    let (manual_headers, manual_headers_degraded) = load_optional_string_map(
-        server_id,
-        server_name,
-        degrade,
-        "manual_headers",
-        "server_headers_load_failed",
-        "Skipping server headers while loading startup configuration",
-        "Failed to get server headers",
-        crate::config::server::get_server_headers(pool, server_id),
-    )
-    .await?;
-    if manual_headers_degraded {
-        return Ok((None, true));
-    }
-
     match oauth_manager
         .get_effective_server_headers(server_id, manual_headers.clone())
         .await
     {
         Ok(headers) => Ok((headers, false)),
         Err(error) if degrade => {
-            let action_taken = if has_manual_authorization(manual_headers.as_ref()) {
+            let preserves_manual_authorization = has_manual_authorization(manual_headers.as_ref());
+            let action_taken = if preserves_manual_authorization {
                 "preserve_manual_authorization_headers"
             } else {
                 "omit_server_from_startup_pool"
             };
-            warn_degraded_server_field(
+            tracing::warn!(
+                component = STARTUP_DIAGNOSTIC_COMPONENT,
+                phase = STARTUP_DIAGNOSTIC_PHASE,
                 server_id,
                 server_name,
-                "oauth_headers",
-                "oauth_header_injection_failed",
+                degraded = true,
+                startup_continues = true,
+                server_startup_allowed = preserves_manual_authorization,
+                degraded_field = "oauth_headers",
+                reason_code = "oauth_header_injection_failed",
                 action_taken,
-                &error,
-                "Skipping OAuth header injection while loading startup configuration",
+                error = %error,
+                "Skipping OAuth header injection while loading startup configuration"
             );
-            Ok((
-                manual_headers.clone(),
-                !has_manual_authorization(manual_headers.as_ref()),
-            ))
+            Ok((manual_headers.clone(), !preserves_manual_authorization))
         }
         Err(error) => Err(error).context("Failed to get effective server headers"),
     }
@@ -334,14 +139,12 @@ async fn build_config_from_servers(
             match crate::config::server::capabilities::current_config_fingerprint(&db.pool, server_id).await {
                 Ok(fingerprint) => fingerprint,
                 Err(error) if degrade => {
-                    warn_degraded_server_field(
+                    warn_omit_server_from_startup(
                         server_id,
                         &selected_server.name,
-                        "source_fingerprint",
                         "server_fingerprint_load_failed",
-                        "omit_server_from_startup_pool",
-                        &error,
-                        "Skipping server whose configuration fingerprint could not be loaded",
+                        "server configuration fingerprint could not be loaded",
+                        Some(&error),
                     );
                     continue;
                 }
@@ -354,23 +157,50 @@ async fn build_config_from_servers(
                 warn_omit_server_from_startup(
                     server_id,
                     &selected_server.name,
-                    StartupSkipReason {
-                        code: "server_disappeared",
-                        detail: "server disappeared while its runtime configuration was being loaded",
-                    },
+                    "server_disappeared",
+                    "server disappeared while its runtime configuration was being loaded",
+                    None,
                 );
                 continue;
             }
             anyhow::bail!("Server '{server_id}' disappeared while loading its runtime configuration");
         };
 
-        let (args, args_degraded) = load_server_args(&db.pool, server_id, &server.name, degrade).await?;
-        let (env, env_degraded) = load_server_env(&db.pool, server_id, &server.name, degrade).await?;
-        let (headers, headers_degraded) =
-            load_server_headers(&db.pool, &oauth_manager, server_id, &server.name, degrade).await?;
+        let transport = match crate::config::server::load_validated_server_transport(&db.pool, server_id).await {
+            Ok(transport) => transport,
+            Err(error) if degrade => {
+                warn_omit_server_from_startup(
+                    server_id,
+                    &server.name,
+                    "server_transport_invalid",
+                    "persisted server transport draft could not be materialized",
+                    Some(&error),
+                );
+                continue;
+            }
+            Err(error) => {
+                return Err(error)
+                    .context("Failed to materialize persisted server transport for runtime configuration");
+            }
+        };
+        let mut server_config = transport.to_mcp_config();
+        let (headers, headers_degraded) = load_server_headers(
+            &oauth_manager,
+            server_id,
+            &server.name,
+            server_config.headers.clone(),
+            degrade,
+        )
+        .await?;
 
-        if degrade && let Some(reason) = startup_skip_reason(&server, args_degraded, env_degraded, headers_degraded) {
-            warn_omit_server_from_startup(server_id, &server.name, reason);
+        if degrade && headers_degraded {
+            warn_omit_server_from_startup(
+                server_id,
+                &server.name,
+                "server_headers_unavailable",
+                "server headers could not be safely materialized",
+                None,
+            );
             continue;
         }
 
@@ -381,28 +211,18 @@ async fn build_config_from_servers(
                 warn_omit_server_from_startup(
                     server_id,
                     &server.name,
-                    StartupSkipReason {
-                        code: "server_configuration_changed",
-                        detail: "server configuration changed while its runtime configuration was being loaded",
-                    },
+                    "server_configuration_changed",
+                    "server configuration changed while its runtime configuration was being loaded",
+                    None,
                 );
                 continue;
             }
             anyhow::bail!("Server '{server_id}' changed while loading its runtime configuration");
         }
 
-        config.mcp_servers.insert(
-            server_id.clone(),
-            MCPServerConfig {
-                source_fingerprint: Some(final_fingerprint),
-                kind: server.server_type,
-                command: server.command.clone(),
-                args,
-                url: server.url.clone(),
-                env,
-                headers,
-            },
-        );
+        server_config.source_fingerprint = Some(final_fingerprint);
+        server_config.headers = headers;
+        config.mcp_servers.insert(server_id.clone(), server_config);
     }
 
     Ok(config)
@@ -586,10 +406,14 @@ pub async fn load_server_config(db: &Database) -> Result<Config> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::{server::ServerType, status::EnabledStatus};
     use crate::config::{
         initialization::run_initialization,
-        models::{ServerOAuthConfig, ServerOAuthToken},
-        server::{upsert_server_oauth_config, upsert_server_oauth_token},
+        models::{ConfigValue, HttpTransportKind, ServerOAuthConfig, ServerOAuthToken, ServerTransportDraft},
+        server::{
+            upsert_server, upsert_server_definition, upsert_server_oauth_config, upsert_server_oauth_token,
+            upsert_server_transport_draft_tx,
+        },
     };
     use crate::core::secrets::store::{LocalSecretStore, SecretCreateInput, SecretKindInput};
     use crate::test_helpers::oauth_secret_origin;
@@ -627,24 +451,51 @@ mod tests {
         )
     }
 
+    fn test_server(
+        server_id: &str,
+        name: &str,
+        enabled: bool,
+    ) -> Server {
+        Server {
+            id: Some(server_id.to_string()),
+            name: name.to_string(),
+            server_type: ServerType::Stdio,
+            command: Some("demo-command".to_string()),
+            url: None,
+            source: None,
+            enabled: EnabledStatus::from_bool(enabled),
+            unify_direct_exposure_eligible: false,
+            pending_import: false,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    async fn insert_server_without_transport_draft(
+        pool: &SqlitePool,
+        server_id: &str,
+        name: &str,
+        enabled: bool,
+    ) {
+        upsert_server(pool, &test_server(server_id, name, enabled))
+            .await
+            .expect("insert legacy server without transport draft");
+    }
+
     async fn insert_server(
         pool: &SqlitePool,
         server_id: &str,
         name: &str,
         enabled: bool,
     ) {
-        sqlx::query(
-            r#"
-            INSERT INTO server_config (id, name, server_type, command, enabled)
-            VALUES (?, ?, 'stdio', 'demo-command', ?)
-            "#,
-        )
-        .bind(server_id)
-        .bind(name)
-        .bind(enabled)
-        .execute(pool)
-        .await
-        .expect("insert server");
+        let draft = ServerTransportDraft::Stdio {
+            command: Some("demo-command".to_string()),
+            args: Vec::new(),
+            env: Default::default(),
+        };
+        upsert_server_definition(pool, &test_server(server_id, name, enabled), &draft)
+            .await
+            .expect("insert typed stdio server");
     }
 
     async fn insert_http_server(
@@ -653,18 +504,89 @@ mod tests {
         name: &str,
         enabled: bool,
     ) {
-        sqlx::query(
-            r#"
-            INSERT INTO server_config (id, name, server_type, url, enabled)
-            VALUES (?, ?, 'streamable_http', 'https://example.com/mcp', ?)
-            "#,
-        )
-        .bind(server_id)
-        .bind(name)
-        .bind(enabled)
-        .execute(pool)
-        .await
-        .expect("insert http server");
+        let mut server = test_server(server_id, name, enabled);
+        server.server_type = ServerType::StreamableHttp;
+        server.command = None;
+        server.url = Some("https://example.com/mcp".to_string());
+        let draft = ServerTransportDraft::Http {
+            protocol: HttpTransportKind::StreamableHttp,
+            endpoint: Some("https://example.com/mcp".to_string()),
+            headers: Default::default(),
+        };
+        upsert_server_definition(pool, &server, &draft)
+            .await
+            .expect("insert typed HTTP server");
+    }
+
+    async fn replace_http_server_headers(
+        pool: &SqlitePool,
+        server_id: &str,
+        name: &str,
+        headers: HashMap<String, String>,
+    ) {
+        let mut server = test_server(server_id, name, true);
+        server.server_type = ServerType::StreamableHttp;
+        server.command = None;
+        server.url = Some("https://example.com/mcp".to_string());
+        let draft = ServerTransportDraft::Http {
+            protocol: HttpTransportKind::StreamableHttp,
+            endpoint: Some("https://example.com/mcp".to_string()),
+            headers: headers
+                .into_iter()
+                .map(|(key, value)| (key, ConfigValue::Literal { value }))
+                .collect(),
+        };
+        upsert_server_definition(pool, &server, &draft)
+            .await
+            .expect("replace typed HTTP server headers");
+    }
+
+    #[tokio::test]
+    async fn runtime_loader_rejects_missing_transport_draft_and_omits_it_at_startup() {
+        let (_temp_dir, db) = create_test_database().await;
+        insert_server_without_transport_draft(&db.pool, "server-missing-draft", "Missing Draft Server", true).await;
+
+        let strict_error = load_pool_base_config(&db, None)
+            .await
+            .expect_err("strict load must reject a server without a persisted transport draft");
+        assert!(
+            format!("{strict_error:#}").contains("persisted ServerTransportDraft is missing"),
+            "unexpected error: {strict_error:#}"
+        );
+
+        let startup_config = load_pool_base_config_with_params(&db, &StartupMode::Default, None)
+            .await
+            .expect("startup loader must continue after skipping the invalid server");
+        assert!(!startup_config.mcp_servers.contains_key("server-missing-draft"));
+    }
+
+    #[tokio::test]
+    async fn runtime_loader_rejects_invalid_transport_draft_and_omits_it_at_startup() {
+        let (_temp_dir, db) = create_test_database().await;
+        insert_server_without_transport_draft(&db.pool, "server-invalid-draft", "Invalid Draft Server", true).await;
+        let invalid_draft = ServerTransportDraft::Stdio {
+            command: None,
+            args: Vec::new(),
+            env: Default::default(),
+        };
+        let mut transaction = db.pool.begin().await.expect("begin invalid draft transaction");
+        upsert_server_transport_draft_tx(&mut transaction, "server-invalid-draft", &invalid_draft)
+            .await
+            .expect("persist invalid transport draft");
+        transaction.commit().await.expect("commit invalid transport draft");
+
+        let strict_error = load_pool_base_config(&db, None)
+            .await
+            .expect_err("strict load must reject an invalid persisted transport draft");
+        assert!(
+            format!("{strict_error:#}").contains("persisted ServerTransportDraft is invalid"),
+            "unexpected error: {strict_error:#}"
+        );
+
+        let startup_config = load_pool_base_config_with_params(&db, &StartupMode::Default, None)
+            .await
+            .expect("startup loader must continue after skipping the invalid server");
+        assert!(!startup_config.mcp_servers.contains_key("server-invalid-draft"));
     }
 
     #[tokio::test]
@@ -695,10 +617,22 @@ mod tests {
     async fn startup_pool_base_config_omits_stdio_server_without_command() {
         let (_temp_dir, db) = create_test_database().await;
         insert_server(&db.pool, "server-stdio-no-command", "Stdio Missing Command", true).await;
-        sqlx::query("UPDATE server_config SET command = NULL WHERE id = 'server-stdio-no-command'")
-            .execute(&db.pool)
+        let mut transaction = db.pool.begin().await.expect("begin invalid stdio draft transaction");
+        upsert_server_transport_draft_tx(
+            &mut transaction,
+            "server-stdio-no-command",
+            &ServerTransportDraft::Stdio {
+                command: None,
+                args: Vec::new(),
+                env: Default::default(),
+            },
+        )
+        .await
+        .expect("persist invalid stdio transport draft");
+        transaction
+            .commit()
             .await
-            .expect("remove stdio command");
+            .expect("commit invalid stdio draft transaction");
 
         let startup_config = load_pool_base_config_with_params(&db, &StartupMode::Default, None)
             .await
@@ -711,10 +645,22 @@ mod tests {
     async fn startup_pool_base_config_omits_remote_server_without_url() {
         let (_temp_dir, db) = create_test_database().await;
         insert_http_server(&db.pool, "server-remote-no-url", "Remote Missing URL", true).await;
-        sqlx::query("UPDATE server_config SET url = NULL WHERE id = 'server-remote-no-url'")
-            .execute(&db.pool)
+        let mut transaction = db.pool.begin().await.expect("begin invalid HTTP draft transaction");
+        upsert_server_transport_draft_tx(
+            &mut transaction,
+            "server-remote-no-url",
+            &ServerTransportDraft::Http {
+                protocol: HttpTransportKind::StreamableHttp,
+                endpoint: None,
+                headers: Default::default(),
+            },
+        )
+        .await
+        .expect("persist invalid HTTP transport draft");
+        transaction
+            .commit()
             .await
-            .expect("remove remote URL");
+            .expect("commit invalid HTTP draft transaction");
 
         let startup_config = load_pool_base_config_with_params(&db, &StartupMode::Default, None)
             .await
@@ -839,9 +785,7 @@ mod tests {
         .expect("save oauth config");
 
         if let Some(headers) = manual_headers {
-            crate::config::server::upsert_server_headers(&db.pool, OAUTH_SERVER_ID, &headers)
-                .await
-                .expect("save manual headers");
+            replace_http_server_headers(&db.pool, OAUTH_SERVER_ID, OAUTH_SERVER_NAME, headers).await;
         }
 
         let access_token = secret_store
@@ -979,7 +923,7 @@ mod tests {
         assert_eq!(stdio_server.command.as_deref(), Some("demo-command"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn startup_oauth_refresh_failure_emits_diagnostic_reason_code() {
         use std::io::Write;
         use std::sync::{Arc, Mutex};

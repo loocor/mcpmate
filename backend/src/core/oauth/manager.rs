@@ -697,11 +697,12 @@ impl OAuthManager {
         }
 
         let token_response = self.request_token_response(&config.token_endpoint, &form).await?;
+        server::ensure_persisted_http_authorization_headers_clearable(&self.pool, &pending.server_id).await?;
         let server_context = OAuthServerContext::from_server(&pending.server_id, &server_model);
 
         self.store_oauth_token_with_context(&server_context, token_response, None)
             .await?;
-        server::remove_authorization_headers(&self.pool, &pending.server_id).await?;
+        server::clear_persisted_http_authorization_headers(&self.pool, &pending.server_id).await?;
 
         self.get_status(&pending.server_id).await
     }
@@ -1276,12 +1277,12 @@ mod tests {
         common::{server::ServerType, status::EnabledStatus},
         config::{
             llm::init::initialize_llm_tables,
-            models::Server,
-            server::{crud::upsert_server, init::initialize_server_tables},
+            models::{ConfigValue, HttpTransportKind, Server, ServerTransportDraft},
+            server::{self, crud::upsert_server, init::initialize_server_tables},
         },
         core::secrets::store::LocalSecretStore,
     };
-    use std::sync::Arc;
+    use std::{collections::BTreeMap, sync::Arc};
     use tempfile::TempDir;
     use wiremock::{
         Mock, MockServer, ResponseTemplate,
@@ -1350,6 +1351,37 @@ mod tests {
         upsert_server(pool, &server).await.expect("insert server");
     }
 
+    async fn insert_typed_http_server(
+        pool: &SqlitePool,
+        id: &str,
+        headers: BTreeMap<String, ConfigValue>,
+    ) {
+        let server = Server {
+            id: Some(id.to_string()),
+            name: format!("server-{id}"),
+            server_type: ServerType::StreamableHttp,
+            command: None,
+            url: Some("https://example.com/mcp".to_string()),
+            source: None,
+            enabled: EnabledStatus::Enabled,
+            unify_direct_exposure_eligible: false,
+            pending_import: false,
+            created_at: None,
+            updated_at: None,
+        };
+        server::upsert_server_definition(
+            pool,
+            &server,
+            &ServerTransportDraft::Http {
+                protocol: HttpTransportKind::StreamableHttp,
+                endpoint: Some("https://example.com/mcp".to_string()),
+                headers,
+            },
+        )
+        .await
+        .expect("insert typed HTTP server");
+    }
+
     #[tokio::test]
     async fn initiate_returns_valid_authorization_url() {
         let manager = setup_manager().await;
@@ -1384,7 +1416,25 @@ mod tests {
     #[tokio::test]
     async fn exchange_code_stores_tokens() {
         let (manager, store, _temp_dir) = setup_secure_manager().await;
-        insert_server(&manager.pool, "serv_exchange").await;
+        insert_typed_http_server(
+            &manager.pool,
+            "serv_exchange",
+            BTreeMap::from([
+                (
+                    "Authorization".to_string(),
+                    ConfigValue::Literal {
+                        value: "Bearer manual-token".to_string(),
+                    },
+                ),
+                (
+                    "X-Trace".to_string(),
+                    ConfigValue::SecretRef {
+                        alias: "trace-token".to_string(),
+                    },
+                ),
+            ]),
+        )
+        .await;
         let mock_server = MockServer::start().await;
 
         Mock::given(method("POST"))
@@ -1414,17 +1464,6 @@ mod tests {
             )
             .await
             .expect("save oauth config");
-        server::upsert_server_headers(
-            &manager.pool,
-            "serv_exchange",
-            &HashMap::from([
-                ("Authorization".to_string(), "Bearer manual-token".to_string()),
-                ("X-Trace".to_string(), "trace-1".to_string()),
-            ]),
-        )
-        .await
-        .expect("store manual headers");
-
         let initiate = manager.initiate("serv_exchange").await.expect("initiate oauth");
         let status = manager
             .exchange_code(&initiate.state, "code-123")
@@ -1444,7 +1483,51 @@ mod tests {
             .await
             .expect("load headers");
         assert!(!headers.contains_key("authorization"));
-        assert_eq!(headers.get("x-trace").map(String::as_str), Some("trace-1"));
+        assert_eq!(
+            headers.get("x-trace").map(String::as_str),
+            Some("[[secret:trace-token]]")
+        );
+
+        let Some(ServerTransportDraft::Http { headers, .. }) =
+            server::get_server_transport_draft(&manager.pool, "serv_exchange")
+                .await
+                .expect("load typed transport draft")
+        else {
+            panic!("typed HTTP draft must be retained after OAuth exchange");
+        };
+        assert!(!headers.keys().any(|key| key.eq_ignore_ascii_case("authorization")));
+        assert_eq!(
+            headers.get("X-Trace"),
+            Some(&ConfigValue::SecretRef {
+                alias: "trace-token".to_string(),
+            })
+        );
+
+        let effective = manager
+            .get_effective_server_headers(
+                "serv_exchange",
+                Some(
+                    ServerTransportDraft::Http {
+                        protocol: HttpTransportKind::StreamableHttp,
+                        endpoint: Some("https://example.com/mcp".to_string()),
+                        headers,
+                    }
+                    .validate()
+                    .expect("validate persisted typed transport")
+                    .runtime_headers(),
+                ),
+            )
+            .await
+            .expect("resolve effective headers")
+            .expect("effective headers");
+        assert_eq!(
+            effective.get("authorization").map(String::as_str),
+            Some("Bearer access-123")
+        );
+        assert_eq!(
+            effective.get("X-Trace").map(String::as_str),
+            Some("[[secret:trace-token]]")
+        );
     }
 
     #[tokio::test]
@@ -1608,7 +1691,7 @@ mod tests {
     #[tokio::test]
     async fn exchange_code_stores_tokens_in_secure_store() {
         let (manager, store, _temp_dir) = setup_secure_manager().await;
-        insert_server(&manager.pool, "serv_secure_exchange").await;
+        insert_typed_http_server(&manager.pool, "serv_secure_exchange", BTreeMap::new()).await;
         let mock_server = MockServer::start().await;
 
         Mock::given(method("POST"))
