@@ -16,6 +16,7 @@ pub mod namespace_repair;
 pub mod oauth;
 pub mod preview;
 pub mod tools;
+pub mod transport;
 
 pub use args::{get_server_args, upsert_server_args};
 pub use crud::{delete_server, get_all_servers, get_server, get_server_by_id, upsert_server, upsert_server_tx};
@@ -31,6 +32,7 @@ pub use oauth::{
     get_effective_server_headers, get_server_oauth_config, get_server_oauth_token, has_manual_authorization_header,
     upsert_server_oauth_config, upsert_server_oauth_token,
 };
+pub use transport::{get_server_transport_draft, upsert_server_transport_draft_tx};
 
 pub use capabilities::{CapabilitySnapshot, discover_from_config, discover_from_connection};
 pub use enabled::{
