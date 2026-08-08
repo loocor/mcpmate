@@ -13,6 +13,7 @@ import {
 	ImageIcon,
 	Loader2,
 	Plus,
+	RefreshCw,
 	Sparkles,
 	Trash2,
 } from "lucide-react";
@@ -38,8 +39,8 @@ import { pickClientConfigFilePath, readAbsolutePathFromFile } from "../lib/pick-
 import { isTauriEnvironmentSync } from "../lib/platform";
 import { useAppStore } from "../lib/store";
 import {
-	resolveCreateClientWritebackBaseline,
 	resolveCreateClientTemplateStrategy,
+	resolveCreateClientWritebackBaseline,
 	resolveClientWritebackDecision,
 	type ClientWritebackBaseline,
 } from "../pages/clients/client-writeback-policy";
@@ -890,6 +891,7 @@ export function ClientFormDrawer({
 	const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
 	const [configPathPickBusy, setConfigPathPickBusy] = useState(false);
 	const [isAdminCatalogOpen, setIsAdminCatalogOpen] = useState(false);
+	const [isAdminCatalogRefreshPending, setIsAdminCatalogRefreshPending] = useState(false);
 	const [selectedPreset, setSelectedPreset] = useState<AdminDiscoveryClientCandidate | null>(null);
 	const [transportRuleEditors, setTransportRuleEditors] = useState<TransportRuleEditors>(() =>
 		transportRuleEditorsFromClient(client),
@@ -1035,10 +1037,38 @@ export function ClientFormDrawer({
 		matchingTemplateStrategy: matchingAdminClient?.mergeStrategy ?? null,
 	});
 	const adminCatalogDiagnostics = adminCatalogQuery.data?.diagnostics ?? [];
-	const adminCatalogEmptyText = adminCatalogQuery.isError || adminDiscoveryPlatformQuery.isError
+	const adminCatalogUnavailable = adminCatalogQuery.isError || adminDiscoveryPlatformQuery.isError;
+	const adminCatalogEmptyText = adminCatalogUnavailable
 		? t("detail.form.adminCatalog.loadError", { defaultValue: "Client presets are unavailable." })
 		: t("detail.form.adminCatalog.empty", { defaultValue: "No supported client presets found." });
-	const adminCatalogBusy = adminDiscoveryPlatformQuery.isLoading || adminCatalogQuery.isLoading;
+	const adminCatalogBusy =
+		isAdminCatalogRefreshPending || adminDiscoveryPlatformQuery.isFetching || adminCatalogQuery.isFetching;
+	const adminCatalogRefreshLabel = t("detail.form.adminCatalog.refresh", {
+		defaultValue: "Refresh client presets",
+	});
+	const refreshAdminCatalog = useCallback(async () => {
+		setIsAdminCatalogRefreshPending(true);
+		try {
+			const platformResult = await adminDiscoveryPlatformQuery.refetch();
+			if (platformResult.isError) return;
+
+			const platform = platformResult.data;
+			await qc.prefetchQuery({
+				queryKey: ["adminDiscoveryClients", "drawer", platform ?? "web", i18n.language],
+				queryFn: () =>
+					fetchAdminDiscoveryClientCatalog({
+						limit: 50,
+						offset: 0,
+						platform,
+						locale: i18n.language,
+					}),
+				staleTime: 0,
+				retry: false,
+			});
+		} finally {
+			setIsAdminCatalogRefreshPending(false);
+		}
+	}, [adminDiscoveryPlatformQuery, i18n.language, qc]);
 	const manualClientId = useMemo(() => sanitizeClientIdentifierInput(identifier ?? ""), [identifier]);
 	const identifierMatchesPattern = CLIENT_IDENTIFIER_PATTERN.test(manualClientId);
 	const manualClientIdReady = manualClientId.length > 0 && identifierMatchesPattern;
@@ -1862,7 +1892,27 @@ export function ClientFormDrawer({
 																		})}
 																	/>
 																	<CommandList className="max-h-[clamp(120px,calc(var(--radix-popover-content-available-height)_-_48px),300px)] overscroll-contain">
-																		<CommandEmpty>{adminCatalogEmptyText}</CommandEmpty>
+																		<CommandEmpty className="flex items-center justify-center gap-2">
+																			{adminCatalogUnavailable ? (
+																				<Button
+																					type="button"
+																					variant="ghost"
+																					size="icon"
+																					aria-label={adminCatalogRefreshLabel}
+																					title={adminCatalogRefreshLabel}
+																					onClick={() => void refreshAdminCatalog()}
+																					disabled={adminCatalogBusy}
+																					className="h-7 w-7 shrink-0"
+																				>
+																					{adminCatalogBusy ? (
+																						<Loader2 className="h-4 w-4 animate-spin" />
+																					) : (
+																						<RefreshCw className="h-4 w-4" />
+																					)}
+																				</Button>
+																			) : null}
+																			<span>{adminCatalogEmptyText}</span>
+																		</CommandEmpty>
 																		<CommandGroup>
 																			{adminCatalogOptions.map((candidate) => (
 																				<CommandItem
