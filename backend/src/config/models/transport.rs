@@ -1,13 +1,24 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
 use url::Url;
+
+use crate::{common::server::ServerType, core::models::MCPServerConfig};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ConfigValue {
     Literal { value: String },
     SecretRef { alias: String },
+}
+
+impl ConfigValue {
+    pub fn runtime_value(&self) -> String {
+        match self {
+            Self::Literal { value } => value.clone(),
+            Self::SecretRef { alias } => format!("[[secret:{alias}]]"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,6 +64,49 @@ pub enum ValidatedTransport {
         endpoint: Url,
         headers: BTreeMap<String, ConfigValue>,
     },
+}
+
+impl ValidatedTransport {
+    pub fn to_mcp_config(&self) -> MCPServerConfig {
+        match self {
+            Self::Stdio { command, args, env } => MCPServerConfig {
+                source_fingerprint: None,
+                kind: ServerType::Stdio,
+                command: Some(command.clone()),
+                args: (!args.is_empty()).then(|| args.clone()),
+                url: None,
+                env: config_values_to_runtime(env),
+                headers: None,
+            },
+            Self::Sse { endpoint, headers } => MCPServerConfig {
+                source_fingerprint: None,
+                kind: ServerType::Sse,
+                command: None,
+                args: None,
+                url: Some(endpoint.to_string()),
+                env: None,
+                headers: config_values_to_runtime(headers),
+            },
+            Self::StreamableHttp { endpoint, headers } => MCPServerConfig {
+                source_fingerprint: None,
+                kind: ServerType::StreamableHttp,
+                command: None,
+                args: None,
+                url: Some(endpoint.to_string()),
+                env: None,
+                headers: config_values_to_runtime(headers),
+            },
+        }
+    }
+}
+
+fn config_values_to_runtime(values: &BTreeMap<String, ConfigValue>) -> Option<HashMap<String, String>> {
+    (!values.is_empty()).then(|| {
+        values
+            .iter()
+            .map(|(name, value)| (name.clone(), value.runtime_value()))
+            .collect()
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -215,5 +269,23 @@ mod tests {
                 field: "env.TOKEN".into(),
             }]),
         );
+    }
+
+    #[test]
+    fn projects_validated_transport_without_flat_field_selection() {
+        let mut env = BTreeMap::new();
+        env.insert("TOKEN".into(), ConfigValue::SecretRef { alias: "token".into() });
+        let validated = ServerTransportDraft::Stdio {
+            command: Some("echo".into()),
+            args: vec!["hello".into()],
+            env,
+        }
+        .validate()
+        .expect("validate stdio");
+
+        let config = validated.to_mcp_config();
+        assert_eq!(config.command.as_deref(), Some("echo"));
+        assert_eq!(config.url, None);
+        assert_eq!(config.env.unwrap().get("TOKEN"), Some(&"[[secret:token]]".into()));
     }
 }
