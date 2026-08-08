@@ -12,7 +12,6 @@ import type {
 	ServerMetaInfo,
 } from "../lib/types";
 import { ServerInstallManualForm, type ServerInstallManualFormHandle } from "./server-install";
-import { resolveRecordUpdatePayload } from "../lib/secure-field";
 import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
 
@@ -254,7 +253,6 @@ const buildMetaPayload = (
 
 const draftToUpdateConfig = (
 	draft: ServerInstallDraft,
-	baseline?: ServerInstallDraft | null,
 ): UpdateConfig => {
 	const args = draft.args
 		?.map((value) => value.trim())
@@ -262,24 +260,19 @@ const draftToUpdateConfig = (
 	const meta = draft.meta ? buildMetaPayload(draft.meta) : undefined;
 
 	if (draft.kind === "stdio") {
-		const env = sanitizeRecord(draft.env);
-		const baselineEnv = sanitizeRecord(baseline?.env);
 		return {
 			kind: draft.kind,
 			command: trim(draft.command ?? undefined),
 			args,
-			env: resolveRecordUpdatePayload(env, baselineEnv),
+			env: sanitizeRecord(draft.env),
 			meta,
 		};
 	}
 
-	const headers = sanitizeRecord(draft.headers);
-	const baselineHeaders = sanitizeRecord(baseline?.headers);
-
 	return {
 		kind: draft.kind,
 		url: buildUrlWithParams(draft.url, draft.urlParams),
-		headers: resolveRecordUpdatePayload(headers, baselineHeaders),
+		headers: sanitizeRecord(draft.headers),
 		args,
 		meta,
 	};
@@ -344,7 +337,7 @@ export function ServerEditDrawer({
 					throw error;
 				}
 			}
-			const payload = draftToUpdateConfig(draft, initialDraft);
+			const payload = draftToUpdateConfig(draft);
 			await onSubmit({
 				...payload,
 				unify_direct_exposure_eligible: unifyEligible,
@@ -352,7 +345,6 @@ export function ServerEditDrawer({
 			onUpdated?.();
 		},
 		[
-			initialDraft,
 			namespaceRemediationAllowed,
 			onSubmit,
 			onUpdated,

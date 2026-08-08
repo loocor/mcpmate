@@ -396,7 +396,7 @@ describe("Profile authoring API", () => {
 		}
 	});
 
-	test("keeps Profile state out of Server create requests", async () => {
+	test("serializes stdio creates as tagged transports without Profile state", async () => {
 		let requestBody: unknown;
 		globalThis.fetch = async (_input, init) => {
 			requestBody = init?.body ? JSON.parse(String(init.body)) : undefined;
@@ -407,14 +407,109 @@ describe("Profile authoring API", () => {
 			name: "server-a",
 			kind: "stdio",
 			command: "server-a",
+			args: ["--serve"],
+			env: {
+				API_KEY: "[[secret:server-token]]",
+				LOG_LEVEL: "debug",
+			},
+			source: { type: "catalog", ref: "server-a" },
+			pending_import: true,
+			meta: { description: "A server" },
 			enabled: true,
 			profile_ids: ["profile-a"],
 		});
 
 		expect(requestBody).toEqual({
 			name: "server-a",
-			server_type: "stdio",
-			command: "server-a",
+			transport: {
+				kind: "stdio",
+				command: "server-a",
+				args: ["--serve"],
+				env: {
+					API_KEY: { kind: "secret_ref", alias: "server-token" },
+					LOG_LEVEL: { kind: "literal", value: "debug" },
+				},
+			},
+			source: { type: "catalog", ref: "server-a" },
+			pending_import: true,
+			meta: { description: "A server" },
 		});
+	});
+
+	test("serializes SSE updates with a tagged HTTP transport and endpoint fallback", async () => {
+		let requestBody: unknown;
+		globalThis.fetch = async (_input, init) => {
+			requestBody = init?.body ? JSON.parse(String(init.body)) : undefined;
+			return Response.json({ success: true, data: {} });
+		};
+
+		await serversApi.updateServer("server-a", {
+			kind: "sse",
+			command: "https://example.com/sse",
+			headers: {
+				Authorization: "[[secret:api-token]]",
+				"X-Client": "board",
+			},
+			source: { type: "browser", ref: "example" },
+			pending_import: false,
+			meta: { version: "1.2.3" },
+		});
+
+		expect(requestBody).toEqual({
+			id: "server-a",
+			transport: {
+				kind: "http",
+				protocol: "sse",
+				endpoint: "https://example.com/sse",
+				headers: {
+					Authorization: { kind: "secret_ref", alias: "api-token" },
+					"X-Client": { kind: "literal", value: "board" },
+				},
+			},
+			source: { type: "browser", ref: "example" },
+			pending_import: false,
+			meta: { version: "1.2.3" },
+		});
+	});
+
+	test("serializes streamable HTTP updates as literal values unless the secret reference is exact", async () => {
+		let requestBody: unknown;
+		globalThis.fetch = async (_input, init) => {
+			requestBody = init?.body ? JSON.parse(String(init.body)) : undefined;
+			return Response.json({ success: true, data: {} });
+		};
+
+		await serversApi.updateServer("server-b", {
+			kind: "streamable_http",
+			url: "https://example.com/mcp",
+			headers: {
+				Authorization: "Bearer [[secret:api-token]]",
+				"X-Token": "[[secret:stream-token]]",
+			},
+		});
+
+		expect(requestBody).toEqual({
+			id: "server-b",
+			transport: {
+				kind: "http",
+				protocol: "streamable_http",
+				endpoint: "https://example.com/mcp",
+				headers: {
+					Authorization: {
+						kind: "literal",
+						value: "Bearer [[secret:api-token]]",
+					},
+					"X-Token": { kind: "secret_ref", alias: "stream-token" },
+				},
+			},
+		});
+	});
+
+	test("rejects partial updates without a transport kind", async () => {
+		await expect(
+			serversApi.updateServer("server-b", {
+				command: "server-b",
+			}),
+		).rejects.toThrow("Server updates require a complete transport kind");
 	});
 });

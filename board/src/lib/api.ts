@@ -777,6 +777,56 @@ export const serializeMetaForApi = (
 	return Object.keys(payload).length > 0 ? payload : undefined;
 };
 
+type TransportConfigValue =
+	| { kind: "literal"; value: string }
+	| { kind: "secret_ref"; alias: string };
+
+const EXACT_SECRET_REFERENCE = /^\[\[secret:([^\]]+)\]\]$/;
+
+const serializeTransportConfigValues = (
+	values?: Record<string, string>,
+): Record<string, TransportConfigValue> => {
+	if (!values || typeof values !== "object") return {};
+
+	return Object.fromEntries(
+		Object.entries(values).map(([key, value]) => {
+			const secretReference = value.match(EXACT_SECRET_REFERENCE);
+			return [
+				key,
+				secretReference
+					? { kind: "secret_ref", alias: secretReference[1] }
+					: { kind: "literal", value },
+			];
+		}),
+	);
+};
+
+const serializeServerTransport = (
+	serverConfig: Partial<MCPServerConfig>,
+	requireKind = false,
+) => {
+	if (requireKind && !serverConfig.kind) {
+		throw new Error("Server updates require a complete transport kind");
+	}
+
+	const kind = serverConfig.kind ?? "stdio";
+	if (kind === "stdio") {
+		return {
+			kind: "stdio" as const,
+			command: serverConfig.command ?? null,
+			args: Array.isArray(serverConfig.args) ? serverConfig.args : [],
+			env: serializeTransportConfigValues(serverConfig.env),
+		};
+	}
+
+	return {
+		kind: "http" as const,
+		protocol: kind === "sse" ? ("sse" as const) : ("streamable_http" as const),
+		endpoint: serverConfig.url ?? serverConfig.command ?? null,
+		headers: serializeTransportConfigValues(serverConfig.headers),
+	};
+};
+
 const normalizeCapabilitySummary = (
 	capability: unknown,
 ): ServerCapabilitySummary | undefined => {
@@ -1596,29 +1646,13 @@ export const serversApi = {
 
 	// CRUD operations
 	createServer: async (serverConfig: Partial<MCPServerConfig>) => {
-		const sc = serverConfig as {
-			url?: string;
-			unify_direct_exposure_eligible?: boolean;
-		};
-		const serverType = (serverConfig.kind || "stdio") as string;
 		const base: Record<string, unknown> = {
 			name: serverConfig.name,
-			server_type: serverType,
+			transport: serializeServerTransport(serverConfig),
 			unify_direct_exposure_eligible:
-				sc.unify_direct_exposure_eligible ?? undefined,
+				serverConfig.unify_direct_exposure_eligible ?? undefined,
 			source: serverConfig.source ?? undefined,
 		};
-		if (serverType === "stdio") {
-			base.command = serverConfig.command ?? undefined;
-			if (Array.isArray(serverConfig.args)) base.args = serverConfig.args;
-			if (serverConfig.env && typeof serverConfig.env === "object")
-				base.env = serverConfig.env as Record<string, string>;
-		} else {
-			base.url = sc.url ?? serverConfig.command ?? undefined;
-			if (serverConfig.headers && typeof serverConfig.headers === "object") {
-				base.headers = serverConfig.headers as Record<string, string>;
-			}
-		}
 		if (serverConfig.pending_import !== undefined) {
 			base.pending_import = serverConfig.pending_import;
 		}
@@ -1638,27 +1672,13 @@ export const serversApi = {
 		serverConfig: Partial<MCPServerConfig>,
 	) => {
 		assertServerCrudUpdate(serverConfig);
-		const sc = serverConfig as {
-			url?: string;
-		};
-		const serverType = serverConfig.kind as string | undefined;
 		const body: Record<string, unknown> = {
 			id: serverId,
-			kind: serverConfig.kind ?? undefined,
-			args: serverConfig.args ?? undefined,
-			env: serverConfig.env ?? undefined,
-			headers: serverConfig.headers ?? undefined,
+			transport: serializeServerTransport(serverConfig, true),
 			source: serverConfig.source ?? undefined,
 		};
 		if (serverConfig.pending_import !== undefined) {
 			body.pending_import = serverConfig.pending_import;
-		}
-		if (serverType === "stdio" || !serverType) {
-			body.command = serverConfig.command ?? undefined;
-			body.url = sc.url ?? undefined;
-		} else {
-			body.url = sc.url ?? serverConfig.command ?? undefined;
-			body.command = undefined;
 		}
 		// Add meta information if present
 		const metaPayload = serializeMetaForApi(serverConfig.meta ?? undefined);
