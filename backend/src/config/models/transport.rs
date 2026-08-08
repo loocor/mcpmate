@@ -14,6 +14,20 @@ pub enum ConfigValue {
 }
 
 impl ConfigValue {
+    /// Parses a persisted runtime value into its structured representation.
+    pub fn from_runtime_value(value: String) -> Self {
+        match value
+            .strip_prefix("[[secret:")
+            .and_then(|value| value.strip_suffix("]]"))
+            .filter(|alias| !alias.is_empty())
+        {
+            Some(alias) => Self::SecretRef {
+                alias: alias.to_string(),
+            },
+            None => Self::Literal { value },
+        }
+    }
+
     pub fn runtime_value(&self) -> String {
         match self {
             Self::Literal { value } => value.clone(),

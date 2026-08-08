@@ -13,12 +13,14 @@ use crate::{
         common::{internal_error, map_anyhow_error, map_database_error},
     },
     config::server::{
-        ImportOptions, ImportOutcome, SkippedServer, headers::has_non_empty_authorization_header,
-        import::server_meta_from_payload, import_batch,
+        ImportOptions, ImportOutcome, SkippedServer,
+        headers::{has_non_empty_authorization_header, is_redacted_display_value},
+        import::server_meta_from_payload,
+        import_batch,
     },
     config::{
         database::Database,
-        models::{ServerTransportDraft, ValidatedTransport},
+        models::{ConfigValue, ServerTransportDraft, ValidatedTransport},
         server::{self},
     },
     core::secrets::{mcp_config_from_server, sync_server_secret_usages},
@@ -57,6 +59,36 @@ fn validate_server_transport(draft: &ServerTransportDraft) -> Result<ValidatedTr
             .join(", ");
         ApiError::BadRequest(format!("Invalid server transport: {details}"))
     })
+}
+
+async fn restore_redacted_http_headers_for_update(
+    db: &Database,
+    server_id: &str,
+    draft: &mut ServerTransportDraft,
+) -> Result<(), ApiError> {
+    let ServerTransportDraft::Http { headers, .. } = draft else {
+        return Ok(());
+    };
+
+    let existing_headers = crate::config::server::get_server_headers(&db.pool, server_id)
+        .await
+        .map_err(map_anyhow_error)?;
+    headers.retain(|key, value| {
+        let ConfigValue::Literal { value: display_value } = value else {
+            return true;
+        };
+        if !is_redacted_display_value(display_value) {
+            return true;
+        }
+
+        let normalized_key = key.trim().to_ascii_lowercase();
+        let Some(existing_value) = existing_headers.get(&normalized_key) else {
+            return false;
+        };
+        *value = ConfigValue::from_runtime_value(existing_value.clone());
+        true
+    });
+    Ok(())
 }
 
 pub async fn remediate_server_namespace(
@@ -490,7 +522,8 @@ pub async fn update_server(
 ) -> Result<Json<ServerDetailsResp>, ApiError> {
     let started_at = std::time::Instant::now();
     validate_server_update_management_contract(&payload)?;
-    let validated_transport = validate_server_transport(&payload.transport)?;
+    let mut transport = payload.transport;
+    validate_server_transport(&transport)?;
     let db = common::get_database_from_state(&state)?;
 
     let id = payload.id.clone();
@@ -503,6 +536,8 @@ pub async fn update_server(
         .id
         .clone()
         .ok_or_else(|| internal_error("Server ID not found"))?;
+    restore_redacted_http_headers_for_update(&db, &server_id, &mut transport).await?;
+    let validated_transport = validate_server_transport(&transport)?;
     let previous_config_fingerprint =
         crate::config::server::capabilities::current_config_fingerprint(&db.pool, &server_id)
             .await
@@ -523,7 +558,7 @@ pub async fn update_server(
     }
 
     let runtime_headers = validated_transport.runtime_headers();
-    crate::config::server::upsert_server_definition(&db.pool, &updated_server, &payload.transport)
+    crate::config::server::upsert_server_definition(&db.pool, &updated_server, &transport)
         .await
         .map_err(map_anyhow_error)?;
 
@@ -933,7 +968,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        config::models::{ServerOAuthConfig, ServerOAuthToken},
+        config::models::{ConfigValue, HttpTransportKind, ServerOAuthConfig, ServerOAuthToken, ServerTransportDraft},
         core::{
             models::Config, pool::UpstreamConnectionPool, profile::ConfigApplicationStateManager,
             secrets::store::LocalSecretStore,
@@ -942,7 +977,7 @@ mod tests {
         system::metrics::MetricsCollector,
     };
     use sqlx::sqlite::SqlitePoolOptions;
-    use std::{path::PathBuf, sync::Arc, time::Duration};
+    use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
     use tempfile::TempDir;
     use tokio::sync::{Mutex, RwLock};
 
@@ -1089,6 +1124,98 @@ mod tests {
             Some("Bearer manual-token")
         );
         assert_eq!(headers.get("x-trace").map(String::as_str), Some("trace-1"));
+    }
+
+    #[tokio::test]
+    async fn update_server_preserves_redacted_http_header_config_values() {
+        let context = create_test_context().await;
+
+        for (server_id, existing_authorization) in [
+            (
+                "serv_preserve_literal_header",
+                ConfigValue::Literal {
+                    value: "Bearer existing-token".to_string(),
+                },
+            ),
+            (
+                "serv_preserve_secret_header",
+                ConfigValue::SecretRef {
+                    alias: "server/header-token".to_string(),
+                },
+            ),
+        ] {
+            let mut server = Server::new_streamable_http(
+                format!("redacted header {server_id}"),
+                Some("https://example.com/mcp".to_string()),
+            );
+            server.id = Some(server_id.to_string());
+            let expected_authorization = existing_authorization.clone();
+            server::upsert_server_definition(
+                &context.database.pool,
+                &server,
+                &ServerTransportDraft::Http {
+                    protocol: HttpTransportKind::StreamableHttp,
+                    endpoint: Some("https://example.com/mcp".to_string()),
+                    headers: BTreeMap::from([
+                        ("Authorization".to_string(), existing_authorization),
+                        (
+                            "X-Removed".to_string(),
+                            ConfigValue::Literal {
+                                value: "removed-on-full-replacement".to_string(),
+                            },
+                        ),
+                    ]),
+                },
+            )
+            .await
+            .expect("seed structured HTTP server");
+
+            let _ = update_server(
+                State(context.app_state.clone()),
+                Json(
+                    serde_json::from_value(serde_json::json!({
+                        "id": server_id,
+                        "transport": {
+                            "kind": "http",
+                            "protocol": "streamable_http",
+                            "endpoint": "https://example.com/mcp",
+                            "headers": {
+                                "Authorization": {"kind": "literal", "value": "***REDACTED***"},
+                                "X-Trace": {"kind": "literal", "value": "trace-1"}
+                            }
+                        }
+                    }))
+                    .expect("decode update request"),
+                ),
+            )
+            .await
+            .expect("update redacted HTTP headers");
+
+            let headers = server::get_server_headers(&context.database.pool, server_id)
+                .await
+                .expect("load headers");
+            assert_eq!(
+                headers.get("authorization"),
+                Some(&expected_authorization.runtime_value())
+            );
+            assert_eq!(headers.get("x-trace").map(String::as_str), Some("trace-1"));
+            assert!(!headers.contains_key("x-removed"));
+            assert!(!headers.values().any(|value| value == "***REDACTED***"));
+
+            let Some(ServerTransportDraft::Http { headers, .. }) =
+                server::get_server_transport_draft(&context.database.pool, server_id)
+                    .await
+                    .expect("load transport draft")
+            else {
+                panic!("updated server must retain an HTTP transport draft");
+            };
+            assert_eq!(headers.get("Authorization"), Some(&expected_authorization));
+            assert_eq!(
+                headers.get("X-Trace").map(|value| value.runtime_value()),
+                Some("trace-1".to_string())
+            );
+            assert!(!headers.contains_key("X-Removed"));
+        }
     }
 
     #[tokio::test]
