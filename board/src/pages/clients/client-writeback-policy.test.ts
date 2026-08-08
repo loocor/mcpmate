@@ -2,11 +2,21 @@ import { describe, expect, test } from "bun:test";
 
 import {
   hasPendingClientWritebackMutation,
+  resolveCreateClientTemplateStrategy,
   resolveCreateClientWritebackBaseline,
   resolveClientWritebackDecision,
 } from "./client-writeback-policy";
 
 describe("client writeback policy", () => {
+  test("prefers the selected preset strategy over a matching draft identifier", () => {
+    expect(
+      resolveCreateClientTemplateStrategy({
+        selectedTemplateStrategy: "deep_merge",
+        matchingTemplateStrategy: "replace",
+      }),
+    ).toBe("deep_merge");
+  });
+
   test("resolves create inheritance without inventing a template strategy", () => {
     expect(
       resolveCreateClientWritebackBaseline({

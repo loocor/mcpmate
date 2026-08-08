@@ -32,6 +32,16 @@ export function resolveCreateClientWritebackBaseline({
   };
 }
 
+export function resolveCreateClientTemplateStrategy({
+  selectedTemplateStrategy,
+  matchingTemplateStrategy,
+}: {
+  selectedTemplateStrategy: ClientMergeStrategy | null;
+  matchingTemplateStrategy: ClientMergeStrategy | null;
+}): ClientMergeStrategy | null {
+  return selectedTemplateStrategy ?? matchingTemplateStrategy;
+}
+
 export interface ClientWritebackDecisionInput {
   mode: "create" | "edit";
   configFileChoice: ClientConfigFileState;

@@ -39,6 +39,7 @@ import { isTauriEnvironmentSync } from "../lib/platform";
 import { useAppStore } from "../lib/store";
 import {
 	resolveCreateClientWritebackBaseline,
+	resolveCreateClientTemplateStrategy,
 	resolveClientWritebackDecision,
 	type ClientWritebackBaseline,
 } from "../pages/clients/client-writeback-policy";
@@ -889,7 +890,7 @@ export function ClientFormDrawer({
 	const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
 	const [configPathPickBusy, setConfigPathPickBusy] = useState(false);
 	const [isAdminCatalogOpen, setIsAdminCatalogOpen] = useState(false);
-	const [selectedAdminClient, setSelectedAdminClient] = useState<AdminDiscoveryClientCandidate | null>(null);
+	const [selectedPreset, setSelectedPreset] = useState<AdminDiscoveryClientCandidate | null>(null);
 	const [transportRuleEditors, setTransportRuleEditors] = useState<TransportRuleEditors>(() =>
 		transportRuleEditorsFromClient(client),
 	);
@@ -994,7 +995,7 @@ export function ClientFormDrawer({
 	const writebackLoadError =
 		mode === "edit"
 			? clientMergeDetailsQuery.isError
-			: systemSettingsQuery.isError && selectedAdminClient === null;
+			: systemSettingsQuery.isError && selectedPreset === null;
 	const writebackUnavailable = writebackRequired && writebackBaseline === null;
 	const writebackHelpText = writebackLoadError
 		? t("detail.form.writeback.loadError", {
@@ -1029,13 +1030,10 @@ export function ClientFormDrawer({
 			) ?? null
 		);
 	}, [adminCatalogOptions, identifier, mode]);
-	const selectedAdminClientMatchesIdentifier =
-		selectedAdminClient !== null &&
-		normalizeClientIdentifier(selectedAdminClient.identifier) === normalizeClientIdentifier(identifier);
-	const createTemplateMergeStrategy =
-		(selectedAdminClientMatchesIdentifier ? selectedAdminClient?.mergeStrategy : null) ??
-		matchingAdminClient?.mergeStrategy ??
-		null;
+	const createTemplateMergeStrategy = resolveCreateClientTemplateStrategy({
+		selectedTemplateStrategy: selectedPreset?.mergeStrategy ?? null,
+		matchingTemplateStrategy: matchingAdminClient?.mergeStrategy ?? null,
+	});
 	const adminCatalogDiagnostics = adminCatalogQuery.data?.diagnostics ?? [];
 	const adminCatalogEmptyText = adminCatalogQuery.isError || adminDiscoveryPlatformQuery.isError
 		? t("detail.form.adminCatalog.loadError", { defaultValue: "Client presets are unavailable." })
@@ -1072,7 +1070,7 @@ export function ClientFormDrawer({
 	const applyAdminClientCandidate = useCallback(
 		(candidate: AdminDiscoveryClientCandidate) => {
 			setIsAdminCatalogOpen(false);
-			setSelectedAdminClient(candidate);
+			setSelectedPreset(candidate);
 			if (mode === "create") {
 				form.setValue("identifier", candidate.identifier, { shouldDirty: true, shouldValidate: true });
 			}
@@ -1117,7 +1115,7 @@ export function ClientFormDrawer({
 		setIsDeleteConfirmOpen(false);
 		autoAppliedInferenceRef.current = null;
 		lastParseInspectionSignatureRef.current = null;
-		setSelectedAdminClient(null);
+		setSelectedPreset(null);
 		setIsAdminCatalogOpen(false);
 		setManualConfigCopied(false);
 		if (manualCopyResetTimerRef.current != null) {
@@ -1179,15 +1177,15 @@ export function ClientFormDrawer({
 	}, []);
 
 	useEffect(() => {
-		if (!open || mode !== "edit" || selectedAdminClient || adminCatalogOptions.length === 0) return;
+		if (!open || mode !== "edit" || selectedPreset || adminCatalogOptions.length === 0) return;
 		const currentIdentifier = normalizeClientIdentifier(client?.identifier ?? identifier);
 		const matchingClient = adminCatalogOptions.find(
 			(candidate) => normalizeClientIdentifier(candidate.identifier) === currentIdentifier,
 		);
 		if (matchingClient) {
-			setSelectedAdminClient(matchingClient);
+			setSelectedPreset(matchingClient);
 		}
-	}, [adminCatalogOptions, client?.identifier, identifier, mode, open, selectedAdminClient]);
+	}, [adminCatalogOptions, client?.identifier, identifier, mode, open, selectedPreset]);
 
 	useEffect(() => {
 		if (supportedTransports.length === 0) {
@@ -1618,10 +1616,7 @@ export function ClientFormDrawer({
 				configFileChoice: values.configFileChoice,
 				selectedStrategy: values.mergeStrategySelection,
 				baseline: writebackBaseline,
-				discoveryStrategy:
-					mode === "create" && selectedAdminClientMatchesIdentifier
-						? selectedAdminClient?.mergeStrategy
-						: null,
+				discoveryStrategy: mode === "create" ? selectedPreset?.mergeStrategy : null,
 				supportedTransportsChanged,
 				transportEditorsChanged,
 			});
@@ -1829,10 +1824,7 @@ export function ClientFormDrawer({
 															<Input
 																{...field}
 																className="pr-11"
-																onChange={(event) => {
-																	field.onChange(event);
-																	setSelectedAdminClient(null);
-																}}
+																onChange={field.onChange}
 																placeholder={t("detail.form.fields.displayName.placeholder", {
 																	defaultValue: "Cursor Desktop",
 																})}
