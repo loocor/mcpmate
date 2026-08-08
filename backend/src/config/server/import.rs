@@ -15,9 +15,9 @@ use crate::common::constants::profile_keys;
 use crate::common::server::ServerType;
 use crate::common::types::{ServerSource, ServerSourceType};
 use crate::config::database::Database;
-use crate::config::models::{Server, ServerMeta};
+use crate::config::models::{ConfigValue, HttpTransportKind, Server, ServerMeta, ServerTransportDraft};
 use crate::config::server as server_ops;
-use crate::config::server::{args, env, fingerprint, get_all_servers, upsert_server};
+use crate::config::server::{args, fingerprint, get_all_servers, upsert_server_definition};
 
 // Capability sync utilities for the transactional SQLite catalog.
 use crate::core::capability::read_service::CapabilityReadService;
@@ -261,6 +261,56 @@ fn build_imported_server(
     }
 }
 
+fn build_transport_draft(
+    server_type: ServerType,
+    cfg: &ServersImportConfig,
+    args: Vec<String>,
+    env: HashMap<String, String>,
+) -> ServerTransportDraft {
+    match server_type {
+        ServerType::Stdio => ServerTransportDraft::Stdio {
+            command: cfg.command.clone(),
+            args,
+            env: env.into_iter().map(|(key, value)| (key, config_value(value))).collect(),
+        },
+        ServerType::Sse => ServerTransportDraft::Http {
+            protocol: HttpTransportKind::Sse,
+            endpoint: cfg.url.clone(),
+            headers: cfg
+                .headers
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(key, value)| (key, config_value(value)))
+                .collect(),
+        },
+        ServerType::StreamableHttp => ServerTransportDraft::Http {
+            protocol: HttpTransportKind::StreamableHttp,
+            endpoint: cfg.url.clone(),
+            headers: cfg
+                .headers
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(key, value)| (key, config_value(value)))
+                .collect(),
+        },
+    }
+}
+
+fn config_value(value: String) -> ConfigValue {
+    match value
+        .strip_prefix("[[secret:")
+        .and_then(|value| value.strip_suffix("]]"))
+        .filter(|alias| !alias.is_empty())
+    {
+        Some(alias) => ConfigValue::SecretRef {
+            alias: alias.to_string(),
+        },
+        None => ConfigValue::Literal { value },
+    }
+}
+
 fn is_mcpmate_import_entry(entry: &InspectedServerEntry) -> bool {
     entry.name.eq_ignore_ascii_case(profile_keys::MCPMATE)
 }
@@ -396,18 +446,32 @@ pub async fn import_batch(
             outcome.failed.insert(name, error.to_string());
             continue;
         }
-        let candidate = prepare_import_candidate(&cfg)?;
-        if let Some(reason) = import_conflict_reason(&existing, &name, &candidate, &opts) {
-            if record_conflict(&mut outcome, &name, reason, opts.conflict_policy) {
+        let candidate = match prepare_import_candidate(&cfg) {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                outcome.failed.insert(name, error.to_string());
                 continue;
             }
-        }
+        };
 
         // Normalize args/env once for both preview and apply.
         let (args_norm, env_norm) = normalize_args_env(
             cfg.args.clone().unwrap_or_default(),
             cfg.env.clone().unwrap_or_default(),
         );
+        let transport = build_transport_draft(candidate.server_type, &cfg, args_norm.clone(), env_norm.clone());
+        if let Err(diagnostics) = transport.validate() {
+            outcome
+                .failed
+                .insert(name, format!("server transport draft is invalid: {diagnostics:?}"));
+            continue;
+        }
+
+        if let Some(reason) = import_conflict_reason(&existing, &name, &candidate, &opts) {
+            if record_conflict(&mut outcome, &name, reason, opts.conflict_policy) {
+                continue;
+            }
+        }
 
         // Preview: report would-be imported without DB side-effects
         if opts.preview {
@@ -421,33 +485,21 @@ pub async fn import_batch(
             continue;
         }
 
-        // Apply: upsert server, args, env, headers
+        // Apply: persist the typed definition and its legacy projections atomically.
         let mut server = match candidate.server_type {
             ServerType::Stdio => Server::new_stdio(name.clone(), cfg.command.clone()),
             ServerType::Sse => Server::new_sse(name.clone(), cfg.url.clone()),
             ServerType::StreamableHttp => Server::new_streamable_http(name.clone(), cfg.url.clone()),
         };
+        server.id = existing.ids_by_name.get(&name).cloned();
         server.source = cfg.source.clone();
         // Persist transport_type consistent with server_type to aid validation/preview paths
         // (DB accepts lowercase client-format values per Type/Encode implementation)
         // Stdio/Sse/StreamableHttp map 1:1 here via Server::new_* constructors; keep as-is.
 
-        let server_id = upsert_server(db_pool, &server)
+        let server_id = upsert_server_definition(db_pool, &server, &transport)
             .await
-            .with_context(|| format!("Failed to upsert server '{}'", name))?;
-
-        if !args_norm.is_empty() {
-            let _ = args::upsert_server_args(db_pool, &server_id, &args_norm).await;
-        }
-        if !env_norm.is_empty() {
-            let _ = env::upsert_server_env(db_pool, &server_id, &env_norm).await;
-        }
-
-        if let Some(headers) = cfg.headers.as_ref() {
-            if !headers.is_empty() {
-                let _ = crate::config::server::upsert_server_headers(db_pool, &server_id, headers).await;
-            }
-        }
+            .with_context(|| format!("Failed to upsert server definition '{}'", name))?;
 
         if let Some(meta_payload) = cfg.meta.as_ref() {
             if let Err(err) = upsert_import_meta(db_pool, &server_id, meta_payload).await {
@@ -663,6 +715,7 @@ fn parse_env_assignment(s: &str) -> Option<(String, String)> {
 #[derive(Debug)]
 struct ExistingIndex {
     names: HashSet<String>,
+    ids_by_name: HashMap<String, String>,
     fingerprints: HashSet<String>,
     url_bases: HashSet<String>,
     url_signatures: HashMap<String, fingerprint::UrlSignature>,
@@ -671,12 +724,16 @@ struct ExistingIndex {
 impl ExistingIndex {
     async fn build(db: &Pool<Sqlite>) -> Result<Self> {
         let mut names = HashSet::new();
+        let mut ids_by_name = HashMap::new();
         let mut fps = HashSet::new();
         let mut url_bases = HashSet::new();
         let mut url_sigs = HashMap::new();
         let servers = get_all_servers(db).await?;
         for s in servers {
             names.insert(s.name.clone());
+            if let Some(id) = s.id.as_ref() {
+                ids_by_name.insert(s.name.clone(), id.clone());
+            }
             let args_list = match (s.server_type, s.id.as_ref()) {
                 (ServerType::Stdio, Some(id)) => args::get_server_args(db, id)
                     .await
@@ -700,6 +757,7 @@ impl ExistingIndex {
         }
         Ok(Self {
             names,
+            ids_by_name,
             fingerprints: fps,
             url_bases,
             url_signatures: url_sigs,
@@ -725,7 +783,18 @@ fn validate_server_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::models::Config;
+    use crate::{
+        common::server::ServerType,
+        config::{
+            models::{ConfigValue, HttpTransportKind, Server, ServerTransportDraft},
+            server::{
+                get_server, get_server_args, get_server_env, get_server_headers, get_server_transport_draft,
+                upsert_server_definition,
+            },
+        },
+        core::models::Config,
+    };
+    use std::collections::BTreeMap;
     use tokio::sync::Mutex;
 
     fn server_entry(
@@ -745,6 +814,26 @@ mod tests {
             url: url.map(str::to_string),
             issue: issue.map(str::to_string),
         }
+    }
+
+    async fn seed_replaceable_stdio_definition(pool: &Pool<Sqlite>) -> String {
+        let server = Server::new_stdio("replaceable".to_string(), Some("uvx".to_string()));
+        upsert_server_definition(
+            pool,
+            &server,
+            &ServerTransportDraft::Stdio {
+                command: Some("uvx".to_string()),
+                args: vec!["--from".to_string()],
+                env: BTreeMap::from([(
+                    "SERVICE_TOKEN".to_string(),
+                    ConfigValue::Literal {
+                        value: "from-args".to_string(),
+                    },
+                )]),
+            },
+        )
+        .await
+        .expect("seed stdio definition")
     }
 
     #[test]
@@ -951,5 +1040,153 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(relationships, 0);
+    }
+
+    #[test]
+    fn build_transport_draft_preserves_literal_and_secret_config_values() {
+        let config = ServersImportConfig {
+            kind: "stdio".to_string(),
+            command: Some("uvx".to_string()),
+            args: Some(vec!["--from".to_string(), "SERVICE_TOKEN=from-args".to_string()]),
+            url: None,
+            env: Some(HashMap::from([
+                ("RUST_LOG".to_string(), "info".to_string()),
+                ("API_TOKEN".to_string(), "[[secret:api-token]]".to_string()),
+            ])),
+            headers: None,
+            source: None,
+            meta: None,
+        };
+        let (args, env) = normalize_args_env(config.args.clone().expect("args"), config.env.clone().expect("env"));
+        let ServerTransportDraft::Stdio { command, args, env } =
+            build_transport_draft(ServerType::Stdio, &config, args, env)
+        else {
+            panic!("expected stdio draft");
+        };
+
+        assert_eq!(command.as_deref(), Some("uvx"));
+        assert_eq!(args, ["--from"]);
+        assert_eq!(
+            env.get("RUST_LOG"),
+            Some(&ConfigValue::Literal {
+                value: "info".to_string()
+            })
+        );
+        assert_eq!(
+            env.get("API_TOKEN"),
+            Some(&ConfigValue::SecretRef {
+                alias: "api-token".to_string()
+            })
+        );
+        assert_eq!(
+            env.get("SERVICE_TOKEN"),
+            Some(&ConfigValue::Literal {
+                value: "from-args".to_string()
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn import_batch_persists_typed_projection_and_continues_after_invalid_entry() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory database");
+        crate::test_helpers::prepare_config_database(&pool).await;
+        let database = Arc::new(Database {
+            pool: pool.clone(),
+            path: std::path::PathBuf::new(),
+            capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
+        });
+        let server_id = seed_replaceable_stdio_definition(&pool).await;
+
+        let update = HashMap::from([
+            (
+                "replaceable".to_string(),
+                ServersImportConfig {
+                    kind: "streamable_http".to_string(),
+                    command: None,
+                    args: None,
+                    url: Some("https://example.test/mcp".to_string()),
+                    env: None,
+                    headers: Some(HashMap::from([(
+                        "X-Api-Key".to_string(),
+                        "[[secret:http-token]]".to_string(),
+                    )])),
+                    source: None,
+                    meta: None,
+                },
+            ),
+            (
+                "broken".to_string(),
+                ServersImportConfig {
+                    kind: "stdio".to_string(),
+                    command: Some("   ".to_string()),
+                    args: None,
+                    url: None,
+                    env: None,
+                    headers: None,
+                    source: None,
+                    meta: None,
+                },
+            ),
+        ]);
+        let outcome = import_batch(
+            database,
+            None,
+            update,
+            ImportOptions {
+                conflict_policy: ConflictPolicy::Update,
+                ..ImportOptions::default()
+            },
+        )
+        .await
+        .expect("import valid entry despite invalid entry");
+
+        assert_eq!(outcome.imported.len(), 1);
+        assert!(outcome.failed["broken"].contains("stdio_command_missing"));
+        let updated_server = get_server(&pool, "replaceable")
+            .await
+            .expect("load updated server")
+            .expect("updated server exists");
+        assert_eq!(updated_server.id.as_deref(), Some(server_id.as_str()));
+        assert_eq!(updated_server.server_type, ServerType::StreamableHttp);
+        assert_eq!(updated_server.command, None);
+        assert_eq!(updated_server.url.as_deref(), Some("https://example.test/mcp"));
+        let Some(ServerTransportDraft::Http {
+            protocol,
+            endpoint,
+            headers,
+        }) = get_server_transport_draft(&pool, &server_id)
+            .await
+            .expect("load HTTP draft")
+        else {
+            panic!("expected HTTP draft");
+        };
+        assert_eq!(protocol, HttpTransportKind::StreamableHttp);
+        assert_eq!(endpoint.as_deref(), Some("https://example.test/mcp"));
+        assert_eq!(
+            headers.get("X-Api-Key"),
+            Some(&ConfigValue::SecretRef {
+                alias: "http-token".to_string()
+            })
+        );
+        assert!(
+            get_server_args(&pool, &server_id)
+                .await
+                .expect("load HTTP args")
+                .is_empty()
+        );
+        assert!(
+            get_server_env(&pool, &server_id)
+                .await
+                .expect("load HTTP env")
+                .is_empty()
+        );
+        assert_eq!(
+            get_server_headers(&pool, &server_id).await.expect("load HTTP headers"),
+            HashMap::from([("x-api-key".to_string(), "[[secret:http-token]]".to_string())])
+        );
     }
 }
