@@ -11,6 +11,7 @@ describe("clients translations", () => {
 			expect(
 				clientsTranslations[locale].detail.form.adminCatalog.partialWarning,
 			).toBeTruthy();
+			expect(clientsTranslations[locale].detail.form.adminCatalog.refresh).toBeTruthy();
 		}
 	});
 

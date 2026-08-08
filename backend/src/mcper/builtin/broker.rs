@@ -11,16 +11,16 @@ use rmcp::model::{
     CallToolRequest, CallToolRequestParams, CallToolResult, ClientRequest, ContentBlock, Resource, ResourceTemplate,
     Tool,
 };
-use rmcp::service::PeerRequestOptions;
+use rmcp::service::{PeerRequestOptions, ServiceError};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::config::database::Database;
-use crate::core::capability::aggregate::AggregateListStatus;
+use crate::core::capability::aggregate::{AggregateListCompletionError, AggregateListStatus};
 use crate::core::capability::naming::{NamingKind, resolve_capability_route};
 use crate::core::foundation::types::ConnectionStatus;
 use crate::core::pool::UpstreamConnectionPool;
-use crate::core::profile::visibility::ProfileVisibilityService;
+use crate::core::profile::visibility::{ProfileVisibilityService, VisibilitySnapshot};
 use crate::core::proxy::server::{ClientContext, ClientIdentitySource, ClientTransport};
 use crate::system::paths::PathService;
 
@@ -34,33 +34,39 @@ use crate::clients::models::CapabilitySource;
 use crate::common::profile::ProfileType;
 use crate::config::profile as profile_repo;
 
+#[derive(Debug, thiserror::Error)]
+enum CatalogAuthorityError {
+    #[error("The requested capability catalog is incomplete")]
+    Incomplete,
+}
+
 fn ensure_catalog_result_is_authoritative(
     has_usable_entries: bool,
     kind_filter: Option<&[String]>,
     aggregates: &[(&str, &AggregateListStatus)],
-) -> Result<()> {
+) -> std::result::Result<(), CatalogAuthorityError> {
     if has_usable_entries {
         return Ok(());
     }
 
     let requested_kinds = kind_filter.map(|kinds| kinds.iter().map(String::as_str).collect::<HashSet<_>>());
-    let failures = aggregates
+    let incomplete = aggregates
         .iter()
         .filter(|(kind, _)| {
             requested_kinds
                 .as_ref()
                 .is_none_or(|requested| requested.contains(kind))
         })
-        .filter_map(|(_, aggregate)| aggregate.failure_summary())
-        .collect::<Vec<_>>();
+        .any(|(_, aggregate)| aggregate.has_failures());
 
-    if !failures.is_empty() {
-        return Err(anyhow!(
-            "The requested capability catalog is incomplete: {}",
-            failures.join("; ")
-        ));
+    if incomplete {
+        return Err(CatalogAuthorityError::Incomplete);
     }
     Ok(())
+}
+
+fn is_catalog_authority_error(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<AggregateListCompletionError>().is_some()
 }
 
 /// Structured error response for UCAN tools, designed for LLM parsing and recovery.
@@ -79,6 +85,19 @@ pub struct UcanError {
 }
 
 impl UcanError {
+    /// Creates a catalog_incomplete error without exposing upstream failure details.
+    pub fn catalog_incomplete() -> Self {
+        Self {
+            error_code: "catalog_incomplete".to_string(),
+            message: "The current capability directory could not be completed because one or more visible servers are unavailable."
+                .to_string(),
+            recovery_hint: "Wait for the affected server to recover, then call mcpmate_ucan_catalog again."
+                .to_string(),
+            alternatives: Vec::new(),
+            retry_eligible: true,
+        }
+    }
+
     /// Creates a capability_not_found error with fuzzy-matched alternatives.
     pub fn capability_not_found(
         capability_kind: &str,
@@ -189,13 +208,12 @@ impl UcanError {
     pub fn upstream_error(
         capability_kind: &str,
         capability_name: &str,
-        error_details: &str,
     ) -> Self {
         Self {
             error_code: "upstream_error".to_string(),
             message: format!(
-                "Upstream server returned an error for {} '{}': {}",
-                capability_kind, capability_name, error_details
+                "Upstream server returned an error for {} '{}'.",
+                capability_kind, capability_name
             ),
             recovery_hint: "The upstream MCP server encountered an error. Check the server logs for details. Verify the selected surface item is correctly implemented and the arguments are valid.".to_string(),
             alternatives: Vec::new(),
@@ -868,6 +886,14 @@ struct VisibleListing<T> {
     aggregate: AggregateListStatus,
 }
 
+struct UcanCatalogScope {
+    client_context: ClientContext,
+    snapshot: VisibilitySnapshot,
+    visible_server_ids: HashSet<String>,
+    enabled_servers: Vec<(String, String, bool)>,
+    eligible_server_ids: HashSet<String>,
+}
+
 impl<T> VisibleListing<T> {
     fn finish(self) -> Result<Vec<T>> {
         self.aggregate.finish_for_result(!self.entries.is_empty())?;
@@ -880,8 +906,7 @@ impl<T> VisibleListing<T> {
     ) -> Result<Option<T>> {
         let found = self.entries.into_iter().find(predicate);
         if found.is_none() {
-            self.aggregate.finish()?;
-            self.aggregate.ensure_complete()?;
+            self.aggregate.finish_for_result(false)?;
         }
         Ok(found)
     }
@@ -1025,23 +1050,26 @@ impl BrokerService {
     ) -> Result<CallToolResult> {
         let prompt_config = self.ucan_prompt_config().await;
         let enrich_enabled = prompt_config.catalog_enrich_from_source;
+        let scope = self.resolve_ucan_catalog_scope(context).await?;
 
         let VisibleListing {
             entries: tools,
             aggregate: tools_aggregate,
-        } = self.visible_tools_listing(context).await?;
+        } = self.visible_tools_listing_with_scope(context, &scope).await?;
         let VisibleListing {
             entries: prompts,
             aggregate: prompts_aggregate,
-        } = self.visible_prompts_listing(context).await?;
+        } = self.visible_prompts_listing_with_scope(context, &scope).await?;
         let VisibleListing {
             entries: resources,
             aggregate: resources_aggregate,
-        } = self.visible_resources_listing(context).await?;
+        } = self.visible_resources_listing_with_scope(context, &scope).await?;
         let VisibleListing {
             entries: resource_templates,
             aggregate: resource_templates_aggregate,
-        } = self.visible_resource_templates_listing(context).await?;
+        } = self
+            .visible_resource_templates_listing_with_scope(context, &scope)
+            .await?;
 
         let all_server_ids: Vec<String> = {
             let mut ids = HashSet::new();
@@ -1228,7 +1256,7 @@ impl BrokerService {
             });
         }
 
-        ensure_catalog_result_is_authoritative(
+        if let Err(CatalogAuthorityError::Incomplete) = ensure_catalog_result_is_authoritative(
             !summaries.is_empty(),
             kind_filter,
             &[
@@ -1237,7 +1265,9 @@ impl BrokerService {
                 ("resource", &resources_aggregate),
                 ("resource_template", &resource_templates_aggregate),
             ],
-        )?;
+        ) {
+            return Ok(UcanError::catalog_incomplete().to_call_tool_result());
+        }
 
         let page_size = page_size.clamp(1, 50);
         let page_size = page_size.clamp(1, prompt_config.catalog_page_size_max.max(1));
@@ -1353,128 +1383,156 @@ impl BrokerService {
         };
 
         let response = match capability_kind {
-            SurfaceKind::Tool => match self.find_visible_tool(context, capability_name).await? {
-                Some(tool) => {
-                    let related = self
-                        .find_related_surface_items(context, &tool.server_id, capability_name, capability_kind)
-                        .await;
-                    let argument_tips = extract_argument_tips_from_tool(&tool.tool);
-                    SurfaceDetailsResponse {
-                        capability_kind,
-                        capability_name: tool.tool.name.to_string(),
-                        server_id: tool.server_id,
-                        server_name: tool.server_name,
-                        detail_level,
-                        details: tool_details_value(&tool.tool, detail_level),
-                        workflow_hints,
-                        related_capabilities: related,
-                        argument_tips,
-                        call_requirements: call_requirements_for_tool(&tool.tool),
-                        error_recovery_hint: prompt_config.error_recovery_hint.clone(),
-                    }
+            SurfaceKind::Tool => match self.find_visible_tool(context, capability_name).await {
+                Err(error) if is_catalog_authority_error(&error) => {
+                    return Ok(UcanError::catalog_incomplete().to_call_tool_result());
                 }
-                None => {
-                    let surface_names = self.collect_surface_names_for_kind(context, capability_kind).await?;
-                    return Ok(
-                        UcanError::capability_not_found("tool", capability_name, &surface_names).to_call_tool_result()
-                    );
-                }
-            },
-            SurfaceKind::Prompt => match self.find_visible_prompt(context, capability_name).await? {
-                Some(prompt) => {
-                    let related = self
-                        .find_related_surface_items(context, &prompt.server_id, capability_name, capability_kind)
-                        .await;
-                    let argument_tips = extract_argument_tips_from_prompt(&prompt.prompt);
-                    SurfaceDetailsResponse {
-                        capability_kind,
-                        capability_name: prompt.prompt.name.to_string(),
-                        server_id: prompt.server_id,
-                        server_name: prompt.server_name,
-                        detail_level,
-                        details: prompt_details_value(&prompt.prompt, detail_level)
-                            .context("Failed to serialize Unify prompt details")?,
-                        workflow_hints,
-                        related_capabilities: related,
-                        argument_tips,
-                        call_requirements: call_requirements_for_prompt(&prompt.prompt),
-                        error_recovery_hint: prompt_config.error_recovery_hint.clone(),
-                    }
-                }
-                None => {
-                    let surface_names = self.collect_surface_names_for_kind(context, capability_kind).await?;
-                    return Ok(
-                        UcanError::capability_not_found("prompt", capability_name, &surface_names)
-                            .to_call_tool_result(),
-                    );
-                }
-            },
-            SurfaceKind::Resource => match self.find_visible_resource(context, capability_name).await? {
-                Some(resource) => {
-                    let related = self
-                        .find_related_surface_items(context, &resource.server_id, capability_name, capability_kind)
-                        .await;
-                    SurfaceDetailsResponse {
-                        capability_kind,
-                        capability_name: resource.resource.uri.to_string(),
-                        server_id: resource.server_id,
-                        server_name: resource.server_name,
-                        detail_level,
-                        details: resource_details_value(&resource.resource, detail_level)
-                            .context("Failed to serialize Unify resource details")?,
-                        workflow_hints,
-                        related_capabilities: related,
-                        argument_tips: Vec::new(),
-                        call_requirements: CallRequirements {
-                            accepts_arguments: false,
-                            required_arguments: Vec::new(),
-                            call_ready_without_arguments: true,
-                        },
-                        error_recovery_hint: prompt_config.error_recovery_hint.clone(),
-                    }
-                }
-                None => {
-                    let surface_names = self.collect_surface_names_for_kind(context, capability_kind).await?;
-                    return Ok(
-                        UcanError::capability_not_found("resource", capability_name, &surface_names)
-                            .to_call_tool_result(),
-                    );
-                }
-            },
-            SurfaceKind::ResourceTemplate => {
-                match self.find_visible_resource_template(context, capability_name).await? {
-                    Some(template) => {
+                Err(error) => return Err(error),
+                Ok(tool) => match tool {
+                    Some(tool) => {
                         let related = self
-                            .find_related_surface_items(context, &template.server_id, capability_name, capability_kind)
+                            .find_related_surface_items(context, &tool.server_id, capability_name, capability_kind)
+                            .await;
+                        let argument_tips = extract_argument_tips_from_tool(&tool.tool);
+                        SurfaceDetailsResponse {
+                            capability_kind,
+                            capability_name: tool.tool.name.to_string(),
+                            server_id: tool.server_id,
+                            server_name: tool.server_name,
+                            detail_level,
+                            details: tool_details_value(&tool.tool, detail_level),
+                            workflow_hints,
+                            related_capabilities: related,
+                            argument_tips,
+                            call_requirements: call_requirements_for_tool(&tool.tool),
+                            error_recovery_hint: prompt_config.error_recovery_hint.clone(),
+                        }
+                    }
+                    None => {
+                        let surface_names = self.collect_surface_names_for_kind(context, capability_kind).await?;
+                        return Ok(UcanError::capability_not_found("tool", capability_name, &surface_names)
+                            .to_call_tool_result());
+                    }
+                },
+            },
+            SurfaceKind::Prompt => match self.find_visible_prompt(context, capability_name).await {
+                Err(error) if is_catalog_authority_error(&error) => {
+                    return Ok(UcanError::catalog_incomplete().to_call_tool_result());
+                }
+                Err(error) => return Err(error),
+                Ok(prompt) => match prompt {
+                    Some(prompt) => {
+                        let related = self
+                            .find_related_surface_items(context, &prompt.server_id, capability_name, capability_kind)
+                            .await;
+                        let argument_tips = extract_argument_tips_from_prompt(&prompt.prompt);
+                        SurfaceDetailsResponse {
+                            capability_kind,
+                            capability_name: prompt.prompt.name.to_string(),
+                            server_id: prompt.server_id,
+                            server_name: prompt.server_name,
+                            detail_level,
+                            details: prompt_details_value(&prompt.prompt, detail_level)
+                                .context("Failed to serialize Unify prompt details")?,
+                            workflow_hints,
+                            related_capabilities: related,
+                            argument_tips,
+                            call_requirements: call_requirements_for_prompt(&prompt.prompt),
+                            error_recovery_hint: prompt_config.error_recovery_hint.clone(),
+                        }
+                    }
+                    None => {
+                        let surface_names = self.collect_surface_names_for_kind(context, capability_kind).await?;
+                        return Ok(
+                            UcanError::capability_not_found("prompt", capability_name, &surface_names)
+                                .to_call_tool_result(),
+                        );
+                    }
+                },
+            },
+            SurfaceKind::Resource => match self.find_visible_resource(context, capability_name).await {
+                Err(error) if is_catalog_authority_error(&error) => {
+                    return Ok(UcanError::catalog_incomplete().to_call_tool_result());
+                }
+                Err(error) => return Err(error),
+                Ok(resource) => match resource {
+                    Some(resource) => {
+                        let related = self
+                            .find_related_surface_items(context, &resource.server_id, capability_name, capability_kind)
                             .await;
                         SurfaceDetailsResponse {
                             capability_kind,
-                            capability_name: template.resource_template.uri_template.to_string(),
-                            server_id: template.server_id,
-                            server_name: template.server_name,
+                            capability_name: resource.resource.uri.to_string(),
+                            server_id: resource.server_id,
+                            server_name: resource.server_name,
                             detail_level,
-                            details: resource_template_details_value(&template.resource_template, detail_level)
-                                .context("Failed to serialize Unify resource template details")?,
+                            details: resource_details_value(&resource.resource, detail_level)
+                                .context("Failed to serialize Unify resource details")?,
                             workflow_hints,
                             related_capabilities: related,
                             argument_tips: Vec::new(),
                             call_requirements: CallRequirements {
                                 accepts_arguments: false,
                                 required_arguments: Vec::new(),
-                                call_ready_without_arguments: false,
+                                call_ready_without_arguments: true,
                             },
                             error_recovery_hint: prompt_config.error_recovery_hint.clone(),
                         }
                     }
                     None => {
                         let surface_names = self.collect_surface_names_for_kind(context, capability_kind).await?;
-                        return Ok(UcanError::capability_not_found(
-                            "resource_template",
-                            capability_name,
-                            &surface_names,
-                        )
-                        .to_call_tool_result());
+                        return Ok(
+                            UcanError::capability_not_found("resource", capability_name, &surface_names)
+                                .to_call_tool_result(),
+                        );
                     }
+                },
+            },
+            SurfaceKind::ResourceTemplate => {
+                match self.find_visible_resource_template(context, capability_name).await {
+                    Err(error) if is_catalog_authority_error(&error) => {
+                        return Ok(UcanError::catalog_incomplete().to_call_tool_result());
+                    }
+                    Err(error) => return Err(error),
+                    Ok(template) => match template {
+                        Some(template) => {
+                            let related = self
+                                .find_related_surface_items(
+                                    context,
+                                    &template.server_id,
+                                    capability_name,
+                                    capability_kind,
+                                )
+                                .await;
+                            SurfaceDetailsResponse {
+                                capability_kind,
+                                capability_name: template.resource_template.uri_template.to_string(),
+                                server_id: template.server_id,
+                                server_name: template.server_name,
+                                detail_level,
+                                details: resource_template_details_value(&template.resource_template, detail_level)
+                                    .context("Failed to serialize Unify resource template details")?,
+                                workflow_hints,
+                                related_capabilities: related,
+                                argument_tips: Vec::new(),
+                                call_requirements: CallRequirements {
+                                    accepts_arguments: false,
+                                    required_arguments: Vec::new(),
+                                    call_ready_without_arguments: false,
+                                },
+                                error_recovery_hint: prompt_config.error_recovery_hint.clone(),
+                            }
+                        }
+                        None => {
+                            let surface_names = self.collect_surface_names_for_kind(context, capability_kind).await?;
+                            return Ok(UcanError::capability_not_found(
+                                "resource_template",
+                                capability_name,
+                                &surface_names,
+                            )
+                            .to_call_tool_result());
+                        }
+                    },
                 }
             }
             SurfaceKind::Profile => {
@@ -1653,13 +1711,24 @@ impl BrokerService {
         match capability_kind {
             SurfaceKind::Tool => self.broker_tool_call_inner(context, capability_name, arguments).await,
             SurfaceKind::Prompt => self.broker_prompt_call(context, capability_name, arguments).await,
-            SurfaceKind::Resource => {
-                if !arguments.is_empty() {
-                    return Ok(UcanError::resource_arguments_not_supported(capability_name).to_call_tool_result());
-                }
-                self.broker_resource_read(context, capability_name).await
-            }
+            SurfaceKind::Resource => self.broker_resource_read(context, capability_name, arguments).await,
             SurfaceKind::ResourceTemplate => {
+                match self.find_visible_resource_template(context, capability_name).await {
+                    Err(error) if is_catalog_authority_error(&error) => {
+                        return Ok(UcanError::catalog_incomplete().to_call_tool_result());
+                    }
+                    Err(error) => return Err(error),
+                    Ok(None) => {
+                        let surface_names = self.collect_surface_names_for_kind(context, capability_kind).await?;
+                        return Ok(UcanError::capability_not_found(
+                            "resource_template",
+                            capability_name,
+                            &surface_names,
+                        )
+                        .to_call_tool_result());
+                    }
+                    Ok(Some(_)) => {}
+                }
                 Ok(UcanError::resource_template_not_invocable(capability_name).to_call_tool_result())
             }
             SurfaceKind::Profile => {
@@ -1691,7 +1760,18 @@ impl BrokerService {
         tool_name: &str,
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> Result<CallToolResult> {
-        if let Some(tool_entry) = self.find_visible_tool(context, tool_name).await? {
+        let tool_entry = match self.find_visible_tool(context, tool_name).await {
+            Err(error) if is_catalog_authority_error(&error) => {
+                return Ok(UcanError::catalog_incomplete().to_call_tool_result());
+            }
+            Err(error) => return Err(error),
+            Ok(None) => {
+                let surface_names = self.collect_surface_names_for_kind(context, SurfaceKind::Tool).await?;
+                return Ok(UcanError::capability_not_found("tool", tool_name, &surface_names).to_call_tool_result());
+            }
+            Ok(Some(tool_entry)) => tool_entry,
+        };
+        {
             let required_arguments = required_arguments_from_tool(&tool_entry.tool);
             let missing_required: Vec<String> = required_arguments
                 .into_iter()
@@ -1741,13 +1821,40 @@ impl BrokerService {
             .unwrap_or(60);
         let mut options = PeerRequestOptions::no_options();
         options.timeout = Some(std::time::Duration::from_secs(timeout_secs));
-        let handle = peer
-            .send_cancellable_request(request, options)
-            .await
-            .context("Failed to send Unify broker tool call")?;
+        let handle = match peer.send_cancellable_request(request, options).await {
+            Ok(handle) => handle,
+            Err(error) => {
+                tracing::warn!(
+                    capability_kind = "tool",
+                    capability_name = tool_name,
+                    server_id,
+                    server_name,
+                    error = %error,
+                    "Upstream capability invocation could not be sent"
+                );
+                let error = anyhow::Error::new(error);
+                self.record_usage_evidence(&server_id, mcpmate_capability_store::CapabilityKind::Tools, &error)
+                    .await;
+                return Ok(UcanError::upstream_error("tool", tool_name).to_call_tool_result());
+            }
+        };
 
         match handle.await_response().await {
             Ok(rmcp::model::ServerResult::CallToolResult(mut result)) => {
+                if result.is_error == Some(true) {
+                    let error = anyhow!("upstream CallToolResult marked is_error=true: {:?}", result.content);
+                    tracing::warn!(
+                        capability_kind = "tool",
+                        capability_name = tool_name,
+                        server_id,
+                        server_name,
+                        error = %error,
+                        "Upstream capability invocation returned an error result"
+                    );
+                    self.record_usage_evidence(&server_id, mcpmate_capability_store::CapabilityKind::Tools, &error)
+                        .await;
+                    return Ok(UcanError::upstream_error("tool", tool_name).to_call_tool_result());
+                }
                 crate::core::capability::resource_uri::rewrite_call_tool_result(
                     &self.database.pool,
                     &server_id,
@@ -1758,50 +1865,88 @@ impl BrokerService {
                 Ok(result)
             }
             Ok(other) => {
-                Ok(UcanError::upstream_error("tool", tool_name, &format!("{:?}", other)).to_call_tool_result())
+                tracing::warn!(
+                    capability_kind = "tool",
+                    capability_name = tool_name,
+                    server_id,
+                    server_name,
+                    error = ?other,
+                    "Upstream capability invocation returned an unexpected response"
+                );
+                Ok(UcanError::upstream_error("tool", tool_name).to_call_tool_result())
             }
             Err(error) => {
-                let error_str = error.to_string();
+                let is_timeout = matches!(error, ServiceError::Timeout { .. });
+                tracing::warn!(
+                    capability_kind = "tool",
+                    capability_name = tool_name,
+                    server_id,
+                    server_name,
+                    error = %error,
+                    "Upstream capability invocation failed"
+                );
                 let error = anyhow::Error::new(error);
                 self.record_usage_evidence(&server_id, mcpmate_capability_store::CapabilityKind::Tools, &error)
                     .await;
-                if error_str.contains("timeout") || error_str.contains("Timeout") || error_str.contains("timed out") {
+                if is_timeout {
                     Ok(UcanError::timeout("tool", tool_name, timeout_secs).to_call_tool_result())
                 } else {
-                    Ok(UcanError::upstream_error("tool", tool_name, &error_str).to_call_tool_result())
+                    Ok(UcanError::upstream_error("tool", tool_name).to_call_tool_result())
                 }
             }
         }
+    }
+
+    async fn resolve_ucan_catalog_scope(
+        &self,
+        context: &ClientBuiltinContext,
+    ) -> Result<UcanCatalogScope> {
+        let client_context = context.as_client_context();
+        let visibility = ProfileVisibilityService::new(Some(self.database.clone()), None);
+        let snapshot = visibility
+            .resolve_snapshot_for_client(&client_context)
+            .await
+            .context("Failed to resolve UCan visibility snapshot")?;
+        let visible_server_ids = snapshot.server_ids.iter().cloned().collect::<HashSet<_>>();
+        let enabled_servers = self
+            .load_enabled_servers("Failed to load enabled servers for UCan catalog")
+            .await?;
+        let eligible_server_ids = enabled_servers
+            .iter()
+            .filter_map(|(server_id, _server_name, eligible)| eligible.then_some(server_id.clone()))
+            .collect();
+
+        Ok(UcanCatalogScope {
+            client_context,
+            snapshot,
+            visible_server_ids,
+            enabled_servers,
+            eligible_server_ids,
+        })
     }
 
     async fn visible_tools_listing(
         &self,
         context: &ClientBuiltinContext,
     ) -> Result<VisibleListing<VisibleToolEntry>> {
-        let client_context = context.as_client_context();
+        let scope = self.resolve_ucan_catalog_scope(context).await?;
+        self.visible_tools_listing_with_scope(context, &scope).await
+    }
+
+    async fn visible_tools_listing_with_scope(
+        &self,
+        context: &ClientBuiltinContext,
+        scope: &UcanCatalogScope,
+    ) -> Result<VisibleListing<VisibleToolEntry>> {
         let visibility = ProfileVisibilityService::new(Some(self.database.clone()), None);
-        let snapshot = visibility
-            .resolve_snapshot_for_client(&client_context)
-            .await
-            .context("Failed to resolve Unify visibility snapshot")?;
-        let visible_server_ids = snapshot.server_ids.iter().cloned().collect::<HashSet<_>>();
-
-        let enabled_servers = self
-            .load_enabled_servers("Failed to load enabled servers for Unify catalog")
-            .await?;
-
         let database = self.database.clone();
         let connection_pool = self.connection_pool.clone();
-        let runtime_identity = client_context.runtime_identity();
+        let runtime_identity = scope.client_context.runtime_identity();
 
         let mut tasks = Vec::new();
-        let mut eligible_server_ids = HashSet::new();
-        for (server_id, server_name, unify_direct_exposure_eligible) in enabled_servers {
-            if !visible_server_ids.contains(&server_id) {
+        for (server_id, server_name, _unify_direct_exposure_eligible) in scope.enabled_servers.iter().cloned() {
+            if !scope.visible_server_ids.contains(&server_id) {
                 continue;
-            }
-            if unify_direct_exposure_eligible {
-                eligible_server_ids.insert(server_id.clone());
             }
 
             let ctx = crate::core::capability::runtime::ListCtx {
@@ -1811,8 +1956,8 @@ impl BrokerService {
                 operation_timeout: crate::core::transport::timeout_policy::DEFAULT_CAPABILITY_OPERATION_TIMEOUT,
                 validation_session: None,
                 runtime_identity: runtime_identity.clone(),
-                connection_selection: client_context.connection_selection(server_id.clone()),
-                visibility_snapshot: Some(Arc::new(snapshot.clone())),
+                connection_selection: scope.client_context.connection_selection(server_id.clone()),
+                visibility_snapshot: Some(Arc::new(scope.snapshot.clone())),
                 name_domain: crate::core::capability::runtime::NameDomain::External,
             };
             let database = database.clone();
@@ -1866,12 +2011,15 @@ impl BrokerService {
             }
         }
         let filtered_names = visibility
-            .filter_tools_with_snapshot(&snapshot, visible.iter().map(|entry| entry.tool.clone()).collect())
+            .filter_tools_with_snapshot(
+                &scope.snapshot,
+                visible.iter().map(|entry| entry.tool.clone()).collect(),
+            )
             .into_iter()
             .map(|tool| tool.name.to_string())
             .collect::<HashSet<_>>();
         visible.retain(|entry| filtered_names.contains(entry.tool.name.as_ref()));
-        retain_brokered_tools(context, &eligible_server_ids, &mut visible);
+        retain_brokered_tools(context, &scope.eligible_server_ids, &mut visible);
         visible.sort_by(|left, right| {
             left.server_name
                 .cmp(&right.server_name)
@@ -1905,29 +2053,23 @@ impl BrokerService {
         &self,
         context: &ClientBuiltinContext,
     ) -> Result<VisibleListing<VisiblePromptEntry>> {
-        let client_context = context.as_client_context();
+        let scope = self.resolve_ucan_catalog_scope(context).await?;
+        self.visible_prompts_listing_with_scope(context, &scope).await
+    }
+
+    async fn visible_prompts_listing_with_scope(
+        &self,
+        context: &ClientBuiltinContext,
+        scope: &UcanCatalogScope,
+    ) -> Result<VisibleListing<VisiblePromptEntry>> {
         let visibility = ProfileVisibilityService::new(Some(self.database.clone()), None);
-        let snapshot = visibility
-            .resolve_snapshot_for_client(&client_context)
-            .await
-            .context("Failed to resolve Unify visibility snapshot")?;
-        let visible_server_ids = snapshot.server_ids.iter().cloned().collect::<HashSet<_>>();
-
-        let enabled_servers = self
-            .load_enabled_servers("Failed to load enabled servers for Unify prompt catalog")
-            .await?;
-        let eligible_server_ids = enabled_servers
-            .iter()
-            .filter_map(|(server_id, _server_name, eligible)| eligible.then_some(server_id.clone()))
-            .collect::<HashSet<_>>();
-
         let database = self.database.clone();
         let connection_pool = self.connection_pool.clone();
-        let runtime_identity = client_context.runtime_identity();
+        let runtime_identity = scope.client_context.runtime_identity();
 
         let mut tasks = Vec::new();
-        for (server_id, server_name, _unify_direct_exposure_eligible) in enabled_servers {
-            if !visible_server_ids.contains(&server_id) {
+        for (server_id, server_name, _unify_direct_exposure_eligible) in scope.enabled_servers.iter().cloned() {
+            if !scope.visible_server_ids.contains(&server_id) {
                 continue;
             }
             let ctx = crate::core::capability::runtime::ListCtx {
@@ -1937,8 +2079,8 @@ impl BrokerService {
                 operation_timeout: crate::core::transport::timeout_policy::DEFAULT_CAPABILITY_OPERATION_TIMEOUT,
                 validation_session: None,
                 runtime_identity: runtime_identity.clone(),
-                connection_selection: client_context.connection_selection(server_id.clone()),
-                visibility_snapshot: Some(Arc::new(snapshot.clone())),
+                connection_selection: scope.client_context.connection_selection(server_id.clone()),
+                visibility_snapshot: Some(Arc::new(scope.snapshot.clone())),
                 name_domain: crate::core::capability::runtime::NameDomain::External,
             };
             let database = database.clone();
@@ -1994,12 +2136,15 @@ impl BrokerService {
             }
         }
         let filtered_names = visibility
-            .filter_prompts_with_snapshot(&snapshot, visible.iter().map(|entry| entry.prompt.clone()).collect())
+            .filter_prompts_with_snapshot(
+                &scope.snapshot,
+                visible.iter().map(|entry| entry.prompt.clone()).collect(),
+            )
             .into_iter()
             .map(|prompt| prompt.name.to_string())
             .collect::<HashSet<_>>();
         visible.retain(|entry| filtered_names.contains(entry.prompt.name.as_str()));
-        retain_brokered_prompts(context, &eligible_server_ids, &mut visible);
+        retain_brokered_prompts(context, &scope.eligible_server_ids, &mut visible);
         visible.sort_by(|left, right| {
             left.server_name
                 .cmp(&right.server_name)
@@ -2033,29 +2178,23 @@ impl BrokerService {
         &self,
         context: &ClientBuiltinContext,
     ) -> Result<VisibleListing<VisibleResourceEntry>> {
-        let client_context = context.as_client_context();
+        let scope = self.resolve_ucan_catalog_scope(context).await?;
+        self.visible_resources_listing_with_scope(context, &scope).await
+    }
+
+    async fn visible_resources_listing_with_scope(
+        &self,
+        context: &ClientBuiltinContext,
+        scope: &UcanCatalogScope,
+    ) -> Result<VisibleListing<VisibleResourceEntry>> {
         let visibility = ProfileVisibilityService::new(Some(self.database.clone()), None);
-        let snapshot = visibility
-            .resolve_snapshot_for_client(&client_context)
-            .await
-            .context("Failed to resolve Unify visibility snapshot")?;
-        let visible_server_ids = snapshot.server_ids.iter().cloned().collect::<HashSet<_>>();
-
-        let enabled_servers = self
-            .load_enabled_servers("Failed to load enabled servers for Unify resource catalog")
-            .await?;
-        let eligible_server_ids = enabled_servers
-            .iter()
-            .filter_map(|(server_id, _server_name, eligible)| eligible.then_some(server_id.clone()))
-            .collect::<HashSet<_>>();
-
         let database = self.database.clone();
         let connection_pool = self.connection_pool.clone();
-        let runtime_identity = client_context.runtime_identity();
+        let runtime_identity = scope.client_context.runtime_identity();
 
         let mut tasks = Vec::new();
-        for (server_id, server_name, _unify_direct_exposure_eligible) in enabled_servers {
-            if !visible_server_ids.contains(&server_id) {
+        for (server_id, server_name, _unify_direct_exposure_eligible) in scope.enabled_servers.iter().cloned() {
+            if !scope.visible_server_ids.contains(&server_id) {
                 continue;
             }
             let ctx = crate::core::capability::runtime::ListCtx {
@@ -2065,8 +2204,8 @@ impl BrokerService {
                 operation_timeout: crate::core::transport::timeout_policy::DEFAULT_CAPABILITY_OPERATION_TIMEOUT,
                 validation_session: None,
                 runtime_identity: runtime_identity.clone(),
-                connection_selection: client_context.connection_selection(server_id.clone()),
-                visibility_snapshot: Some(Arc::new(snapshot.clone())),
+                connection_selection: scope.client_context.connection_selection(server_id.clone()),
+                visibility_snapshot: Some(Arc::new(scope.snapshot.clone())),
                 name_domain: crate::core::capability::runtime::NameDomain::External,
             };
             let database = database.clone();
@@ -2123,7 +2262,7 @@ impl BrokerService {
         }
         let filtered_names = visibility
             .filter_resources_with_snapshot(
-                &snapshot,
+                &scope.snapshot,
                 visible.iter().map(|entry| entry.resource.clone()).collect(),
                 Vec::new(),
             )
@@ -2132,7 +2271,7 @@ impl BrokerService {
             .map(|resource| resource.uri.to_string())
             .collect::<HashSet<_>>();
         visible.retain(|entry| filtered_names.contains(entry.resource.uri.as_str()));
-        retain_brokered_resources(context, &eligible_server_ids, &mut visible);
+        retain_brokered_resources(context, &scope.eligible_server_ids, &mut visible);
         visible.sort_by(|left, right| {
             left.server_name
                 .cmp(&right.server_name)
@@ -2166,29 +2305,24 @@ impl BrokerService {
         &self,
         context: &ClientBuiltinContext,
     ) -> Result<VisibleListing<VisibleResourceTemplateEntry>> {
-        let client_context = context.as_client_context();
-        let visibility = ProfileVisibilityService::new(Some(self.database.clone()), None);
-        let snapshot = visibility
-            .resolve_snapshot_for_client(&client_context)
+        let scope = self.resolve_ucan_catalog_scope(context).await?;
+        self.visible_resource_templates_listing_with_scope(context, &scope)
             .await
-            .context("Failed to resolve Unify visibility snapshot")?;
-        let visible_server_ids = snapshot.server_ids.iter().cloned().collect::<HashSet<_>>();
+    }
 
-        let enabled_servers = self
-            .load_enabled_servers("Failed to load enabled servers for Unify resource template catalog")
-            .await?;
-        let eligible_server_ids = enabled_servers
-            .iter()
-            .filter_map(|(server_id, _server_name, eligible)| eligible.then_some(server_id.clone()))
-            .collect::<HashSet<_>>();
-
+    async fn visible_resource_templates_listing_with_scope(
+        &self,
+        context: &ClientBuiltinContext,
+        scope: &UcanCatalogScope,
+    ) -> Result<VisibleListing<VisibleResourceTemplateEntry>> {
+        let visibility = ProfileVisibilityService::new(Some(self.database.clone()), None);
         let database = self.database.clone();
         let connection_pool = self.connection_pool.clone();
-        let runtime_identity = client_context.runtime_identity();
+        let runtime_identity = scope.client_context.runtime_identity();
 
         let mut tasks = Vec::new();
-        for (server_id, server_name, _unify_direct_exposure_eligible) in enabled_servers {
-            if !visible_server_ids.contains(&server_id) {
+        for (server_id, server_name, _unify_direct_exposure_eligible) in scope.enabled_servers.iter().cloned() {
+            if !scope.visible_server_ids.contains(&server_id) {
                 continue;
             }
             let ctx = crate::core::capability::runtime::ListCtx {
@@ -2198,8 +2332,8 @@ impl BrokerService {
                 operation_timeout: crate::core::transport::timeout_policy::DEFAULT_CAPABILITY_OPERATION_TIMEOUT,
                 validation_session: None,
                 runtime_identity: runtime_identity.clone(),
-                connection_selection: client_context.connection_selection(server_id.clone()),
-                visibility_snapshot: Some(Arc::new(snapshot.clone())),
+                connection_selection: scope.client_context.connection_selection(server_id.clone()),
+                visibility_snapshot: Some(Arc::new(scope.snapshot.clone())),
                 name_domain: crate::core::capability::runtime::NameDomain::External,
             };
             let database = database.clone();
@@ -2256,7 +2390,7 @@ impl BrokerService {
         }
         let filtered_names = visibility
             .filter_resources_with_snapshot(
-                &snapshot,
+                &scope.snapshot,
                 Vec::new(),
                 visible.iter().map(|entry| entry.resource_template.clone()).collect(),
             )
@@ -2265,7 +2399,7 @@ impl BrokerService {
             .map(|template| template.uri_template.to_string())
             .collect::<HashSet<_>>();
         visible.retain(|entry| filtered_names.contains(entry.resource_template.uri_template.as_str()));
-        retain_brokered_resource_templates(context, &eligible_server_ids, &mut visible);
+        retain_brokered_resource_templates(context, &scope.eligible_server_ids, &mut visible);
         visible.sort_by(|left, right| {
             left.server_name.cmp(&right.server_name).then_with(|| {
                 left.resource_template
@@ -2304,7 +2438,20 @@ impl BrokerService {
         prompt_name: &str,
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> Result<CallToolResult> {
-        if let Some(prompt_entry) = self.find_visible_prompt(context, prompt_name).await? {
+        let prompt_entry = match self.find_visible_prompt(context, prompt_name).await {
+            Err(error) if is_catalog_authority_error(&error) => {
+                return Ok(UcanError::catalog_incomplete().to_call_tool_result());
+            }
+            Err(error) => return Err(error),
+            Ok(None) => {
+                let surface_names = self
+                    .collect_surface_names_for_kind(context, SurfaceKind::Prompt)
+                    .await?;
+                return Ok(UcanError::capability_not_found("prompt", prompt_name, &surface_names).to_call_tool_result());
+            }
+            Ok(Some(prompt_entry)) => prompt_entry,
+        };
+        {
             let required_arguments = required_arguments_from_prompt(&prompt_entry.prompt);
             let missing_required: Vec<String> = required_arguments
                 .into_iter()
@@ -2368,10 +2515,17 @@ impl BrokerService {
                 )]))
             }
             Err(e) => {
-                let error_str = e.to_string();
+                tracing::warn!(
+                    capability_kind = "prompt",
+                    capability_name = prompt_name,
+                    server_id,
+                    server_name,
+                    error = %e,
+                    "Upstream capability invocation failed"
+                );
                 self.record_usage_evidence(&server_id, mcpmate_capability_store::CapabilityKind::Prompts, &e)
                     .await;
-                Ok(UcanError::upstream_error("prompt", prompt_name, &error_str).to_call_tool_result())
+                Ok(UcanError::upstream_error("prompt", prompt_name).to_call_tool_result())
             }
         }
     }
@@ -2380,7 +2534,26 @@ impl BrokerService {
         &self,
         context: &ClientBuiltinContext,
         resource_uri: &str,
+        arguments: serde_json::Map<String, serde_json::Value>,
     ) -> Result<CallToolResult> {
+        let resource_entry = match self.find_visible_resource(context, resource_uri).await {
+            Err(error) if is_catalog_authority_error(&error) => {
+                return Ok(UcanError::catalog_incomplete().to_call_tool_result());
+            }
+            Err(error) => return Err(error),
+            Ok(None) => {
+                let surface_names = self
+                    .collect_surface_names_for_kind(context, SurfaceKind::Resource)
+                    .await?;
+                return Ok(
+                    UcanError::capability_not_found("resource", resource_uri, &surface_names).to_call_tool_result(),
+                );
+            }
+            Ok(Some(resource_entry)) => resource_entry,
+        };
+        if !arguments.is_empty() {
+            return Ok(UcanError::resource_arguments_not_supported(resource_uri).to_call_tool_result());
+        }
         let client_context = context.as_client_context();
         let visibility = ProfileVisibilityService::new(Some(self.database.clone()), None);
         let snapshot = visibility
@@ -2422,10 +2595,17 @@ impl BrokerService {
                 )]))
             }
             Err(e) => {
-                let error_str = e.to_string();
+                tracing::warn!(
+                    capability_kind = "resource",
+                    capability_name = resource_uri,
+                    server_id,
+                    server_name = resource_entry.server_name,
+                    error = %e,
+                    "Upstream capability invocation failed"
+                );
                 self.record_usage_evidence(&server_id, mcpmate_capability_store::CapabilityKind::Resources, &e)
                     .await;
-                Ok(UcanError::upstream_error("resource", resource_uri, &error_str).to_call_tool_result())
+                Ok(UcanError::upstream_error("resource", resource_uri).to_call_tool_result())
             }
         }
     }
@@ -3310,10 +3490,11 @@ mod tests {
 
     #[test]
     fn test_error_upstream_error() {
-        let error = UcanError::upstream_error("tool", "my_tool", "connection refused");
+        let error = UcanError::upstream_error("tool", "my_tool");
 
         assert_eq!(error.error_code, "upstream_error");
-        assert!(error.message.contains("connection refused"));
+        assert!(error.message.contains("my_tool"));
+        assert!(!error.message.contains("connection refused"));
         assert!(!error.retry_eligible);
         assert!(error.recovery_hint.contains("upstream"));
     }

@@ -238,6 +238,7 @@ export const clientsTranslations = {
           search: "Search clients...",
           empty: "No supported client presets found.",
           loadError: "Client presets are unavailable.",
+          refresh: "Refresh client presets",
           description:
             "Click the dropdown arrow on the right, then choose an MCPMate-supported client to add from presets.",
           partialWarning:
@@ -1087,6 +1088,7 @@ export const clientsTranslations = {
           search: "搜索客户端...",
           empty: "未找到支持的客户端预置。",
           loadError: "客户端预置暂不可用。",
+          refresh: "刷新客户端预置",
           description:
             "点击右侧的下拉箭头，选择要直接添加的 MCPMate 支持的客户端。",
           partialWarning: "{{count}} 条客户端预置因发现数据无效而被跳过。",
@@ -1923,6 +1925,7 @@ export const clientsTranslations = {
           search: "対応クライアントを検索...",
           empty: "対応クライアントのプリセットが見つかりません。",
           loadError: "クライアントプリセットを利用できません。",
+          refresh: "クライアントプリセットを更新",
           description:
             "右側のドロップダウン矢印をクリックし、プリセットから直接追加する MCPMate 対応クライアントを選択してください。",
           partialWarning: "検出データが無効なため、{{count}} 件のクライアントプリセットをスキップしました。",

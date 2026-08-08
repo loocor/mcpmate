@@ -9,6 +9,7 @@ export interface TransferItem {
 	id: string;
 	name: string;
 	description?: string;
+	descriptionAriaLabel?: string;
 	type?: string;
 	status?: string;
 	disabled?: boolean;
@@ -46,7 +47,6 @@ interface TransferPanelProps {
 	loading?: boolean;
 	// New props for direct move functionality
 	onDirectMove?: (itemId: string) => void;
-	panelType: "left" | "right";
 }
 
 const TransferPanel: React.FC<TransferPanelProps> = ({
@@ -62,7 +62,6 @@ const TransferPanel: React.FC<TransferPanelProps> = ({
 	disabled = false,
 	loading = false,
 	onDirectMove,
-	panelType: _panelType,
 }) => {
 	const handleSelectAll = (checked: boolean) => {
 		if (checked) {
@@ -101,10 +100,10 @@ const TransferPanel: React.FC<TransferPanelProps> = ({
 	const isIndeterminate = selectedKeys.length > 0 && !isAllSelected;
 
 	return (
-		<div className="flex flex-1 flex-col rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+		<div className="flex min-w-0 flex-1 flex-col rounded-lg border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
 			{/* Header */}
 			<div className="flex items-center justify-between border-b border-slate-200 p-3 dark:border-slate-700">
-				<div className="flex items-center gap-2">
+				<div className="flex min-w-0 items-center gap-2">
 					<input
 						type="checkbox"
 						checked={isAllSelected}
@@ -115,8 +114,8 @@ const TransferPanel: React.FC<TransferPanelProps> = ({
 						disabled={disabled || loading || selectableItems.length === 0}
 						className="rounded border-slate-300 text-primary focus:ring-primary"
 					/>
-					<span className="text-sm font-medium">
-						{title} ({selectedKeys.length}/{items.length})
+					<span className="truncate text-sm font-medium">
+						{title} ({items.length})
 					</span>
 				</div>
 			</div>
@@ -152,7 +151,7 @@ const TransferPanel: React.FC<TransferPanelProps> = ({
 								<button
 									key={item.id}
 									type="button"
-									className={`flex items-center gap-2 p-2 w-full text-left cursor-pointer transition-colors border-b ${
+									className={`flex min-w-0 items-center gap-2 p-2 w-full text-left cursor-pointer transition-colors border-b ${
 										isEven
 											? "bg-white dark:bg-slate-900"
 											: "bg-slate-50 dark:bg-slate-900/30"
@@ -182,16 +181,24 @@ const TransferPanel: React.FC<TransferPanelProps> = ({
 											{item.type && (
 												<Badge
 													variant="secondary"
-													className="text-[10px] uppercase"
+													className="max-w-[50%] shrink-0 truncate text-[10px] uppercase"
 												>
 													{item.type}
 												</Badge>
 											)}
 										</div>
 										{item.description && (
-											<p className="truncate text-xs text-muted-foreground">
-												{item.description}
-											</p>
+											<>
+												<p
+													className="truncate text-xs text-muted-foreground"
+													title={item.descriptionAriaLabel ?? item.description}
+												>
+													{item.description}
+												</p>
+												{item.descriptionAriaLabel && (
+													<span className="sr-only">{item.descriptionAriaLabel}</span>
+												)}
+											</>
 										)}
 									</div>
 									{onItemInfo && (
@@ -302,7 +309,9 @@ export const Transfer: React.FC<TransferProps> = ({
 	};
 
 	return (
-		<div className={`flex items-stretch gap-2 h-full ${className}`}>
+		<div
+			className={`grid h-full min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-stretch gap-2 ${className}`}
+		>
 			<TransferPanel
 				title={leftTitle}
 				items={leftItems}
@@ -316,7 +325,6 @@ export const Transfer: React.FC<TransferProps> = ({
 				disabled={disabled}
 				loading={loading}
 				onDirectMove={handleDirectMoveToRight}
-				panelType="left"
 			/>
 
 			<div className="flex flex-col justify-center gap-2 px-1">
@@ -355,7 +363,6 @@ export const Transfer: React.FC<TransferProps> = ({
 				disabled={disabled}
 				loading={loading}
 				onDirectMove={handleDirectMoveToLeft}
-				panelType="right"
 			/>
 		</div>
 	);

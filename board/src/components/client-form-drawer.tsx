@@ -13,6 +13,7 @@ import {
 	ImageIcon,
 	Loader2,
 	Plus,
+	RefreshCw,
 	Sparkles,
 	Trash2,
 } from "lucide-react";
@@ -38,6 +39,7 @@ import { pickClientConfigFilePath, readAbsolutePathFromFile } from "../lib/pick-
 import { isTauriEnvironmentSync } from "../lib/platform";
 import { useAppStore } from "../lib/store";
 import {
+	resolveCreateClientTemplateStrategy,
 	resolveCreateClientWritebackBaseline,
 	resolveClientWritebackDecision,
 	type ClientWritebackBaseline,
@@ -889,7 +891,8 @@ export function ClientFormDrawer({
 	const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
 	const [configPathPickBusy, setConfigPathPickBusy] = useState(false);
 	const [isAdminCatalogOpen, setIsAdminCatalogOpen] = useState(false);
-	const [selectedAdminClient, setSelectedAdminClient] = useState<AdminDiscoveryClientCandidate | null>(null);
+	const [isAdminCatalogRefreshPending, setIsAdminCatalogRefreshPending] = useState(false);
+	const [selectedPreset, setSelectedPreset] = useState<AdminDiscoveryClientCandidate | null>(null);
 	const [transportRuleEditors, setTransportRuleEditors] = useState<TransportRuleEditors>(() =>
 		transportRuleEditorsFromClient(client),
 	);
@@ -994,7 +997,7 @@ export function ClientFormDrawer({
 	const writebackLoadError =
 		mode === "edit"
 			? clientMergeDetailsQuery.isError
-			: systemSettingsQuery.isError && selectedAdminClient === null;
+			: systemSettingsQuery.isError && selectedPreset === null;
 	const writebackUnavailable = writebackRequired && writebackBaseline === null;
 	const writebackHelpText = writebackLoadError
 		? t("detail.form.writeback.loadError", {
@@ -1029,18 +1032,43 @@ export function ClientFormDrawer({
 			) ?? null
 		);
 	}, [adminCatalogOptions, identifier, mode]);
-	const selectedAdminClientMatchesIdentifier =
-		selectedAdminClient !== null &&
-		normalizeClientIdentifier(selectedAdminClient.identifier) === normalizeClientIdentifier(identifier);
-	const createTemplateMergeStrategy =
-		(selectedAdminClientMatchesIdentifier ? selectedAdminClient?.mergeStrategy : null) ??
-		matchingAdminClient?.mergeStrategy ??
-		null;
+	const createTemplateMergeStrategy = resolveCreateClientTemplateStrategy({
+		selectedTemplateStrategy: selectedPreset?.mergeStrategy ?? null,
+		matchingTemplateStrategy: matchingAdminClient?.mergeStrategy ?? null,
+	});
 	const adminCatalogDiagnostics = adminCatalogQuery.data?.diagnostics ?? [];
-	const adminCatalogEmptyText = adminCatalogQuery.isError || adminDiscoveryPlatformQuery.isError
+	const adminCatalogUnavailable = adminCatalogQuery.isError || adminDiscoveryPlatformQuery.isError;
+	const adminCatalogEmptyText = adminCatalogUnavailable
 		? t("detail.form.adminCatalog.loadError", { defaultValue: "Client presets are unavailable." })
 		: t("detail.form.adminCatalog.empty", { defaultValue: "No supported client presets found." });
-	const adminCatalogBusy = adminDiscoveryPlatformQuery.isLoading || adminCatalogQuery.isLoading;
+	const adminCatalogBusy =
+		isAdminCatalogRefreshPending || adminDiscoveryPlatformQuery.isFetching || adminCatalogQuery.isFetching;
+	const adminCatalogRefreshLabel = t("detail.form.adminCatalog.refresh", {
+		defaultValue: "Refresh client presets",
+	});
+	const refreshAdminCatalog = useCallback(async () => {
+		setIsAdminCatalogRefreshPending(true);
+		try {
+			const platformResult = await adminDiscoveryPlatformQuery.refetch();
+			if (platformResult.isError) return;
+
+			const platform = platformResult.data;
+			await qc.prefetchQuery({
+				queryKey: ["adminDiscoveryClients", "drawer", platform ?? "web", i18n.language],
+				queryFn: () =>
+					fetchAdminDiscoveryClientCatalog({
+						limit: 50,
+						offset: 0,
+						platform,
+						locale: i18n.language,
+					}),
+				staleTime: 0,
+				retry: false,
+			});
+		} finally {
+			setIsAdminCatalogRefreshPending(false);
+		}
+	}, [adminDiscoveryPlatformQuery, i18n.language, qc]);
 	const manualClientId = useMemo(() => sanitizeClientIdentifierInput(identifier ?? ""), [identifier]);
 	const identifierMatchesPattern = CLIENT_IDENTIFIER_PATTERN.test(manualClientId);
 	const manualClientIdReady = manualClientId.length > 0 && identifierMatchesPattern;
@@ -1072,7 +1100,7 @@ export function ClientFormDrawer({
 	const applyAdminClientCandidate = useCallback(
 		(candidate: AdminDiscoveryClientCandidate) => {
 			setIsAdminCatalogOpen(false);
-			setSelectedAdminClient(candidate);
+			setSelectedPreset(candidate);
 			if (mode === "create") {
 				form.setValue("identifier", candidate.identifier, { shouldDirty: true, shouldValidate: true });
 			}
@@ -1117,7 +1145,7 @@ export function ClientFormDrawer({
 		setIsDeleteConfirmOpen(false);
 		autoAppliedInferenceRef.current = null;
 		lastParseInspectionSignatureRef.current = null;
-		setSelectedAdminClient(null);
+		setSelectedPreset(null);
 		setIsAdminCatalogOpen(false);
 		setManualConfigCopied(false);
 		if (manualCopyResetTimerRef.current != null) {
@@ -1179,15 +1207,15 @@ export function ClientFormDrawer({
 	}, []);
 
 	useEffect(() => {
-		if (!open || mode !== "edit" || selectedAdminClient || adminCatalogOptions.length === 0) return;
+		if (!open || mode !== "edit" || selectedPreset || adminCatalogOptions.length === 0) return;
 		const currentIdentifier = normalizeClientIdentifier(client?.identifier ?? identifier);
 		const matchingClient = adminCatalogOptions.find(
 			(candidate) => normalizeClientIdentifier(candidate.identifier) === currentIdentifier,
 		);
 		if (matchingClient) {
-			setSelectedAdminClient(matchingClient);
+			setSelectedPreset(matchingClient);
 		}
-	}, [adminCatalogOptions, client?.identifier, identifier, mode, open, selectedAdminClient]);
+	}, [adminCatalogOptions, client?.identifier, identifier, mode, open, selectedPreset]);
 
 	useEffect(() => {
 		if (supportedTransports.length === 0) {
@@ -1618,10 +1646,7 @@ export function ClientFormDrawer({
 				configFileChoice: values.configFileChoice,
 				selectedStrategy: values.mergeStrategySelection,
 				baseline: writebackBaseline,
-				discoveryStrategy:
-					mode === "create" && selectedAdminClientMatchesIdentifier
-						? selectedAdminClient?.mergeStrategy
-						: null,
+				discoveryStrategy: mode === "create" ? selectedPreset?.mergeStrategy : null,
 				supportedTransportsChanged,
 				transportEditorsChanged,
 			});
@@ -1829,10 +1854,7 @@ export function ClientFormDrawer({
 															<Input
 																{...field}
 																className="pr-11"
-																onChange={(event) => {
-																	field.onChange(event);
-																	setSelectedAdminClient(null);
-																}}
+																onChange={field.onChange}
 																placeholder={t("detail.form.fields.displayName.placeholder", {
 																	defaultValue: "Cursor Desktop",
 																})}
@@ -1870,7 +1892,27 @@ export function ClientFormDrawer({
 																		})}
 																	/>
 																	<CommandList className="max-h-[clamp(120px,calc(var(--radix-popover-content-available-height)_-_48px),300px)] overscroll-contain">
-																		<CommandEmpty>{adminCatalogEmptyText}</CommandEmpty>
+																		<CommandEmpty className="flex items-center justify-center gap-2">
+																			{adminCatalogUnavailable ? (
+																				<Button
+																					type="button"
+																					variant="ghost"
+																					size="icon"
+																					aria-label={adminCatalogRefreshLabel}
+																					title={adminCatalogRefreshLabel}
+																					onClick={() => void refreshAdminCatalog()}
+																					disabled={adminCatalogBusy}
+																					className="h-7 w-7 shrink-0"
+																				>
+																					{adminCatalogBusy ? (
+																						<Loader2 className="h-4 w-4 animate-spin" />
+																					) : (
+																						<RefreshCw className="h-4 w-4" />
+																					)}
+																				</Button>
+																			) : null}
+																			<span>{adminCatalogEmptyText}</span>
+																		</CommandEmpty>
 																		<CommandGroup>
 																			{adminCatalogOptions.map((candidate) => (
 																				<CommandItem

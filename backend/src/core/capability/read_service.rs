@@ -3004,6 +3004,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn concurrent_cache_misses_share_one_failing_management_discovery() {
+        let backend = Arc::new(FakeBackend::new(Ok(None)));
+        let fixture = test_peer().await;
+        let provider = Arc::new(FakeProvider::new(fixture.peer.clone()));
+        provider
+            .set_fresh(Err(CapabilityOwnerError::Other {
+                reason: "fixture upstream unavailable".to_string(),
+            }))
+            .await;
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        provider.pause_fresh_owner_with(gate.clone()).await;
+        let service = Arc::new(CapabilityReadService::with_backend(
+            backend.clone(),
+            provider.clone(),
+            16,
+        ));
+        let first = {
+            let service = service.clone();
+            tokio::spawn(async move { service.list_all_kinds("server-1", None).await })
+        };
+        provider
+            .fresh_started
+            .acquire()
+            .await
+            .expect("one discovery owner starts")
+            .forget();
+        let second = {
+            let service = service.clone();
+            tokio::spawn(async move { service.list_all_kinds("server-1", None).await })
+        };
+        tokio::task::yield_now().await;
+        assert_eq!(
+            provider.fresh_calls.load(Ordering::Relaxed),
+            1,
+            "both cache misses must overlap the sole fresh discovery"
+        );
+        gate.add_permits(1);
+
+        for task in [first, second] {
+            let error = task
+                .await
+                .expect("concurrent read joins")
+                .expect_err("shared failed discovery remains visible");
+            assert!(matches!(
+                error,
+                CapabilityReadError::DiscoveryFailed {
+                    fresh: Some(failure),
+                    ..
+                } if matches!(
+                    &failure.error,
+                    CapabilityAttemptError::Owner(CapabilityOwnerError::Other { reason })
+                        if reason == "fixture upstream unavailable"
+                )
+            ));
+        }
+        assert_eq!(provider.fresh_calls.load(Ordering::Relaxed), 1);
+
+        drop(service);
+        drop(provider);
+        fixture.shutdown().await;
+    }
+
+    #[tokio::test]
     async fn overlapping_force_refreshes_share_owner_timeout() {
         let backend = Arc::new(FakeBackend::new(Ok(None)));
         let fixture = test_peer().await;
