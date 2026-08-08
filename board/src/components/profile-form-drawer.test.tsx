@@ -48,17 +48,14 @@ const savedProfile = {
 };
 
 const serverPresentationLabels = {
-	configuration: "Configuration",
+	globalStatus: "Global status",
 	catalog: "Catalog",
-	profile: "Profile",
 	enabled: "Enabled",
 	disabled: "Disabled",
 	notReported: "Not reported",
 	ready: "Ready",
 	unavailable: "Unavailable",
 	notObserved: "Not observed",
-	selected: "Selected",
-	notSelected: "Not selected",
 };
 
 function successResponse(profile = savedProfile): Response {
@@ -367,6 +364,7 @@ describe("ProfileFormDrawer authoring", () => {
 			{
 				id: "server-a",
 				name: "Server A",
+				server_type: "very-long-server-transport-type",
 				enabled: true,
 				capability: {
 					snapshotState: "invalidated",
@@ -402,14 +400,14 @@ describe("ProfileFormDrawer authoring", () => {
 
 		const items = authoringUi.buildProfileServerTransferItems(
 			servers,
-			new Set(["server-a"]),
 			serverPresentationLabels,
 		);
 
-		expect(items[0]?.description).toBe(
-			"Configuration: Enabled • Catalog: Unavailable • Profile: Selected",
+		expect(items[0]?.description).toBe("Enabled • Unavailable");
+		expect(items[0]?.descriptionAriaLabel).toBe(
+			"Global status: Enabled. Catalog: Unavailable.",
 		);
-		expect(items[0]?.description).not.toContain("Status: Unknown");
+		expect(items[0]?.description).not.toContain("Profile:");
 
 		const markup = renderToStaticMarkup(
 			<ProfileServerTransfer
@@ -425,10 +423,20 @@ describe("ProfileFormDrawer authoring", () => {
 				loading={false}
 			/>,
 		);
-		expect(markup).toContain("Configuration: Enabled");
-		expect(markup).toContain("Catalog: Unavailable");
-		expect(markup).toContain("Profile: Not selected");
-		expect(markup).not.toContain("Status: Unknown");
+		expect(markup).toContain("Enabled • Unavailable");
+		expect(markup).toContain("max-w-[50%] shrink-0 truncate");
+		expect(markup).toContain(
+			'<span class="sr-only">Global status: Enabled. Catalog: Unavailable.</span>',
+		);
+		expect(markup).not.toContain("Configuration:");
+		expect(markup).not.toContain("Profile: Not selected");
+		expect(markup).toContain(
+			"grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]",
+		);
+		expect(markup).toContain("Available Servers (1)");
+		expect(markup).not.toContain("Available Servers (0/1)");
+		expect(markup).toContain("Profile Servers (0)");
+		expect(markup).not.toContain("Profile Servers (0/0)");
 	});
 
 });

@@ -117,6 +117,7 @@ export const profilesTranslations = {
 				noAvailable: "No available servers",
 			},
 			serverState: {
+				globalStatus: "Global status",
 				configuration: "Configuration",
 				catalog: "Catalog",
 				profile: "Profile",
@@ -460,6 +461,7 @@ export const profilesTranslations = {
 				noAvailable: "无可用服务器",
 			},
 			serverState: {
+				globalStatus: "全局状态",
 				configuration: "配置",
 				catalog: "目录",
 				profile: "配置集",
@@ -806,6 +808,7 @@ export const profilesTranslations = {
 				noAvailable: "利用可能なサーバーなし",
 			},
 			serverState: {
+				globalStatus: "グローバル状態",
 				configuration: "構成",
 				catalog: "カタログ",
 				profile: "プロファイル",

@@ -219,29 +219,26 @@ export function reduceProfileAuthoringConflict(
 }
 
 export interface ProfileServerPresentationLabels {
-	configuration: string;
+	globalStatus: string;
 	catalog: string;
-	profile: string;
 	enabled: string;
 	disabled: string;
 	notReported: string;
 	ready: string;
 	unavailable: string;
 	notObserved: string;
-	selected: string;
-	notSelected: string;
 }
 
 export interface ProfileServerTransferItem {
 	id: string;
 	name: string;
 	description: string;
+	descriptionAriaLabel: string;
 	type?: string;
 }
 
 export function buildProfileServerTransferItems(
 	servers: ServerSummary[],
-	selectedServerIds: ReadonlySet<string>,
 	labels: ProfileServerPresentationLabels,
 ): ProfileServerTransferItem[] {
 	return servers
@@ -257,13 +254,11 @@ export function buildProfileServerTransferItems(
 				: server.capability.snapshotState === "ready"
 					? labels.ready
 					: labels.unavailable;
-			const membership = selectedServerIds.has(server.id)
-				? labels.selected
-				: labels.notSelected;
 			return {
 				id: server.id,
 				name: server.name || server.id,
-				description: `${labels.configuration}: ${configuration} • ${labels.catalog}: ${catalog} • ${labels.profile}: ${membership}`,
+				description: `${configuration} • ${catalog}`,
+				descriptionAriaLabel: `${labels.globalStatus}: ${configuration}. ${labels.catalog}: ${catalog}.`,
 				type: server.server_type,
 			};
 		})

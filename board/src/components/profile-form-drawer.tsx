@@ -154,7 +154,6 @@ export function ProfileServerTransfer({
 }: ProfileServerTransferProps) {
 	const dataSource = buildProfileServerTransferItems(
 		servers,
-		new Set(selectedServerIds),
 		labels,
 	);
 	return (
@@ -655,14 +654,11 @@ export function ProfileFormDrawer({
 	};
 
 	const serverPresentationLabels: ProfileServerPresentationLabels = {
-		configuration: t("profiles:form.serverState.configuration", {
-			defaultValue: "Configuration",
+		globalStatus: t("profiles:form.serverState.globalStatus", {
+			defaultValue: "Global status",
 		}),
 		catalog: t("profiles:form.serverState.catalog", {
 			defaultValue: "Catalog",
-		}),
-		profile: t("profiles:form.serverState.profile", {
-			defaultValue: "Profile",
 		}),
 		enabled: t("status.enabled", { defaultValue: "Enabled" }),
 		disabled: t("status.disabled", { defaultValue: "Disabled" }),
@@ -675,12 +671,6 @@ export function ProfileFormDrawer({
 		}),
 		notObserved: t("profiles:form.serverState.notObserved", {
 			defaultValue: "Not observed",
-		}),
-		selected: t("profiles:form.serverState.selected", {
-			defaultValue: "Selected",
-		}),
-		notSelected: t("profiles:form.serverState.notSelected", {
-			defaultValue: "Not selected",
 		}),
 	};
 
