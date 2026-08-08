@@ -4,6 +4,7 @@
 pub mod args;
 pub mod capabilities;
 pub mod crud;
+pub mod definition;
 pub mod enabled;
 pub mod env;
 pub mod fingerprint;
@@ -20,6 +21,7 @@ pub mod transport;
 
 pub use args::{get_server_args, upsert_server_args};
 pub use crud::{delete_server, get_all_servers, get_server, get_server_by_id, upsert_server, upsert_server_tx};
+pub use definition::upsert_server_definition;
 pub use env::{get_server_env, upsert_server_env};
 pub use headers::{
     get_server_headers, merge_env_for_update, merge_headers_for_update, remove_authorization_headers,

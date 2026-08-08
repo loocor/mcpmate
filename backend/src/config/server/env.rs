@@ -56,14 +56,14 @@ pub async fn upsert_server_env(
     );
 
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
-    upsert_server_env_inner(&mut tx, server_id, env).await?;
+    replace_server_env_tx(&mut tx, server_id, env).await?;
     tx.commit().await.context("Failed to commit transaction")?;
 
     Ok(())
 }
 
 /// Core logic for upserting server environment variables, used internally with a transaction
-async fn upsert_server_env_inner(
+pub(crate) async fn replace_server_env_tx(
     tx: &mut Transaction<'_, Sqlite>,
     server_id: &str,
     env: &HashMap<String, String>,

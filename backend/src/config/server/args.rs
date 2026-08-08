@@ -43,14 +43,14 @@ pub async fn upsert_server_args(
     tracing::debug!("Upserting {} arguments for server ID {}", args.len(), server_id);
 
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
-    upsert_server_args_inner(&mut tx, server_id, args).await?;
+    replace_server_args_tx(&mut tx, server_id, args).await?;
     tx.commit().await.context("Failed to commit transaction")?;
 
     Ok(())
 }
 
 /// Core logic for upserting server arguments, used internally with a transaction
-async fn upsert_server_args_inner(
+pub(crate) async fn replace_server_args_tx(
     tx: &mut Transaction<'_, Sqlite>,
     server_id: &str,
     args: &[String],

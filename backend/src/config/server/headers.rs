@@ -2,7 +2,7 @@
 // Provides CRUD utilities for default headers used by HTTP-based transports
 
 use anyhow::Result;
-use sqlx::{Pool, Sqlite};
+use sqlx::{Pool, Sqlite, Transaction};
 use std::collections::HashMap;
 
 const TABLE: &str = "server_headers";
@@ -149,43 +149,56 @@ pub async fn replace_server_headers(
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
 
+    replace_server_headers_tx(&mut tx, server_id, headers).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+pub(crate) async fn replace_server_headers_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    server_id: &str,
+    headers: &HashMap<String, String>,
+) -> Result<()> {
+    let normalized_headers: HashMap<String, String> = headers
+        .iter()
+        .filter_map(|(key, value)| {
+            let key = key.trim().to_ascii_lowercase();
+            (!key.is_empty()).then(|| (key, value.clone()))
+        })
+        .collect();
+
     // Fetch existing keys
     let rows: Vec<(String,)> = sqlx::query_as(&format!("SELECT header_key FROM {TABLE} WHERE server_id = ?"))
         .bind(server_id)
-        .fetch_all(&mut *tx)
+        .fetch_all(&mut **tx)
         .await?;
     let existing: std::collections::HashSet<String> = rows.into_iter().map(|(k,)| k).collect();
 
     // Upsert provided
-    for (k, v) in headers.iter() {
-        let key = k.trim().to_ascii_lowercase();
-        if key.is_empty() {
-            continue;
-        }
+    for (key, value) in &normalized_headers {
         sqlx::query(&format!(
             r#"INSERT INTO {TABLE} (server_id, header_key, header_value)
                 VALUES (?, ?, ?)
                 ON CONFLICT(server_id, header_key) DO UPDATE SET header_value = excluded.header_value"#
         ))
         .bind(server_id)
-        .bind(&key)
-        .bind(v)
-        .execute(&mut *tx)
+        .bind(key)
+        .bind(value)
+        .execute(&mut **tx)
         .await?;
     }
 
     // Delete removed keys
     for key in existing {
-        if !headers.contains_key(&key) && !headers.contains_key(&key.to_ascii_uppercase()) {
+        if !normalized_headers.contains_key(&key) {
             sqlx::query(&format!("DELETE FROM {TABLE} WHERE server_id = ? AND header_key = ?"))
                 .bind(server_id)
                 .bind(&key)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await?;
         }
     }
 
-    tx.commit().await?;
     Ok(())
 }
 
