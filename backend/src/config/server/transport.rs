@@ -1,7 +1,13 @@
 use anyhow::{Context, Result};
-use sqlx::{Pool, Sqlite, Transaction};
+use sqlx::{Pool, QueryBuilder, Row, Sqlite, Transaction};
 
 use crate::config::models::ServerTransportDraft;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServerTransportDraftLoad {
+    Draft(ServerTransportDraft),
+    DecodeFailed,
+}
 
 pub async fn get_server_transport_draft(
     pool: &Pool<Sqlite>,
@@ -15,6 +21,47 @@ pub async fn get_server_transport_draft(
     draft_json
         .map(|draft_json| serde_json::from_str(&draft_json).context("decode server transport draft"))
         .transpose()
+}
+
+pub async fn get_server_transport_drafts(
+    pool: &Pool<Sqlite>,
+    server_ids: &[String],
+) -> Result<std::collections::HashMap<String, ServerTransportDraftLoad>> {
+    if server_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let mut query =
+        QueryBuilder::<Sqlite>::new("SELECT server_id, draft_json FROM server_transport WHERE server_id IN (");
+    {
+        let mut separated = query.separated(", ");
+        for server_id in server_ids {
+            separated.push_bind(server_id);
+        }
+    }
+    query.push(")");
+
+    let rows = query
+        .build()
+        .fetch_all(pool)
+        .await
+        .context("batch load server transport drafts")?;
+
+    let mut drafts = std::collections::HashMap::with_capacity(rows.len());
+    for row in rows {
+        let server_id: String = row.try_get("server_id").context("read server transport server ID")?;
+        let draft_json: String = row.try_get("draft_json").context("read server transport draft JSON")?;
+        let draft = match serde_json::from_str(&draft_json) {
+            Ok(draft) => ServerTransportDraftLoad::Draft(draft),
+            Err(error) => {
+                tracing::warn!(server_id = %server_id, error = %error, "Failed to decode server transport draft");
+                ServerTransportDraftLoad::DecodeFailed
+            }
+        };
+        drafts.insert(server_id, draft);
+    }
+
+    Ok(drafts)
 }
 
 pub async fn upsert_server_transport_draft_tx(

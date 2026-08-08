@@ -2,7 +2,7 @@
 // Contains data models for MCP server endpoints
 
 use crate::common::{server::ServerType, types::ServerSource};
-use crate::config::models::ServerTransportDraft;
+use crate::config::models::{ConfigValue, HttpTransportKind, ServerTransportDraft};
 use crate::config::server::import::{SkipReason, SkippedServer};
 use crate::macros::resp::api_resp;
 use schemars::JsonSchema;
@@ -455,6 +455,149 @@ pub struct StandardServerInfo {
     pub version: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TransportValidityState {
+    Valid,
+    Invalid,
+    Missing,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TransportValidityDiagnostic {
+    pub code: String,
+    pub field: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ApiConfigValue {
+    Literal { value: String },
+    SecretRef { alias: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ApiServerTransportDraft {
+    Stdio {
+        command: Option<String>,
+        args: Vec<String>,
+        env: std::collections::BTreeMap<String, ApiConfigValue>,
+    },
+    Http {
+        protocol: HttpTransportKind,
+        endpoint: Option<String>,
+        headers: std::collections::BTreeMap<String, ApiConfigValue>,
+    },
+    Unrecognized {
+        declared_type: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ServerTransportValidity {
+    pub state: TransportValidityState,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diagnostics: Vec<TransportValidityDiagnostic>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub draft: Option<ApiServerTransportDraft>,
+}
+
+impl ServerTransportValidity {
+    pub fn from_draft(draft: ServerTransportDraft) -> Self {
+        let diagnostics = draft
+            .validate()
+            .err()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|diagnostic| TransportValidityDiagnostic {
+                code: diagnostic.code.to_string(),
+                field: diagnostic.field,
+            })
+            .collect::<Vec<_>>();
+        let state = if diagnostics.is_empty() {
+            TransportValidityState::Valid
+        } else {
+            TransportValidityState::Invalid
+        };
+
+        Self {
+            state,
+            diagnostics,
+            draft: Some(ApiServerTransportDraft::from(draft)),
+        }
+    }
+
+    pub fn missing() -> Self {
+        Self {
+            state: TransportValidityState::Missing,
+            diagnostics: Vec::new(),
+            draft: None,
+        }
+    }
+
+    pub fn draft_decode_failed() -> Self {
+        Self::invalid("transport_draft_decode_failed", "transport")
+    }
+
+    pub fn draft_load_failed() -> Self {
+        Self::invalid("transport_draft_load_failed", "transport")
+    }
+
+    fn invalid(
+        code: &str,
+        field: &str,
+    ) -> Self {
+        Self {
+            state: TransportValidityState::Invalid,
+            diagnostics: vec![TransportValidityDiagnostic {
+                code: code.to_string(),
+                field: field.to_string(),
+            }],
+            draft: None,
+        }
+    }
+}
+
+impl From<ServerTransportDraft> for ApiServerTransportDraft {
+    fn from(draft: ServerTransportDraft) -> Self {
+        match draft {
+            ServerTransportDraft::Stdio { command, args, env } => Self::Stdio {
+                command,
+                args,
+                env: redact_config_values(env),
+            },
+            ServerTransportDraft::Http {
+                protocol,
+                endpoint,
+                headers,
+            } => Self::Http {
+                protocol,
+                endpoint,
+                headers: redact_config_values(headers),
+            },
+            ServerTransportDraft::Unrecognized { declared_type } => Self::Unrecognized { declared_type },
+        }
+    }
+}
+
+fn redact_config_values(
+    values: std::collections::BTreeMap<String, ConfigValue>
+) -> std::collections::BTreeMap<String, ApiConfigValue> {
+    values
+        .into_iter()
+        .map(|(key, value)| {
+            let value = match value {
+                ConfigValue::Literal { .. } => ApiConfigValue::Literal {
+                    value: "***REDACTED***".to_string(),
+                },
+                ConfigValue::SecretRef { alias } => ApiConfigValue::SecretRef { alias },
+            };
+            (key, value)
+        })
+        .collect()
+}
+
 /// Server details response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Server details response")]
@@ -476,6 +619,8 @@ pub struct ServerDetailsData {
     pub unify_direct_exposure_eligible: bool,
     /// Server type (stdio, streamable_http)
     pub server_type: ServerType,
+    /// Structured transport draft readiness and redacted editable values.
+    pub transport_validity: ServerTransportValidity,
     /// Command to execute (for stdio servers)
     pub command: Option<String>,
     /// URL (for streamable_http servers)

@@ -34,7 +34,9 @@ pub use oauth::{
     get_effective_server_headers, get_server_oauth_config, get_server_oauth_token, has_manual_authorization_header,
     upsert_server_oauth_config, upsert_server_oauth_token,
 };
-pub use transport::{get_server_transport_draft, upsert_server_transport_draft_tx};
+pub use transport::{
+    ServerTransportDraftLoad, get_server_transport_draft, get_server_transport_drafts, upsert_server_transport_draft_tx,
+};
 
 pub use capabilities::{CapabilitySnapshot, discover_from_config, discover_from_connection};
 pub use enabled::{

@@ -1,7 +1,7 @@
 // MCPMate Proxy API handlers for MCP server CRUD operations
 // Contains handler functions for creating, updating, and importing servers
 
-use super::{common, shared::*};
+use super::{basic::load_server_transport_validity, common, shared::*};
 use crate::api::models::server::{
     ServerCreateReq, ServerDeleteReq, ServerDetailsData, ServerDetailsResp, ServerMetaPayload,
     ServerNamespaceRemediationReq, ServerOperationData, ServerOperationResp, ServerUpdateReq, ServersImportData,
@@ -437,6 +437,7 @@ pub async fn create_server(
         server_row.server_type.is_http_transport(),
     )
     .await?;
+    let transport_validity = load_server_transport_validity(&db.pool, &server_id).await;
 
     let audit_server_id = server_id.clone();
     let response = Json(ServerDetailsResp::success(ServerDetailsData {
@@ -448,6 +449,7 @@ pub async fn create_server(
         enabled_in_profile: details.enabled_in_profile,
         unify_direct_exposure_eligible: server_row.unify_direct_exposure_eligible,
         server_type,
+        transport_validity,
         command,
         url,
         args: details.args,
@@ -605,6 +607,7 @@ pub async fn update_server(
         updated_server.server_type.is_http_transport(),
     )
     .await?;
+    let transport_validity = load_server_transport_validity(&db.pool, &server_id).await;
 
     // Return success response
     let audit_server_id = server_id.clone();
@@ -618,6 +621,7 @@ pub async fn update_server(
         enabled_in_profile: details.enabled_in_profile,
         unify_direct_exposure_eligible: updated_server.unify_direct_exposure_eligible,
         server_type: updated_server.server_type,
+        transport_validity,
         command: updated_server.command.clone(),
         url: updated_server.url.clone(),
         args: details.args,

@@ -4,7 +4,8 @@
 use super::{common, shared::*};
 use crate::api::models::server::{
     InstanceListData, InstanceListReq, InstanceListResp, InstanceSummary, ServerDetailsData, ServerDetailsReq,
-    ServerDetailsResp, ServerListData, ServerListReq, ServerListResp, ServerMetaInfo, StandardServerInfo,
+    ServerDetailsResp, ServerListData, ServerListReq, ServerListResp, ServerMetaInfo, ServerTransportValidity,
+    StandardServerInfo,
 };
 use axum::http::StatusCode;
 use sqlx::{Pool, Row, Sqlite};
@@ -212,6 +213,7 @@ async fn server_details_core(
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
         None => None,
     };
+    let transport_validity = load_server_transport_validity(db_pool, &request.id).await;
 
     let server_details = ServerDetailsData {
         id: id_opt,
@@ -222,6 +224,7 @@ async fn server_details_core(
         enabled_in_profile: details.enabled_in_profile,
         unify_direct_exposure_eligible: server.unify_direct_exposure_eligible,
         server_type: server.server_type,
+        transport_validity,
         command: server.command.clone(),
         url: server.url.clone(),
         args: details.args,
@@ -270,6 +273,7 @@ async fn server_list_core(
     })?;
 
     let server_ids: Vec<String> = all_servers.iter().filter_map(|server| server.id.clone()).collect();
+    let mut transport_validity_map = load_server_transport_validities(db_pool, &server_ids).await;
     let (instance_map, live_protocol_versions) = snapshot_runtime_state(state).await;
     let management_map = load_server_capability_management(state, &server_ids).await;
     let (meta_map, server_info_map) = load_server_meta_maps(db_pool, &server_ids).await;
@@ -377,6 +381,9 @@ async fn server_list_core(
             enabled_in_profile: enabled_in_profile_flag,
             unify_direct_exposure_eligible: server.unify_direct_exposure_eligible,
             server_type: server.server_type,
+            transport_validity: transport_validity_map
+                .remove(&server_id)
+                .unwrap_or_else(ServerTransportValidity::missing),
             command: server.command,
             url: server.url,
             args: None,
@@ -402,6 +409,46 @@ async fn server_list_core(
     Ok(ServerListResp::success(ServerListData {
         servers: filtered_servers,
     }))
+}
+
+async fn load_server_transport_validities(
+    pool: &Pool<Sqlite>,
+    server_ids: &[String],
+) -> HashMap<String, ServerTransportValidity> {
+    match crate::config::server::get_server_transport_drafts(pool, server_ids).await {
+        Ok(mut drafts) => server_ids
+            .iter()
+            .map(|server_id| {
+                let validity = match drafts.remove(server_id) {
+                    Some(crate::config::server::ServerTransportDraftLoad::Draft(draft)) => {
+                        ServerTransportValidity::from_draft(draft)
+                    }
+                    Some(crate::config::server::ServerTransportDraftLoad::DecodeFailed) => {
+                        ServerTransportValidity::draft_decode_failed()
+                    }
+                    None => ServerTransportValidity::missing(),
+                };
+                (server_id.clone(), validity)
+            })
+            .collect(),
+        Err(error) => {
+            tracing::warn!(error = %error, "Failed to load server transport drafts");
+            server_ids
+                .iter()
+                .map(|server_id| (server_id.clone(), ServerTransportValidity::draft_load_failed()))
+                .collect()
+        }
+    }
+}
+
+pub(crate) async fn load_server_transport_validity(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+) -> ServerTransportValidity {
+    load_server_transport_validities(pool, &[server_id.to_string()])
+        .await
+        .remove(server_id)
+        .unwrap_or_else(ServerTransportValidity::missing)
 }
 
 async fn snapshot_runtime_state(
@@ -794,6 +841,7 @@ fn build_instance_summary_from_live_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::models::server::TransportValidityState;
     use crate::{
         common::{profile::ProfileType, server::ServerType},
         config::{
@@ -866,6 +914,131 @@ mod tests {
         assert!(data.servers.iter().all(|server| server.instances.is_empty()));
         assert!(data.servers.iter().all(|server| server.protocol_version.is_none()));
         assert!(data.servers.iter().all(|server| server.capability.is_none()));
+    }
+
+    #[tokio::test]
+    async fn server_read_models_report_invalid_drafts_without_exposing_literal_config_values() {
+        let context = create_test_context().await;
+        let server_id = seed_servers(&context.db_pool, 1)
+            .await
+            .into_iter()
+            .next()
+            .expect("seed server");
+        sqlx::query("INSERT INTO server_transport (server_id, draft_json) VALUES (?, ?)")
+            .bind(&server_id)
+            .bind(
+                serde_json::json!({
+                    "kind": "stdio",
+                    "command": null,
+                    "args": [],
+                    "env": {
+                        "ACCESS_TOKEN": { "kind": "literal", "value": "literal-secret" },
+                        "SECRET_ALIAS": { "kind": "secret_ref", "alias": "upstream-token" }
+                    }
+                })
+                .to_string(),
+            )
+            .execute(&context.db_pool)
+            .await
+            .expect("store legacy invalid transport draft");
+
+        let detail = server_details_core(
+            &ServerDetailsReq { id: server_id.clone() },
+            &context.db_pool,
+            &context.app_state,
+        )
+        .await
+        .expect("server details")
+        .data
+        .expect("server details data");
+        let listed = server_list_core(
+            &ServerListReq {
+                enabled: None,
+                server_type: None,
+                limit: Some(10),
+                offset: Some(0),
+            },
+            &context.db_pool,
+            &context.app_state,
+        )
+        .await
+        .expect("server list")
+        .data
+        .expect("server list data")
+        .servers
+        .into_iter()
+        .find(|server| server.id.as_deref() == Some(server_id.as_str()))
+        .expect("listed server");
+
+        for server in [detail, listed] {
+            assert_eq!(server.transport_validity.state, TransportValidityState::Invalid);
+            assert!(
+                server
+                    .transport_validity
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.code == "stdio_command_missing" && diagnostic.field == "command")
+            );
+
+            let payload = serde_json::to_string(&server).expect("serialize API response");
+            assert!(!payload.contains("literal-secret"));
+            assert!(payload.contains("***REDACTED***"));
+            assert!(payload.contains("upstream-token"));
+        }
+    }
+
+    #[tokio::test]
+    async fn server_read_models_surface_transport_draft_decode_failures() {
+        let context = create_test_context().await;
+        let server_id = seed_servers(&context.db_pool, 1)
+            .await
+            .into_iter()
+            .next()
+            .expect("seed server");
+        sqlx::query("INSERT INTO server_transport (server_id, draft_json) VALUES (?, ?)")
+            .bind(&server_id)
+            .bind(r#"{"kind":"stdio","command":42,"args":[],"env":{}}"#)
+            .execute(&context.db_pool)
+            .await
+            .expect("store undecodable transport draft");
+
+        let detail = server_details_core(
+            &ServerDetailsReq { id: server_id.clone() },
+            &context.db_pool,
+            &context.app_state,
+        )
+        .await
+        .expect("server details")
+        .data
+        .expect("server details data");
+        let listed = server_list_core(
+            &ServerListReq {
+                enabled: None,
+                server_type: None,
+                limit: Some(10),
+                offset: Some(0),
+            },
+            &context.db_pool,
+            &context.app_state,
+        )
+        .await
+        .expect("server list")
+        .data
+        .expect("server list data")
+        .servers
+        .into_iter()
+        .find(|server| server.id.as_deref() == Some(server_id.as_str()))
+        .expect("listed server");
+
+        for server in [detail, listed] {
+            assert_eq!(server.transport_validity.state, TransportValidityState::Invalid);
+            assert_eq!(
+                server.transport_validity.diagnostics[0].code,
+                "transport_draft_decode_failed"
+            );
+            assert_eq!(server.transport_validity.diagnostics[0].field, "transport");
+            assert!(server.transport_validity.draft.is_none());
+        }
     }
 
     #[tokio::test]
