@@ -11,7 +11,7 @@ use std::{collections::HashMap, error::Error, fmt, sync::Arc};
 use tokio::sync::Mutex;
 
 use crate::config::{
-    models::{Server, ServerOAuthConfig, ServerOAuthToken},
+    models::{ServerOAuthConfig, ServerOAuthToken, ValidatedTransport},
     server,
 };
 use crate::core::secrets::store::{
@@ -79,12 +79,13 @@ struct OAuthServerContext {
 impl OAuthServerContext {
     fn from_server(
         server_id: &str,
-        server: &Server,
+        server_name: &str,
+        transport: &ValidatedTransport,
     ) -> Self {
         Self {
             id: server_id.to_string(),
-            name: server.name.clone(),
-            kind: server.server_type.to_string(),
+            name: server_name.to_string(),
+            kind: transport.server_type().to_string(),
         }
     }
 }
@@ -226,6 +227,35 @@ impl OAuthManager {
         self.secret_resolver
             .as_deref()
             .ok_or_else(|| anyhow!("Secure Store is unavailable for OAuth credential resolution"))
+    }
+
+    async fn load_oauth_transport(
+        &self,
+        server_id: &str,
+    ) -> Result<ValidatedTransport> {
+        let transport = server::load_validated_server_transport(&self.pool, server_id).await?;
+        if !matches!(
+            &transport,
+            ValidatedTransport::Sse { .. } | ValidatedTransport::StreamableHttp { .. }
+        ) {
+            bail!("OAuth is only supported for HTTP-based MCP servers (sse or streamable_http)");
+        }
+        Ok(transport)
+    }
+
+    async fn oauth_server_context(
+        &self,
+        server_id: &str,
+        transport: &ValidatedTransport,
+    ) -> Result<OAuthServerContext> {
+        let server_model = server::get_server_by_id(&self.pool, server_id)
+            .await?
+            .ok_or_else(|| anyhow!("Server '{}' not found", server_id))?;
+        Ok(OAuthServerContext::from_server(
+            server_id,
+            &server_model.name,
+            transport,
+        ))
     }
 
     async fn store_or_preserve_client_secret(
@@ -484,14 +514,8 @@ impl OAuthManager {
         server_id: &str,
         input: OAuthConfigInput,
     ) -> Result<OAuthStatus> {
-        let server_model = server::get_server_by_id(&self.pool, server_id)
-            .await?
-            .ok_or_else(|| anyhow!("Server '{}' not found", server_id))?;
-        if !server_model.server_type.is_http_transport() {
-            bail!("OAuth is only supported for HTTP-based MCP servers (sse or streamable_http)");
-        }
-
-        let server_context = OAuthServerContext::from_server(server_id, &server_model);
+        let transport = self.load_oauth_transport(server_id).await?;
+        let server_context = self.oauth_server_context(server_id, &transport).await?;
         let existing = server::get_server_oauth_config(&self.pool, server_id).await?;
         let client_secret = match input.client_secret {
             Some(secret) if !secret.trim().is_empty() => {
@@ -523,19 +547,8 @@ impl OAuthManager {
         server_id: &str,
         input: OAuthPrepareInput,
     ) -> Result<OAuthStatus> {
-        let server_model = server::get_server_by_id(&self.pool, server_id)
-            .await?
-            .ok_or_else(|| anyhow!("Server '{}' not found", server_id))?;
-        if !server_model.server_type.is_http_transport() {
-            bail!("OAuth is only supported for HTTP-based MCP servers (sse or streamable_http)");
-        }
-
-        let server_url = server_model
-            .url
-            .as_deref()
-            .ok_or_else(|| anyhow!("Streamable HTTP server is missing a URL"))?;
-        let resource_url =
-            Url::parse(server_url).with_context(|| format!("Invalid streamable HTTP server URL '{}'", server_url))?;
+        let transport = self.load_oauth_transport(server_id).await?;
+        let resource_url = oauth_resource_url_from_transport(&transport)?;
 
         let existing = server::get_server_oauth_config(&self.pool, server_id).await?;
         if let Some(existing_config) = existing.as_ref() {
@@ -613,16 +626,11 @@ impl OAuthManager {
         &self,
         server_id: &str,
     ) -> Result<OAuthInitiateResult> {
-        let server_model = server::get_server_by_id(&self.pool, server_id)
-            .await?
-            .ok_or_else(|| anyhow!("Server '{}' not found", server_id))?;
-        if !server_model.server_type.is_http_transport() {
-            bail!("OAuth is only supported for HTTP-based MCP servers (sse or streamable_http)");
-        }
+        let transport = self.load_oauth_transport(server_id).await?;
         let config = server::get_server_oauth_config(&self.pool, server_id)
             .await?
             .ok_or_else(|| anyhow!("OAuth is not configured for server '{}'", server_id))?;
-        let resource = oauth_resource_from_server(&server_model)?;
+        let resource = oauth_resource_from_transport(&transport)?;
 
         let state = generate_oauth_random(32);
         let code_verifier = generate_oauth_random(64);
@@ -676,13 +684,8 @@ impl OAuthManager {
         let config = server::get_server_oauth_config(&self.pool, &pending.server_id)
             .await?
             .ok_or_else(|| anyhow!("OAuth config missing for server '{}'", pending.server_id))?;
-        let server_model = server::get_server_by_id(&self.pool, &pending.server_id)
-            .await?
-            .ok_or_else(|| anyhow!("Server '{}' not found", pending.server_id))?;
-        if !server_model.server_type.is_http_transport() {
-            bail!("OAuth is only supported for HTTP-based MCP servers (sse or streamable_http)");
-        }
-        let resource = oauth_resource_from_server(&server_model)?;
+        let transport = self.load_oauth_transport(&pending.server_id).await?;
+        let resource = oauth_resource_from_transport(&transport)?;
 
         let mut form = vec![
             ("grant_type", "authorization_code".to_string()),
@@ -698,7 +701,7 @@ impl OAuthManager {
 
         let token_response = self.request_token_response(&config.token_endpoint, &form).await?;
         server::ensure_persisted_http_authorization_headers_clearable(&self.pool, &pending.server_id).await?;
-        let server_context = OAuthServerContext::from_server(&pending.server_id, &server_model);
+        let server_context = self.oauth_server_context(&pending.server_id, &transport).await?;
 
         self.store_oauth_token_with_context(&server_context, token_response, None)
             .await?;
@@ -769,14 +772,9 @@ impl OAuthManager {
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| anyhow!("OAuth token for server '{}' has no refresh token", server_id))?;
         let refresh_token = self.resolve_oauth_secret_value(refresh_token_ref, "refresh token")?;
-        let server_model = server::get_server_by_id(&self.pool, server_id)
-            .await?
-            .ok_or_else(|| anyhow!("Server '{}' not found", server_id))?;
-        if !server_model.server_type.is_http_transport() {
-            bail!("OAuth is only supported for HTTP-based MCP servers (sse or streamable_http)");
-        }
-        let resource = oauth_resource_from_server(&server_model)?;
-        let server_context = OAuthServerContext::from_server(server_id, &server_model);
+        let transport = self.load_oauth_transport(server_id).await?;
+        let resource = oauth_resource_from_transport(&transport)?;
+        let server_context = self.oauth_server_context(server_id, &transport).await?;
 
         let mut form = vec![
             ("grant_type", "refresh_token".to_string()),
@@ -813,10 +811,8 @@ impl OAuthManager {
         token_response: OAuthTokenResponse,
         existing: Option<ExistingTokenContext>,
     ) -> Result<ServerOAuthToken> {
-        let server_model = server::get_server_by_id(&self.pool, server_id)
-            .await?
-            .ok_or_else(|| anyhow!("Server '{}' not found", server_id))?;
-        let server_context = OAuthServerContext::from_server(server_id, &server_model);
+        let transport = self.load_oauth_transport(server_id).await?;
+        let server_context = self.oauth_server_context(server_id, &transport).await?;
         self.store_oauth_token_with_context(&server_context, token_response, existing)
             .await
     }
@@ -873,10 +869,10 @@ impl OAuthManager {
         &self,
         server_id: &str,
     ) -> Result<OAuthStatus> {
+        let transport = self.load_oauth_transport(server_id).await?;
         let config = server::get_server_oauth_config(&self.pool, server_id).await?;
         let mut token = server::get_server_oauth_token(&self.pool, server_id).await?;
-        let manual_headers = server::get_server_headers(&self.pool, server_id).await.ok();
-        let manual_authorization_override = server::has_manual_authorization_header(&manual_headers);
+        let manual_authorization_override = server::has_manual_authorization_header(&Some(transport.runtime_headers()));
         let mut refresh_issue = None;
         if !manual_authorization_override && token.as_ref().is_some_and(is_token_refreshable) {
             match self.refresh_access_token(server_id).await {
@@ -1193,25 +1189,28 @@ fn issuer_from_endpoint(endpoint: &str) -> String {
         .unwrap_or_else(|| endpoint.trim_end_matches('/').to_string())
 }
 
-fn oauth_resource_from_server(server_model: &crate::config::models::Server) -> Result<String> {
-    let server_label = server_model
-        .id
-        .as_deref()
-        .map(|id| format!("'{}' ({})", server_model.name, id))
-        .unwrap_or_else(|| format!("'{}'", server_model.name));
-    let server_url = server_model
-        .url
-        .as_deref()
-        .ok_or_else(|| anyhow!("Server {} is missing a URL", server_label))?;
-    let mut resource = Url::parse(server_url).with_context(|| format!("Invalid server URL '{}'", server_url))?;
+fn oauth_resource_url_from_transport(transport: &ValidatedTransport) -> Result<Url> {
+    let mut resource = match transport {
+        ValidatedTransport::Sse { endpoint, .. } | ValidatedTransport::StreamableHttp { endpoint, .. } => {
+            endpoint.clone()
+        }
+        ValidatedTransport::Stdio { .. } => {
+            bail!("OAuth is only supported for HTTP-based MCP servers (sse or streamable_http)")
+        }
+    };
     resource
         .set_username("")
-        .map_err(|_| anyhow!("Invalid server URL '{}'", server_url))?;
+        .map_err(|_| anyhow!("Invalid HTTP transport endpoint"))?;
     resource
         .set_password(None)
-        .map_err(|_| anyhow!("Invalid server URL '{}'", server_url))?;
+        .map_err(|_| anyhow!("Invalid HTTP transport endpoint"))?;
     resource.set_query(None);
     resource.set_fragment(None);
+    Ok(resource)
+}
+
+fn oauth_resource_from_transport(transport: &ValidatedTransport) -> Result<String> {
+    let resource = oauth_resource_url_from_transport(transport)?;
     Ok(resource.to_string().trim_end_matches('/').to_string())
 }
 
@@ -1278,7 +1277,7 @@ mod tests {
         config::{
             llm::init::initialize_llm_tables,
             models::{ConfigValue, HttpTransportKind, Server, ServerTransportDraft},
-            server::{self, crud::upsert_server, init::initialize_server_tables},
+            server::{self, init::initialize_server_tables},
         },
         core::secrets::store::LocalSecretStore,
     };
@@ -1335,20 +1334,7 @@ mod tests {
         pool: &SqlitePool,
         id: &str,
     ) {
-        let server = Server {
-            id: Some(id.to_string()),
-            name: format!("server-{id}"),
-            server_type: ServerType::StreamableHttp,
-            command: None,
-            url: Some("https://example.com/mcp".to_string()),
-            source: None,
-            enabled: EnabledStatus::Enabled,
-            unify_direct_exposure_eligible: false,
-            pending_import: false,
-            created_at: None,
-            updated_at: None,
-        };
-        upsert_server(pool, &server).await.expect("insert server");
+        insert_typed_http_server(pool, id, BTreeMap::new()).await;
     }
 
     async fn insert_typed_http_server(
@@ -2383,17 +2369,25 @@ mod tests {
     #[tokio::test]
     async fn upsert_config_preserves_manual_authorization_header_until_oauth_connects() {
         let manager = setup_manager().await;
-        insert_server(&manager.pool, "serv_oauth_auth_mode").await;
-        server::upsert_server_headers(
+        insert_typed_http_server(
             &manager.pool,
             "serv_oauth_auth_mode",
-            &HashMap::from([
-                ("Authorization".to_string(), "Bearer manual-token".to_string()),
-                ("X-Trace".to_string(), "trace-1".to_string()),
+            BTreeMap::from([
+                (
+                    "Authorization".to_string(),
+                    ConfigValue::Literal {
+                        value: "Bearer manual-token".to_string(),
+                    },
+                ),
+                (
+                    "X-Trace".to_string(),
+                    ConfigValue::Literal {
+                        value: "trace-1".to_string(),
+                    },
+                ),
             ]),
         )
-        .await
-        .expect("store manual headers");
+        .await;
 
         let status = manager
             .upsert_config(
@@ -2410,17 +2404,38 @@ mod tests {
             .await
             .expect("save oauth config");
 
-        let headers = server::get_server_headers(&manager.pool, "serv_oauth_auth_mode")
+        let headers = server::load_validated_server_transport(&manager.pool, "serv_oauth_auth_mode")
             .await
-            .expect("load headers");
+            .expect("load typed transport")
+            .runtime_headers();
 
         assert_eq!(
-            headers.get("authorization").map(String::as_str),
+            headers.get("Authorization").map(String::as_str),
             Some("Bearer manual-token")
         );
-        assert_eq!(headers.get("x-trace").map(String::as_str), Some("trace-1"));
+        assert_eq!(headers.get("X-Trace").map(String::as_str), Some("trace-1"));
         assert!(server::has_manual_authorization_header(&Some(headers)));
         assert!(status.manual_authorization_override);
+    }
+
+    #[tokio::test]
+    async fn status_ignores_legacy_authorization_when_typed_transport_has_none() {
+        let manager = setup_manager().await;
+        insert_server(&manager.pool, "serv_typed_auth_status").await;
+        server::upsert_server_headers(
+            &manager.pool,
+            "serv_typed_auth_status",
+            &HashMap::from([("Authorization".to_string(), "Bearer stale-token".to_string())]),
+        )
+        .await
+        .expect("write divergent legacy header projection");
+
+        let status = manager
+            .get_status("serv_typed_auth_status")
+            .await
+            .expect("read OAuth status");
+
+        assert!(!status.manual_authorization_override);
     }
 
     #[tokio::test]
@@ -2435,42 +2450,25 @@ mod tests {
 
     #[test]
     fn oauth_resource_strips_url_userinfo() {
-        let server = Server {
-            id: Some("serv_userinfo".to_string()),
-            name: "server-userinfo".to_string(),
-            server_type: ServerType::StreamableHttp,
-            command: None,
-            url: Some("https://user:pass@example.com/mcp?secret=1#fragment".to_string()),
-            source: None,
-            enabled: EnabledStatus::Enabled,
-            unify_direct_exposure_eligible: false,
-            pending_import: false,
-            created_at: None,
-            updated_at: None,
+        let transport = ValidatedTransport::StreamableHttp {
+            endpoint: Url::parse("https://user:pass@example.com/mcp?secret=1#fragment")
+                .expect("valid transport endpoint"),
+            headers: BTreeMap::new(),
         };
 
-        let resource = oauth_resource_from_server(&server).expect("sanitize oauth resource");
+        let resource = oauth_resource_from_transport(&transport).expect("sanitize oauth resource");
 
         assert_eq!(resource, "https://example.com/mcp");
     }
 
     #[test]
     fn oauth_resource_trims_trailing_slash() {
-        let server = Server {
-            id: Some("serv_origin".to_string()),
-            name: "server-origin".to_string(),
-            server_type: ServerType::StreamableHttp,
-            command: None,
-            url: Some("https://example.com".to_string()),
-            source: None,
-            enabled: EnabledStatus::Enabled,
-            unify_direct_exposure_eligible: false,
-            pending_import: false,
-            created_at: None,
-            updated_at: None,
+        let transport = ValidatedTransport::Sse {
+            endpoint: Url::parse("https://example.com").expect("valid transport endpoint"),
+            headers: BTreeMap::new(),
         };
 
-        let resource = oauth_resource_from_server(&server).expect("normalize oauth resource");
+        let resource = oauth_resource_from_transport(&transport).expect("normalize oauth resource");
 
         assert_eq!(resource, "https://example.com");
     }
