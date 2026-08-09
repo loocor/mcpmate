@@ -1,34 +1,12 @@
 // Server HTTP headers persistence helpers
 // Provides CRUD utilities for default headers used by HTTP-based transports
 
+pub use crate::config::models::is_redacted_display_value;
 use anyhow::Result;
 use sqlx::{Pool, Sqlite, Transaction};
 use std::collections::HashMap;
 
 const TABLE: &str = "server_headers";
-const REDACTED_FULL: &str = "***REDACTED***";
-
-/// Returns true when a value is an API redaction mask and must not be persisted.
-/// IMPORTANT: keep in sync with board/src/lib/secure-field.ts isRedactedMask.
-pub fn is_redacted_display_value(value: &str) -> bool {
-    let trimmed = value.trim();
-    if trimmed == REDACTED_FULL {
-        return true;
-    }
-
-    // Partial mask pattern: 6 ASCII chars + "***" + 2 ASCII chars (e.g. "Bearer***ue").
-    // Redaction masks are always ASCII, so byte-length checks are safe and faster
-    // than chars().count().
-    if let Some(idx) = trimmed.find("***") {
-        let head = &trimmed[..idx];
-        let tail = &trimmed[idx + 3..];
-        if head.is_ascii() && tail.is_ascii() && head.len() == 6 && tail.len() == 2 {
-            return true;
-        }
-    }
-
-    false
-}
 
 /// Merge incoming header updates with stored values, preserving secrets for redacted masks.
 pub fn merge_headers_for_update(
@@ -228,6 +206,8 @@ mod tests {
     fn detects_redacted_display_values() {
         assert!(is_redacted_display_value("***REDACTED***"));
         assert!(is_redacted_display_value("Bearer***ue"));
+        assert!(is_redacted_display_value("***abc***xy"));
+        assert!(!is_redacted_display_value("安全密钥测试***后缀"));
         assert!(!is_redacted_display_value("Bearer [[secret:token]]"));
     }
 

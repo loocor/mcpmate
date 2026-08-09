@@ -1367,6 +1367,29 @@ pub async fn current_config_fingerprint(
     Ok(fingerprint)
 }
 
+/// Reads the previous fingerprint when the persisted transport is valid.
+///
+/// An invalid historical draft has no trustworthy baseline. Callers repairing it
+/// should treat that as a configuration change, while runtime consumers keep
+/// using `current_config_fingerprint` and remain fail-closed.
+pub async fn previous_valid_config_fingerprint(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+) -> Result<Option<String>> {
+    match current_config_fingerprint(pool, server_id).await {
+        Ok(fingerprint) => Ok(Some(fingerprint)),
+        Err(error)
+            if matches!(
+                error.downcast_ref::<mcpmate_capability_store::CatalogError>(),
+                Some(mcpmate_capability_store::CatalogError::InvalidValue { .. })
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 async fn persist_server_info_in_transaction(
     tx: &mut Transaction<'_, Sqlite>,
     server_id: &str,
@@ -2012,6 +2035,36 @@ mod tests {
             .expect_err("invalid typed transport draft must fail closed");
 
         assert!(error.to_string().contains("ServerTransportDraft is invalid"));
+    }
+
+    #[tokio::test]
+    async fn previous_valid_config_fingerprint_allows_transport_repair_baselines() {
+        let pool = capability_store_pool().await;
+
+        sqlx::query("DELETE FROM server_transport WHERE server_id = 'server-a'")
+            .execute(&pool)
+            .await
+            .expect("remove typed transport draft");
+        assert_eq!(
+            previous_valid_config_fingerprint(&pool, "server-a")
+                .await
+                .expect("missing draft is an absent baseline"),
+            None
+        );
+
+        persist_typed_streamable_http_draft(&pool).await;
+        sqlx::query("UPDATE server_transport SET draft_json = ? WHERE server_id = ?")
+            .bind(r#"{"kind":"stdio","command":null,"args":[],"env":{}}"#)
+            .bind("server-a")
+            .execute(&pool)
+            .await
+            .expect("persist invalid typed transport draft");
+        assert_eq!(
+            previous_valid_config_fingerprint(&pool, "server-a")
+                .await
+                .expect("invalid draft is an absent baseline"),
+            None
+        );
     }
 
     fn decode<T: DeserializeOwned>(value: Value) -> T {

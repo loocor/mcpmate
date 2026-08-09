@@ -13,21 +13,22 @@ use crate::{
         common::{internal_error, map_anyhow_error, map_database_error},
     },
     config::server::{
-        ImportOptions, ImportOutcome, SkippedServer,
-        headers::{has_non_empty_authorization_header, is_redacted_display_value},
-        import::server_meta_from_payload,
-        import_batch,
+        ImportOptions, ImportOutcome, SkippedServer, headers::has_non_empty_authorization_header,
+        import::server_meta_from_payload, import_batch,
     },
     config::{
         database::Database,
-        models::{ConfigValue, ServerTransportDraft, ValidatedTransport},
+        models::{
+            ConfigValue, ServerTransportDraft, ValidatedTransport, is_redacted_display_value,
+            restore_redacted_env_values, restore_redacted_http_header_values,
+        },
         server::{self},
     },
     core::secrets::{mcp_config_from_server, sync_server_secret_usages},
 };
 use axum::{Json, extract::State};
 use serde_json::{Map, Value};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 async fn discover_server_capabilities(
@@ -61,34 +62,52 @@ fn validate_server_transport(draft: &ServerTransportDraft) -> Result<ValidatedTr
     })
 }
 
-async fn restore_redacted_http_headers_for_update(
+async fn restore_redacted_transport_values_for_update(
     db: &Database,
     server_id: &str,
     draft: &mut ServerTransportDraft,
 ) -> Result<(), ApiError> {
-    let ServerTransportDraft::Http { headers, .. } = draft else {
-        return Ok(());
+    let contains_redacted_value = match draft {
+        ServerTransportDraft::Stdio { env, .. } => env
+            .values()
+            .any(|value| matches!(value, ConfigValue::Literal { value } if is_redacted_display_value(value))),
+        ServerTransportDraft::Http { headers, .. } => headers
+            .values()
+            .any(|value| matches!(value, ConfigValue::Literal { value } if is_redacted_display_value(value))),
+        ServerTransportDraft::Unrecognized { .. } => false,
     };
+    if !contains_redacted_value {
+        return Ok(());
+    }
 
-    let existing_headers = crate::config::server::get_server_headers(&db.pool, server_id)
+    let existing = crate::config::server::get_server_transport_draft(&db.pool, server_id)
         .await
-        .map_err(map_anyhow_error)?;
-    headers.retain(|key, value| {
-        let ConfigValue::Literal { value: display_value } = value else {
-            return true;
-        };
-        if !is_redacted_display_value(display_value) {
-            return true;
+        .map_err(map_anyhow_error)?
+        .ok_or_else(|| {
+            ApiError::BadRequest(
+                "Cannot preserve redacted transport values because the persisted transport draft is missing"
+                    .to_string(),
+            )
+        })?;
+    match draft {
+        ServerTransportDraft::Stdio { env, .. } => {
+            let existing_env = match existing {
+                ServerTransportDraft::Stdio { env, .. } => env,
+                _ => BTreeMap::new(),
+            };
+            restore_redacted_env_values(env, &existing_env);
+            Ok(())
         }
-
-        let normalized_key = key.trim().to_ascii_lowercase();
-        let Some(existing_value) = existing_headers.get(&normalized_key) else {
-            return false;
-        };
-        *value = ConfigValue::from_runtime_value(existing_value.clone());
-        true
-    });
-    Ok(())
+        ServerTransportDraft::Http { headers, .. } => {
+            let existing_headers = match existing {
+                ServerTransportDraft::Http { headers, .. } => headers,
+                _ => BTreeMap::new(),
+            };
+            restore_redacted_http_header_values(headers, &existing_headers);
+            Ok(())
+        }
+        ServerTransportDraft::Unrecognized { .. } => Ok(()),
+    }
 }
 
 pub async fn remediate_server_namespace(
@@ -545,10 +564,10 @@ pub async fn update_server(
         .id
         .clone()
         .ok_or_else(|| internal_error("Server ID not found"))?;
-    restore_redacted_http_headers_for_update(&db, &server_id, &mut transport).await?;
+    restore_redacted_transport_values_for_update(&db, &server_id, &mut transport).await?;
     let validated_transport = validate_server_transport(&transport)?;
     let previous_config_fingerprint =
-        crate::config::server::capabilities::current_config_fingerprint(&db.pool, &server_id)
+        crate::config::server::capabilities::previous_valid_config_fingerprint(&db.pool, &server_id)
             .await
             .map_err(map_anyhow_error)?;
 
@@ -588,7 +607,7 @@ pub async fn update_server(
         crate::config::server::capabilities::current_config_fingerprint(&db.pool, &server_id)
             .await
             .map_err(map_anyhow_error)?;
-    let configuration_changed = previous_config_fingerprint != current_config_fingerprint;
+    let configuration_changed = previous_config_fingerprint.as_deref() != Some(current_config_fingerprint.as_str());
 
     if !updated_server.pending_import && configuration_changed {
         let mut pool = state.connection_pool.lock().await;
@@ -1249,6 +1268,144 @@ mod tests {
             );
             assert!(!headers.contains_key("X-Removed"));
         }
+    }
+
+    #[tokio::test]
+    async fn update_server_preserves_redacted_stdio_env_config_values() {
+        let context = create_test_context().await;
+
+        for (server_id, existing_token) in [
+            (
+                "serv_preserve_literal_env",
+                ConfigValue::Literal {
+                    value: "existing-token".to_string(),
+                },
+            ),
+            (
+                "serv_preserve_secret_env",
+                ConfigValue::SecretRef {
+                    alias: "server/env-token".to_string(),
+                },
+            ),
+        ] {
+            let mut server = Server::new_stdio(format!("redacted env {server_id}"), Some("node".to_string()));
+            server.id = Some(server_id.to_string());
+            let expected_token = existing_token.clone();
+            server::upsert_server_definition(
+                &context.database.pool,
+                &server,
+                &ServerTransportDraft::Stdio {
+                    command: Some("node".to_string()),
+                    args: vec!["old.js".to_string()],
+                    env: BTreeMap::from([
+                        ("TOKEN".to_string(), existing_token),
+                        (
+                            "REMOVED".to_string(),
+                            ConfigValue::Literal {
+                                value: "removed-on-full-replacement".to_string(),
+                            },
+                        ),
+                    ]),
+                },
+            )
+            .await
+            .expect("seed structured stdio server");
+
+            let _ = update_server(
+                State(context.app_state.clone()),
+                Json(
+                    serde_json::from_value(serde_json::json!({
+                        "id": server_id,
+                        "transport": {
+                            "kind": "stdio",
+                            "command": "node",
+                            "args": ["new.js"],
+                            "env": {
+                                "TOKEN": {"kind": "literal", "value": "***REDACTED***"},
+                                "TRACE": {"kind": "literal", "value": "trace-1"}
+                            }
+                        }
+                    }))
+                    .expect("decode update request"),
+                ),
+            )
+            .await
+            .expect("update redacted stdio env");
+
+            let env = server::get_server_env(&context.database.pool, server_id)
+                .await
+                .expect("load environment");
+            assert_eq!(env.get("TOKEN"), Some(&expected_token.runtime_value()));
+            assert_eq!(env.get("TRACE").map(String::as_str), Some("trace-1"));
+            assert!(!env.contains_key("REMOVED"));
+            assert!(!env.values().any(|value| value == "***REDACTED***"));
+
+            let Some(ServerTransportDraft::Stdio { env, .. }) =
+                server::get_server_transport_draft(&context.database.pool, server_id)
+                    .await
+                    .expect("load transport draft")
+            else {
+                panic!("updated server must retain a stdio transport draft");
+            };
+            assert_eq!(env.get("TOKEN"), Some(&expected_token));
+            assert_eq!(
+                env.get("TRACE").map(|value| value.runtime_value()),
+                Some("trace-1".to_string())
+            );
+            assert!(!env.contains_key("REMOVED"));
+        }
+    }
+
+    #[tokio::test]
+    async fn update_server_repairs_invalid_transport_without_a_previous_fingerprint() {
+        let context = create_test_context().await;
+        let server_id = "serv_repair_invalid_transport";
+        let mut server = Server::new_streamable_http(
+            "repair invalid transport".to_string(),
+            Some("http://127.0.0.1:9/previous".to_string()),
+        );
+        server.id = Some(server_id.to_string());
+        upsert_typed_streamable_http_server(&context.database.pool, &server).await;
+        sqlx::query("UPDATE server_transport SET draft_json = ? WHERE server_id = ?")
+            .bind(r#"{"kind":"stdio","command":null,"args":[],"env":{}}"#)
+            .bind(server_id)
+            .execute(&context.database.pool)
+            .await
+            .expect("seed invalid historical transport");
+
+        let response = update_server(
+            State(context.app_state.clone()),
+            Json(
+                serde_json::from_value(serde_json::json!({
+                    "id": server_id,
+                    "transport": {
+                        "kind": "http",
+                        "protocol": "streamable_http",
+                        "endpoint": "http://127.0.0.1:9/repaired",
+                        "headers": {}
+                    }
+                }))
+                .expect("decode repair request"),
+            ),
+        )
+        .await
+        .expect("a valid definition repairs an invalid historical transport");
+
+        assert!(response.0.success);
+        let Some(ServerTransportDraft::Http { endpoint, .. }) =
+            server::get_server_transport_draft(&context.database.pool, server_id)
+                .await
+                .expect("load repaired draft")
+        else {
+            panic!("repair must persist an HTTP transport draft");
+        };
+        assert_eq!(endpoint.as_deref(), Some("http://127.0.0.1:9/repaired"));
+        assert!(
+            crate::config::server::capabilities::current_config_fingerprint(&context.database.pool, server_id)
+                .await
+                .is_ok(),
+            "the repaired transport must establish a valid capability baseline"
+        );
     }
 
     #[tokio::test]

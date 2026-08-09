@@ -36,6 +36,57 @@ impl ConfigValue {
     }
 }
 
+/// Returns true when a value is an API display mask and must never be persisted as a literal.
+///
+/// Keep this rule in sync with `board/src/lib/secure-field.ts`.
+pub fn is_redacted_display_value(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed == "***REDACTED***" {
+        return true;
+    }
+
+    trimmed.is_ascii() && trimmed.len() == 11 && trimmed.as_bytes()[6..9] == *b"***"
+}
+
+pub fn restore_redacted_env_values(
+    incoming: &mut BTreeMap<String, ConfigValue>,
+    existing: &BTreeMap<String, ConfigValue>,
+) {
+    restore_redacted_config_values(incoming, existing, |key| key.to_string());
+}
+
+pub fn restore_redacted_http_header_values(
+    incoming: &mut BTreeMap<String, ConfigValue>,
+    existing: &BTreeMap<String, ConfigValue>,
+) {
+    restore_redacted_config_values(incoming, existing, |key| key.trim().to_ascii_lowercase());
+}
+
+fn restore_redacted_config_values(
+    incoming: &mut BTreeMap<String, ConfigValue>,
+    existing: &BTreeMap<String, ConfigValue>,
+    normalize_key: impl Fn(&str) -> String,
+) {
+    let existing = existing
+        .iter()
+        .map(|(key, value)| (normalize_key(key), value.clone()))
+        .collect::<BTreeMap<_, _>>();
+    incoming.retain(|key, value| {
+        let ConfigValue::Literal { value: display_value } = value else {
+            return true;
+        };
+        if !is_redacted_display_value(display_value) {
+            return true;
+        }
+
+        let Some(existing_value) = existing.get(&normalize_key(key)) else {
+            return false;
+        };
+        *value = existing_value.clone();
+        true
+    });
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HttpTransportKind {
