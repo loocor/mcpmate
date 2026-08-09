@@ -1,6 +1,7 @@
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex, OnceLock, Weak},
 };
 
 use serde::{Deserialize, Serialize};
@@ -19,7 +20,12 @@ use crate::system::config::init_port_config;
 use crate::system::paths::PathService;
 
 pub const DEFAULT_INSPECTOR_TIMEOUT_MS: u64 = 8_000;
+pub const DEFAULT_CLIENT_DISCOVERY_SNAPSHOT_TTL_SECONDS: i64 = 21_600;
 const SETTINGS_BACKUP_LIMIT: usize = 5;
+
+const fn default_client_discovery_snapshot_ttl_seconds() -> i64 {
+    DEFAULT_CLIENT_DISCOVERY_SNAPSHOT_TTL_SECONDS
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SystemSettings {
@@ -30,6 +36,14 @@ pub struct SystemSettings {
     pub default_config_mode: String,
     #[serde(default)]
     pub onboarding_completed: bool,
+    #[serde(default = "default_client_discovery_snapshot_ttl_seconds")]
+    pub client_discovery_snapshot_ttl_seconds: i64,
+    #[serde(default)]
+    pub client_discovery_snapshot_last_success_at: Option<String>,
+    #[serde(default)]
+    pub client_discovery_snapshot_failure_window_started_at: Option<String>,
+    #[serde(default)]
+    pub client_discovery_snapshot_consecutive_failures: u8,
 }
 
 impl Default for SystemSettings {
@@ -41,6 +55,10 @@ impl Default for SystemSettings {
             inspector_timeout_ms: DEFAULT_INSPECTOR_TIMEOUT_MS,
             default_config_mode: DEFAULT_CONFIG_MODE.to_string(),
             onboarding_completed: false,
+            client_discovery_snapshot_ttl_seconds: DEFAULT_CLIENT_DISCOVERY_SNAPSHOT_TTL_SECONDS,
+            client_discovery_snapshot_last_success_at: None,
+            client_discovery_snapshot_failure_window_started_at: None,
+            client_discovery_snapshot_consecutive_failures: 0,
         }
     }
 }
@@ -73,6 +91,46 @@ impl SystemSettings {
         }
 
         Ok(())
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct SystemSettingsUpdate {
+    pub api_port: Option<u16>,
+    pub mcp_port: Option<u16>,
+    pub first_contact_behavior: Option<FirstContactBehavior>,
+    pub inspector_timeout_ms: Option<u64>,
+    pub default_config_mode: Option<String>,
+}
+
+impl SystemSettingsUpdate {
+    pub fn has_changes(&self) -> bool {
+        self.api_port.is_some()
+            || self.mcp_port.is_some()
+            || self.first_contact_behavior.is_some()
+            || self.inspector_timeout_ms.is_some()
+            || self.default_config_mode.is_some()
+    }
+
+    fn apply_to(
+        &self,
+        settings: &mut SystemSettings,
+    ) {
+        if let Some(api_port) = self.api_port {
+            settings.api_port = api_port;
+        }
+        if let Some(mcp_port) = self.mcp_port {
+            settings.mcp_port = mcp_port;
+        }
+        if let Some(first_contact_behavior) = self.first_contact_behavior {
+            settings.first_contact_behavior = first_contact_behavior;
+        }
+        if let Some(inspector_timeout_ms) = self.inspector_timeout_ms {
+            settings.inspector_timeout_ms = inspector_timeout_ms;
+        }
+        if let Some(default_config_mode) = &self.default_config_mode {
+            settings.default_config_mode = default_config_mode.clone();
+        }
     }
 }
 
@@ -115,16 +173,20 @@ pub async fn set_settings(
     pool: &SqlitePool,
     settings: &SystemSettings,
 ) -> ConfigResult<SystemSettings> {
-    settings.validate()?;
-    write_settings_path_async(&settings_path(pool), settings).await?;
-    Ok(settings.clone())
+    let settings = settings.clone();
+    let (settings, ()) = mutate_settings_at_path(&settings_path(pool), move |current| {
+        *current = settings;
+        Ok(())
+    })
+    .await?;
+    Ok(settings)
 }
 
 /// Outcome of [`apply_settings_with_effects`].
 pub struct SystemSettingsApplyResult {
-    /// `api_port` changed between old and new settings.
+    /// `api_port` changed between the lock-held current settings and the applied settings.
     pub api_port_changed: bool,
-    /// `mcp_port` changed between old and new settings.
+    /// `mcp_port` changed between the lock-held current settings and the applied settings.
     pub mcp_port_changed: bool,
     /// Full applied settings snapshot.
     pub settings: SystemSettings,
@@ -137,7 +199,9 @@ pub struct SystemSettingsApplyResult {
 /// Converges settings persistence, port-config refresh, and hosted/managed client re-apply
 /// into a single entry point used by both the REST API and the Tauri shell.
 ///
-/// - `previous` must be the settings snapshot **before** the change (used to diff ports).
+/// - `previous -> next` expresses only the fields this caller explicitly intends to change.
+///   The function reloads the current settings under the path lock, applies those explicit changes,
+///   and derives port side effects from the lock-held current settings and applied settings.
 /// - `client_service` is optional — if absent and `mcp_port_changed` is true, a temporary
 ///   service is bootstrapped in the background for the re-apply side effect.
 pub async fn apply_settings_with_effects(
@@ -182,6 +246,23 @@ pub async fn apply_settings_with_effects_for_paths_and_pool(
     .await
 }
 
+pub async fn apply_settings_update_with_effects(
+    pool: &SqlitePool,
+    update: &SystemSettingsUpdate,
+    client_service: Option<Arc<ClientConfigService>>,
+) -> ConfigResult<SystemSettingsApplyResult> {
+    apply_settings_mutation_with_effects_at_path(
+        &settings_path(pool),
+        client_service,
+        Some(Arc::new(pool.clone())),
+        |settings| {
+            update.apply_to(settings);
+            Ok(())
+        },
+    )
+    .await
+}
+
 async fn apply_settings_with_effects_at_path(
     path: &Path,
     previous: &SystemSettings,
@@ -189,6 +270,27 @@ async fn apply_settings_with_effects_at_path(
     client_service: Option<Arc<ClientConfigService>>,
     pool: Option<Arc<SqlitePool>>,
 ) -> ConfigResult<SystemSettingsApplyResult> {
+    apply_settings_mutation_with_effects_at_path(path, client_service, pool, |settings| {
+        apply_explicit_settings_changes(settings, previous, next);
+        Ok(())
+    })
+    .await
+}
+
+async fn apply_settings_mutation_with_effects_at_path<F>(
+    path: &Path,
+    client_service: Option<Arc<ClientConfigService>>,
+    pool: Option<Arc<SqlitePool>>,
+    mutate: F,
+) -> ConfigResult<SystemSettingsApplyResult>
+where
+    F: FnOnce(&mut SystemSettings) -> ConfigResult<()>,
+{
+    let lock = settings_mutation_lock(path);
+    let _guard = lock.lock().await;
+    let previous = read_settings_async(path).await?;
+    let mut next = previous.clone();
+    mutate(&mut next)?;
     next.validate()?;
 
     let mode_transition = if previous.default_config_mode != next.default_config_mode {
@@ -208,7 +310,7 @@ async fn apply_settings_with_effects_at_path(
         None
     };
 
-    write_settings_path_async(path, next).await?;
+    write_settings_path_async(path, &next).await?;
 
     if let Some(transition_id) = mode_transition {
         complete_configuration_mode_transition(
@@ -241,6 +343,37 @@ async fn apply_settings_with_effects_at_path(
         settings: next.clone(),
         client_reapply_task,
     })
+}
+
+fn apply_explicit_settings_changes(
+    current: &mut SystemSettings,
+    previous: &SystemSettings,
+    next: &SystemSettings,
+) {
+    if previous.api_port != next.api_port {
+        current.api_port = next.api_port;
+    }
+    if previous.mcp_port != next.mcp_port {
+        current.mcp_port = next.mcp_port;
+    }
+    if previous.first_contact_behavior != next.first_contact_behavior {
+        current.first_contact_behavior = next.first_contact_behavior;
+    }
+    if previous.inspector_timeout_ms != next.inspector_timeout_ms {
+        current.inspector_timeout_ms = next.inspector_timeout_ms;
+    }
+    if previous.default_config_mode != next.default_config_mode {
+        current.default_config_mode = next.default_config_mode.clone();
+    }
+    if previous.onboarding_completed != next.onboarding_completed {
+        current.onboarding_completed = next.onboarding_completed;
+    }
+    if previous.client_discovery_snapshot_ttl_seconds != next.client_discovery_snapshot_ttl_seconds {
+        current.client_discovery_snapshot_ttl_seconds = next.client_discovery_snapshot_ttl_seconds;
+    }
+    if previous.client_discovery_snapshot_last_success_at != next.client_discovery_snapshot_last_success_at {
+        current.client_discovery_snapshot_last_success_at = next.client_discovery_snapshot_last_success_at.clone();
+    }
 }
 
 async fn begin_configuration_mode_transition(
@@ -391,10 +524,11 @@ pub async fn resume_pending_configuration_mode_transitions(
         })?)
     };
     for (transition_id, target_mode) in &pending {
-        let mut settings = read_settings_async(&paths.config_path()).await?;
-        settings.default_config_mode = target_mode.clone();
-        settings.validate()?;
-        write_settings_path_async(&paths.config_path(), &settings).await?;
+        mutate_settings_at_path(&paths.config_path(), |settings| {
+            settings.default_config_mode = target_mode.clone();
+            Ok(())
+        })
+        .await?;
         complete_configuration_mode_transition(
             pool,
             transition_id,
@@ -467,9 +601,11 @@ pub async fn set_first_contact_behavior(
     pool: &SqlitePool,
     behavior: FirstContactBehavior,
 ) -> ConfigResult<()> {
-    let mut settings = get_settings(pool).await?;
-    settings.first_contact_behavior = behavior;
-    set_settings(pool, &settings).await?;
+    mutate_settings_at_path(&settings_path(pool), move |settings| {
+        settings.first_contact_behavior = behavior;
+        Ok(())
+    })
+    .await?;
     Ok(())
 }
 
@@ -481,9 +617,100 @@ pub async fn set_inspector_timeout_ms(
     pool: &SqlitePool,
     timeout_ms: u64,
 ) -> ConfigResult<()> {
-    let mut settings = get_settings(pool).await?;
-    settings.inspector_timeout_ms = timeout_ms;
-    set_settings(pool, &settings).await?;
+    mutate_settings_at_path(&settings_path(pool), move |settings| {
+        settings.inspector_timeout_ms = timeout_ms;
+        Ok(())
+    })
+    .await?;
+    Ok(())
+}
+
+pub async fn set_client_discovery_snapshot_last_success_at(
+    pool: &SqlitePool,
+    last_success_at: String,
+) -> ConfigResult<()> {
+    set_client_discovery_snapshot_last_success_at_at_path(&settings_path(pool), last_success_at).await
+}
+
+pub async fn set_client_discovery_snapshot_last_success_at_for_paths(
+    paths: &MCPMatePaths,
+    last_success_at: String,
+) -> ConfigResult<()> {
+    set_client_discovery_snapshot_last_success_at_at_path(&paths.config_path(), last_success_at).await
+}
+
+async fn set_client_discovery_snapshot_last_success_at_at_path(
+    path: &Path,
+    last_success_at: String,
+) -> ConfigResult<()> {
+    mutate_discovery_metadata_at_path(path, move |settings| {
+        settings.client_discovery_snapshot_last_success_at = Some(last_success_at);
+        settings.client_discovery_snapshot_failure_window_started_at = None;
+        settings.client_discovery_snapshot_consecutive_failures = 0;
+        Ok(())
+    })
+    .await?;
+    Ok(())
+}
+
+pub async fn record_client_discovery_snapshot_failure(pool: &SqlitePool) -> ConfigResult<()> {
+    mutate_discovery_metadata_at_path(&settings_path(pool), |settings| {
+        let now = chrono::Utc::now();
+        let window_is_current = settings
+            .client_discovery_snapshot_failure_window_started_at
+            .as_deref()
+            .map(|started_at| {
+                chrono::DateTime::parse_from_rfc3339(started_at)
+                    .map(|started_at| {
+                        now.signed_duration_since(started_at.with_timezone(&chrono::Utc))
+                            < chrono::Duration::seconds(DEFAULT_CLIENT_DISCOVERY_SNAPSHOT_TTL_SECONDS)
+                    })
+                    .map_err(|err| {
+                        ConfigError::DataAccessError(format!(
+                            "Invalid client discovery snapshot failure window time: {err}"
+                        ))
+                    })
+            })
+            .transpose()?
+            .unwrap_or(false);
+
+        if window_is_current {
+            settings.client_discovery_snapshot_consecutive_failures = settings
+                .client_discovery_snapshot_consecutive_failures
+                .saturating_add(1);
+        } else {
+            settings.client_discovery_snapshot_failure_window_started_at = Some(now.to_rfc3339());
+            settings.client_discovery_snapshot_consecutive_failures = 1;
+        }
+        Ok(())
+    })
+    .await?;
+    Ok(())
+}
+
+pub async fn set_onboarding_completed(
+    pool: &SqlitePool,
+    completed: bool,
+) -> ConfigResult<()> {
+    set_onboarding_completed_at_path(&settings_path(pool), completed).await
+}
+
+pub async fn set_onboarding_completed_for_paths(
+    paths: &MCPMatePaths,
+    completed: bool,
+) -> ConfigResult<()> {
+    set_onboarding_completed_at_path(&paths.config_path(), completed).await
+}
+
+async fn set_onboarding_completed_at_path(
+    path: &Path,
+    completed: bool,
+) -> ConfigResult<()> {
+    mutate_settings_at_path(path, move |settings| {
+        settings.onboarding_completed = completed;
+        Ok(())
+    })
+    .await?;
     Ok(())
 }
 
@@ -496,9 +723,12 @@ pub async fn set_default_config_mode(
     pool: &SqlitePool,
     mode: &str,
 ) -> ConfigResult<()> {
-    let mut settings = get_settings(pool).await?;
-    settings.default_config_mode = mode.to_string();
-    set_settings(pool, &settings).await?;
+    let mode = mode.to_string();
+    mutate_settings_at_path(&settings_path(pool), move |settings| {
+        settings.default_config_mode = mode;
+        Ok(())
+    })
+    .await?;
     Ok(())
 }
 
@@ -506,15 +736,20 @@ async fn write_settings(
     pool: &SqlitePool,
     settings: &SystemSettings,
 ) -> ConfigResult<()> {
-    write_settings_path_async(&settings_path(pool), settings).await
+    set_settings(pool, settings).await.map(|_| ())
+}
+
+fn serialize_settings(settings: &SystemSettings) -> ConfigResult<Vec<u8>> {
+    let mut content = serde_json::to_vec_pretty(settings)?;
+    content.push(b'\n');
+    Ok(content)
 }
 
 async fn write_settings_path_async(
     path: &Path,
     settings: &SystemSettings,
 ) -> ConfigResult<()> {
-    let mut content = serde_json::to_vec_pretty(settings)?;
-    content.push(b'\n');
+    let content = serialize_settings(settings)?;
 
     settings_path_service(path)?
         .atomic_write_with_backup(
@@ -527,6 +762,66 @@ async fn write_settings_path_async(
         .map_err(|err| ConfigError::FileOperationError(err.to_string()))?;
 
     Ok(())
+}
+
+async fn write_discovery_metadata_path_async(
+    path: &Path,
+    settings: &SystemSettings,
+) -> ConfigResult<()> {
+    let content = serialize_settings(settings)?;
+
+    settings_path_service(path)?
+        .atomic_write(path, &content)
+        .await
+        .map_err(|err| ConfigError::FileOperationError(err.to_string()))
+}
+
+fn settings_mutation_lock(path: &Path) -> Arc<tokio::sync::Mutex<()>> {
+    static SETTINGS_MUTATION_LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<tokio::sync::Mutex<()>>>>> = OnceLock::new();
+
+    let locks = SETTINGS_MUTATION_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut locks = locks.lock().expect("settings mutation lock registry poisoned");
+    locks.retain(|_, lock| lock.strong_count() > 0);
+
+    if let Some(lock) = locks.get(path).and_then(Weak::upgrade) {
+        return lock;
+    }
+
+    let lock = Arc::new(tokio::sync::Mutex::new(()));
+    locks.insert(path.to_path_buf(), Arc::downgrade(&lock));
+    lock
+}
+
+async fn mutate_settings_at_path<T, F>(
+    path: &Path,
+    mutate: F,
+) -> ConfigResult<(SystemSettings, T)>
+where
+    F: FnOnce(&mut SystemSettings) -> ConfigResult<T>,
+{
+    let lock = settings_mutation_lock(path);
+    let _guard = lock.lock().await;
+    let mut settings = read_settings_async(path).await?;
+    let result = mutate(&mut settings)?;
+    settings.validate()?;
+    write_settings_path_async(path, &settings).await?;
+    Ok((settings, result))
+}
+
+async fn mutate_discovery_metadata_at_path<T, F>(
+    path: &Path,
+    mutate: F,
+) -> ConfigResult<(SystemSettings, T)>
+where
+    F: FnOnce(&mut SystemSettings) -> ConfigResult<T>,
+{
+    let lock = settings_mutation_lock(path);
+    let _guard = lock.lock().await;
+    let mut settings = read_settings_async(path).await?;
+    let result = mutate(&mut settings)?;
+    settings.validate()?;
+    write_discovery_metadata_path_async(path, &settings).await?;
+    Ok((settings, result))
 }
 
 fn spawn_mcp_port_reapply(
@@ -650,4 +945,34 @@ fn settings_path(pool: &SqlitePool) -> PathBuf {
     );
 
     path
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use tokio::sync::oneshot;
+
+    use super::settings_mutation_lock;
+
+    #[tokio::test]
+    async fn settings_mutation_lock_blocks_second_acquisition_until_first_guard_releases() {
+        let path = std::env::temp_dir().join("mcpmate-settings-mutation-lock-test.json");
+        let first_lock = settings_mutation_lock(&path);
+        let second_lock = settings_mutation_lock(&path);
+        assert!(Arc::ptr_eq(&first_lock, &second_lock));
+
+        let first_guard = first_lock.lock().await;
+        assert!(second_lock.try_lock().is_err());
+
+        let (acquired_tx, acquired_rx) = oneshot::channel();
+        let waiter = tokio::spawn(async move {
+            let _second_guard = second_lock.lock().await;
+            acquired_tx.send(()).expect("report second lock acquisition");
+        });
+
+        drop(first_guard);
+        acquired_rx.await.expect("second acquisition completes after release");
+        waiter.await.expect("join second lock waiter");
+    }
 }

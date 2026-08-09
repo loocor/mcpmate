@@ -186,45 +186,31 @@ pub async fn set_settings(
         .ok_or_else(|| ApiError::InternalError("Database not available".into()))?;
     validate_settings_update_request(&request)?;
 
-    let mut settings = crate::system::settings::get_settings(&db.pool)
-        .await
-        .map_err(|err| ApiError::InternalError(err.to_string()))?;
-
-    let previous = settings.clone();
-    let file_settings_update_requested = request.has_file_settings_update();
+    let first_contact_behavior = request
+        .first_contact_behavior
+        .map(|behavior| {
+            behavior
+                .parse()
+                .map_err(|_| ApiError::BadRequest("Invalid first contact behavior".to_string()))
+        })
+        .transpose()?;
+    let file_settings_update = crate::system::settings::SystemSettingsUpdate {
+        api_port: request.api_port,
+        mcp_port: request.mcp_port,
+        first_contact_behavior,
+        inspector_timeout_ms: request.inspector_timeout_ms,
+        default_config_mode: request.default_config_mode,
+    };
     let merge_strategy_update = if request.clear_default_merge_strategy_override {
         Some(None)
     } else {
         request.default_merge_strategy_override.map(Some)
     };
 
-    if let Some(api_port) = request.api_port {
-        settings.api_port = api_port;
-    }
-
-    if let Some(mcp_port) = request.mcp_port {
-        settings.mcp_port = mcp_port;
-    }
-
-    if let Some(first_contact_behavior) = request.first_contact_behavior {
-        settings.first_contact_behavior = first_contact_behavior
-            .parse()
-            .map_err(|_| ApiError::BadRequest("Invalid first contact behavior".to_string()))?;
-    }
-
-    if let Some(inspector_timeout_ms) = request.inspector_timeout_ms {
-        settings.inspector_timeout_ms = inspector_timeout_ms;
-    }
-
-    if let Some(default_config_mode) = request.default_config_mode {
-        settings.default_config_mode = default_config_mode;
-    }
-
-    let settings = if file_settings_update_requested {
-        let applied = crate::system::settings::apply_settings_with_effects(
+    let settings = if file_settings_update.has_changes() {
+        let applied = crate::system::settings::apply_settings_update_with_effects(
             &db.pool,
-            &previous,
-            &settings,
+            &file_settings_update,
             state.client_service.clone(),
         )
         .await
@@ -238,7 +224,9 @@ pub async fn set_settings(
         }
         applied.settings
     } else {
-        settings
+        crate::system::settings::get_settings(&db.pool)
+            .await
+            .map_err(|err| ApiError::InternalError(err.to_string()))?
     };
     let client_defaults = match merge_strategy_update {
         Some(strategy) => {

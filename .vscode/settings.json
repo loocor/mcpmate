@@ -16,5 +16,8 @@
     "backend/Cargo.toml",
     "desktop/src-tauri/Cargo.toml",
     "extension/cherry/Cargo.toml"
-  ]
+  ],
+  "rust-analyzer.cargo.extraEnv": {
+    "RUSTC_WRAPPER": ""
+  }
 }

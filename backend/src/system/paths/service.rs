@@ -232,6 +232,28 @@ impl PathService {
         }
     }
 
+    /// Atomically replace content without creating or pruning backups.
+    pub async fn atomic_write(
+        &self,
+        target: &Path,
+        content: &[u8],
+    ) -> Result<()> {
+        self.ensure_parent_dirs(target).await?;
+
+        let tmp_suffix = nanoid!(8);
+        let tmp_path = target.with_extension(format!("tmp.{}", tmp_suffix));
+        fs::write(&tmp_path, content)
+            .await
+            .context(format!("Failed to write temporary file: {}", tmp_path.display()))?;
+
+        if let Err(err) = replace_existing_file(&tmp_path, target) {
+            let _ = fs::remove_file(&tmp_path).await;
+            return Err(err);
+        }
+
+        Ok(())
+    }
+
     pub fn atomic_write_with_backup_sync(
         &self,
         target: &Path,
