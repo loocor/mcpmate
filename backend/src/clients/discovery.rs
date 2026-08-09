@@ -45,9 +45,26 @@ pub async fn fetch_admin_discovery_client_templates(base_url: &str) -> ConfigRes
     fetch_admin_discovery_client_templates_with_config(base_url, AdminDiscoveryHttpConfig::default()).await
 }
 
+pub(crate) async fn fetch_admin_discovery_client_templates_strict(base_url: &str) -> ConfigResult<Vec<ClientTemplate>> {
+    fetch_admin_discovery_client_templates_with_mapper(
+        base_url,
+        AdminDiscoveryHttpConfig::default(),
+        map_admin_discovery_clients_strict,
+    )
+    .await
+}
+
 async fn fetch_admin_discovery_client_templates_with_config(
     base_url: &str,
     http_config: AdminDiscoveryHttpConfig,
+) -> ConfigResult<Vec<ClientTemplate>> {
+    fetch_admin_discovery_client_templates_with_mapper(base_url, http_config, map_admin_discovery_clients).await
+}
+
+async fn fetch_admin_discovery_client_templates_with_mapper(
+    base_url: &str,
+    http_config: AdminDiscoveryHttpConfig,
+    mapper: fn(Value) -> ConfigResult<Vec<ClientTemplate>>,
 ) -> ConfigResult<Vec<ClientTemplate>> {
     let url = format!("{}/discovery/clients", base_url.trim_end_matches('/'));
     let client = build_admin_discovery_http_client(http_config)?;
@@ -75,7 +92,7 @@ async fn fetch_admin_discovery_client_templates_with_config(
         offset = next_offset;
     }
 
-    map_admin_discovery_clients(admin_discovery_clients_payload(clients))
+    mapper(admin_discovery_clients_payload(clients))
 }
 
 fn build_admin_discovery_http_client(http_config: AdminDiscoveryHttpConfig) -> ConfigResult<reqwest::Client> {
@@ -111,10 +128,24 @@ async fn fetch_admin_discovery_clients_page(
         .map_err(|err| ConfigError::DataAccessError(format!("Admin discovery request failed: {err}")))?;
     let status = response.status();
     ensure_admin_discovery_success_status(status)?;
-    response
-        .json::<Value>()
-        .await
-        .map_err(|err| ConfigError::DataAccessError(format!("Failed to parse Admin discovery response: {err}")))
+    let content_encoding_context = response
+        .headers()
+        .get(reqwest::header::CONTENT_ENCODING)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| format!("Content-Encoding: {value}"))
+        .unwrap_or_else(|| {
+            "Original Content-Encoding unavailable at body-read stage; reqwest may have automatically decompressed the response or upstream omitted the header".to_string()
+        });
+    let body = response.bytes().await.map_err(|err| {
+        ConfigError::DataAccessError(format!(
+            "Failed to decode Admin discovery response body from {url} (HTTP {status}; {content_encoding_context}): {err}"
+        ))
+    })?;
+    serde_json::from_slice(&body).map_err(|err| {
+        ConfigError::DataAccessError(format!(
+            "Failed to parse Admin discovery response from {url} (HTTP {status}; {content_encoding_context}): {err}"
+        ))
+    })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -243,14 +274,7 @@ fn optional_bool_page_field(
 }
 
 pub(crate) fn map_admin_discovery_clients(payload: Value) -> ConfigResult<Vec<ClientTemplate>> {
-    let Some(clients) = record(&payload)
-        .and_then(|root| root.get("clients"))
-        .and_then(Value::as_array)
-    else {
-        return Err(ConfigError::TemplateParseError(
-            "Admin discovery response is missing clients array".to_string(),
-        ));
-    };
+    let clients = admin_discovery_clients_array(&payload)?;
 
     let mut templates = Vec::new();
     for client in clients {
@@ -266,14 +290,50 @@ pub(crate) fn map_admin_discovery_clients(payload: Value) -> ConfigResult<Vec<Cl
     Ok(templates)
 }
 
+fn map_admin_discovery_clients_strict(payload: Value) -> ConfigResult<Vec<ClientTemplate>> {
+    let clients = admin_discovery_clients_array(&payload)?;
+
+    let mut templates = Vec::new();
+    for client in clients {
+        let Some((client, config, file)) = strict_file_mapping(client)? else {
+            continue;
+        };
+        let template = map_admin_discovery_file_client(client, config, file)?.ok_or_else(|| {
+            ConfigError::TemplateParseError(
+                "Admin discovery file client is missing required config.file mapping fields".to_string(),
+            )
+        })?;
+        templates.push(template);
+    }
+
+    Ok(templates)
+}
+
+type StrictFileMapping<'a> = (&'a Map<String, Value>, &'a Map<String, Value>, &'a Map<String, Value>);
+
+fn strict_file_mapping(value: &Value) -> ConfigResult<Option<StrictFileMapping<'_>>> {
+    let Some(client) = record(value) else {
+        return Ok(None);
+    };
+    let Some(config) = field_record(client, "config") else {
+        return Ok(None);
+    };
+    if compact_string(config.get("kind")) != Some("file") {
+        return Ok(None);
+    }
+    let file = field_record(config, "file").ok_or_else(|| {
+        ConfigError::TemplateParseError("Admin discovery file client must provide config.file as an object".to_string())
+    })?;
+
+    Ok(Some((client, config, file)))
+}
+
 fn map_admin_discovery_client(value: &Value) -> ConfigResult<Option<ClientTemplate>> {
     let Some(client) = record(value) else {
         return Err(ConfigError::TemplateParseError(
             "Admin discovery client entry must be an object".to_string(),
         ));
     };
-    let identifier = first_compact_string(client, &["identifier", "id", "name"])
-        .ok_or_else(|| ConfigError::TemplateParseError("Admin discovery client is missing identifier".to_string()))?;
     let Some(config) = field_record(client, "config") else {
         return Ok(None);
     };
@@ -283,6 +343,17 @@ fn map_admin_discovery_client(value: &Value) -> ConfigResult<Option<ClientTempla
     let Some(file) = field_record(config, "file") else {
         return Ok(None);
     };
+
+    map_admin_discovery_file_client(client, config, file)
+}
+
+fn map_admin_discovery_file_client(
+    client: &Map<String, Value>,
+    config: &Map<String, Value>,
+    file: &Map<String, Value>,
+) -> ConfigResult<Option<ClientTemplate>> {
+    let identifier = first_compact_string(client, &["identifier", "id", "name"])
+        .ok_or_else(|| ConfigError::TemplateParseError("Admin discovery client is missing identifier".to_string()))?;
     let detection = detection_rules_from_paths(file)?;
     if detection.is_empty() {
         return Ok(None);
@@ -694,13 +765,18 @@ mod tests {
         result: ConfigResult<Vec<ClientTemplate>>,
         expected: &str,
     ) {
-        let Err(ConfigError::DataAccessError(message)) = result else {
-            panic!("expected data access error");
-        };
+        let message = data_access_error_message(result);
         assert!(
             message.contains(expected),
             "expected error to contain '{expected}', got '{message}'"
         );
+    }
+
+    fn data_access_error_message(result: ConfigResult<Vec<ClientTemplate>>) -> String {
+        let Err(ConfigError::DataAccessError(message)) = result else {
+            panic!("expected data access error");
+        };
+        message
     }
 
     #[test]
@@ -1237,6 +1313,89 @@ mod tests {
         let result = fetch_admin_discovery_client_templates("http://[::1").await;
 
         assert_data_access_error(result, "Admin discovery request failed");
+    }
+
+    #[tokio::test]
+    async fn fetch_admin_discovery_decodes_zstd_response() {
+        let server = wiremock::MockServer::start().await;
+        let response = serde_json::json!({
+            "clients": [admin_discovery_file_client("zstd-client")],
+            "page": {
+                "limit": 100,
+                "offset": 0,
+                "total": 1
+            }
+        });
+        let compressed_body =
+            zstd::stream::encode_all(response.to_string().as_bytes(), 0).expect("compress discovery response");
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/discovery/clients"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .insert_header("content-encoding", "zstd")
+                    .set_body_bytes(compressed_body),
+            )
+            .mount(&server)
+            .await;
+
+        let templates = fetch_admin_discovery_client_templates(&server.uri())
+            .await
+            .expect("decode zstd Admin discovery response");
+
+        assert_eq!(templates.len(), 1);
+        assert_eq!(templates[0].identifier, "zstd-client");
+    }
+
+    #[tokio::test]
+    async fn fetch_admin_discovery_reports_zstd_decode_failure_without_body() {
+        let server = wiremock::MockServer::start().await;
+        let body_sentinel = "CORRUPTED_ZSTD_BODY_SENTINEL";
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/discovery/clients"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .insert_header("content-encoding", "zstd")
+                    .set_body_bytes(body_sentinel.as_bytes()),
+            )
+            .mount(&server)
+            .await;
+
+        let message = data_access_error_message(fetch_admin_discovery_client_templates(&server.uri()).await);
+
+        assert!(message.contains("Failed to decode Admin discovery response body"));
+        assert!(message.contains(&server.uri()));
+        assert!(message.contains("HTTP 200"));
+        assert!(message.contains("Original Content-Encoding unavailable at body-read stage"));
+        assert!(message.contains("reqwest may have automatically decompressed the response"));
+        assert!(!message.contains("identity"));
+        assert!(!message.contains(body_sentinel));
+    }
+
+    #[tokio::test]
+    async fn fetch_admin_discovery_reports_zstd_non_json_response_without_body() {
+        let server = wiremock::MockServer::start().await;
+        let body_sentinel = "ZSTD_NON_JSON_BODY_SENTINEL";
+        let compressed_body =
+            zstd::stream::encode_all(body_sentinel.as_bytes(), 0).expect("compress non-JSON discovery response");
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/discovery/clients"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .insert_header("content-encoding", "zstd")
+                    .set_body_bytes(compressed_body),
+            )
+            .mount(&server)
+            .await;
+
+        let message = data_access_error_message(fetch_admin_discovery_client_templates(&server.uri()).await);
+
+        assert!(message.contains("Failed to parse Admin discovery response"));
+        assert!(message.contains(&server.uri()));
+        assert!(message.contains("HTTP 200"));
+        assert!(message.contains("Original Content-Encoding unavailable at body-read stage"));
+        assert!(message.contains("reqwest may have automatically decompressed the response"));
+        assert!(!message.contains("identity"));
+        assert!(!message.contains(body_sentinel));
     }
 
     #[tokio::test]

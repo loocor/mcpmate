@@ -31,6 +31,7 @@ hyper = { version = "1.6", features = ["full"] }
 axum-test = "15.0"
 tokio-tungstenite = "0.26"
 futures-util = "0.3"
+zstd = "0.13"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59.0", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
@@ -53,6 +54,7 @@ reqwest = { version = "0.13", features = [
   "query",
   "stream",
   "rustls",
+  "zstd",
 ], default-features = false }
 rmcp = { version = "=3.0.1", features = [
   "__reqwest",
