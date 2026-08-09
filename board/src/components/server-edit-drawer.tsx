@@ -10,10 +10,24 @@ import type {
 	ServerDetail,
 	ServerIcon,
 	ServerMetaInfo,
+	TransportFocusField,
 } from "../lib/types";
 import { ServerInstallManualForm, type ServerInstallManualFormHandle } from "./server-install";
+import {
+	requireExplicitTransportSelection,
+	SERVER_TYPE_OPTIONS,
+	transportDraftToFormFields,
+} from "./server-install/types";
+import {
+	Drawer,
+	DrawerContent,
+	DrawerDescription,
+	DrawerHeader,
+	DrawerTitle,
+} from "./ui/drawer";
 import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
+import { Segment } from "./ui/segment";
 
 interface ServerEditDrawerProps {
 	server: ServerDetail | null;
@@ -22,6 +36,7 @@ interface ServerEditDrawerProps {
 	onSubmit: (config: Partial<MCPServerConfig>) => Promise<void> | void;
 	onUpdated?: () => void;
 	onOAuthConnected?: (serverId: string) => void;
+	focusTransportField?: TransportFocusField;
 }
 
 type UpdateConfig = Partial<MCPServerConfig> & {
@@ -190,14 +205,36 @@ const buildUrlWithParams = (
 
 const convertServerDetailToDraft = (
 	server: ServerDetail,
-): ServerInstallDraft => {
+	selectedUnrecognizedTransport?: ServerInstallDraft["kind"],
+): ServerInstallDraft | null => {
+	const meta = buildMetaFromServer(server);
+	const source = server.source ?? undefined;
+	const transportDraft = server.transport_validity?.draft;
+	if (transportDraft?.kind === "unrecognized") {
+		if (!selectedUnrecognizedTransport) return null;
+		return {
+			name: server.name,
+			kind: selectedUnrecognizedTransport,
+			meta,
+			source,
+		};
+	}
+	const transportFields = transportDraft
+		? transportDraftToFormFields(transportDraft, server.env ?? undefined)
+		: null;
+	if (transportFields) {
+		return {
+			name: server.name,
+			...transportFields,
+			meta,
+			source,
+		};
+	}
+
 	const kind = inferKind(server.server_type);
 	const args = Array.isArray(server.args)
 		? server.args.filter((item): item is string => Boolean(item))
 		: undefined;
-	const meta = buildMetaFromServer(server);
-	const source = server.source ?? undefined;
-
 	const headersSource = server.headers ?? server.env ?? undefined;
 	const sanitizedHeaders = sanitizeRecord(headersSource ?? undefined);
 
@@ -285,32 +322,49 @@ export function ServerEditDrawer({
 	onSubmit,
 	onUpdated,
 	onOAuthConnected,
+	focusTransportField,
 }: ServerEditDrawerProps) {
 	const { t } = useTranslation("servers");
 	const formRef = useRef<ServerInstallManualFormHandle>(null);
 	const [isRefreshing, setIsRefreshing] = useState(false);
 	const [unifyEligible, setUnifyEligible] = useState(false);
+	const [selectedUnrecognizedTransport, setSelectedUnrecognizedTransport] =
+		useState<ServerInstallDraft["kind"]>();
 	const [namespaceRemediationFeedback, setNamespaceRemediationFeedback] =
 		useState<string | null>(null);
 	const namespaceRemediationAllowed =
 		server?.namespace_issue?.remediation_allowed === true;
+	const unrecognizedTransport =
+		server?.transport_validity?.draft?.kind === "unrecognized"
+			? server.transport_validity.draft
+			: null;
 
 	useEffect(() => {
 		if (isOpen && server) {
 			setUnifyEligible(server.unify_direct_exposure_eligible ?? false);
 			setNamespaceRemediationFeedback(null);
+			setSelectedUnrecognizedTransport(undefined);
 		}
 	}, [isOpen, server]);
 
 	const initialDraft = useMemo(
-		() => (server ? convertServerDetailToDraft(server) : null),
-		[server],
+		() =>
+			server
+				? convertServerDetailToDraft(server, selectedUnrecognizedTransport)
+				: null,
+		[server, selectedUnrecognizedTransport],
 	);
 	const canRefreshFromRegistry = isRegistrySource(server?.source);
 
 	const handleSubmit = useCallback(
 		async (draft: ServerInstallDraft) => {
 			if (!server) return;
+			if (unrecognizedTransport) {
+				requireExplicitTransportSelection(
+					unrecognizedTransport,
+					selectedUnrecognizedTransport,
+				);
+			}
 			const namespace = draft.name.trim();
 			if (namespaceRemediationAllowed) {
 				if (namespace === server.name) {
@@ -350,7 +404,9 @@ export function ServerEditDrawer({
 			onUpdated,
 			server,
 			t,
+			unrecognizedTransport,
 			unifyEligible,
+			selectedUnrecognizedTransport,
 		],
 	);
 
@@ -471,6 +527,39 @@ export function ServerEditDrawer({
 		</div>
 	);
 
+	if (unrecognizedTransport && !selectedUnrecognizedTransport) {
+		return (
+			<Drawer open={isOpen} onOpenChange={(open) => !open && onClose()}>
+				<DrawerContent className="mx-auto max-w-2xl">
+					<DrawerHeader>
+						<DrawerTitle>
+							{t("manual.transport.unrecognized.title", {
+								defaultValue: "Choose a transport to repair this server",
+							})}
+						</DrawerTitle>
+						<DrawerDescription>
+							{t("manual.transport.unrecognized.description", {
+								declaredType: unrecognizedTransport.declared_type,
+								defaultValue:
+									'The saved transport type "{{declaredType}}" is not recognized. Select its intended transport before editing; existing command and URL values will not be copied.',
+							})}
+						</DrawerDescription>
+					</DrawerHeader>
+					<div className="px-4 pb-8 sm:px-6">
+						<Segment
+							options={SERVER_TYPE_OPTIONS}
+							onValueChange={(value) =>
+								setSelectedUnrecognizedTransport(
+									value as ServerInstallDraft["kind"],
+								)
+							}
+						/>
+					</div>
+				</DrawerContent>
+			</Drawer>
+		);
+	}
+
 	return (
 		<ServerInstallManualForm
 			ref={formRef}
@@ -486,6 +575,7 @@ export function ServerEditDrawer({
 			namespaceIssue={server?.namespace_issue}
 			namespaceIssueFeedback={namespaceRemediationFeedback}
 			initialDraft={initialDraft ?? undefined}
+			focusTransportField={focusTransportField}
 			onRefreshFromRegistry={canRefreshFromRegistry ? handleRefreshFromRegistry : undefined}
 			isRefreshingRegistry={isRefreshing}
 			extraTab={{

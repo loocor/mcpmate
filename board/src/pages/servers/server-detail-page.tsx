@@ -94,7 +94,11 @@ import { getServerDisplayName } from "../../lib/server-display";
 import { syncAuthenticatedServerCapabilities } from "../../lib/server-auth-sync";
 import { useAppStore } from "../../lib/store";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
-import type { ServerDetail } from "../../lib/types";
+import {
+	resolveTransportFocusField,
+	type ServerDetail,
+	type TransportFocusField,
+} from "../../lib/types";
 import type { CapabilityRecord } from "../../types/capabilities";
 
 const readLegacyString = (
@@ -253,6 +257,8 @@ export function ServerDetailPage() {
 	);
 
 	const [isEditOpen, setIsEditOpen] = useState(false);
+	const [editFocusTransportField, setEditFocusTransportField] =
+		useState<TransportFocusField | undefined>();
 	const [isDeleteOpen, setIsDeleteOpen] = useState(false);
 	const [inspector, setInspector] = useState<InspectorTarget | null>(null);
 
@@ -276,6 +282,15 @@ export function ServerDetailPage() {
 		);
 	}, [location.pathname, location.search, navigate]);
 
+	useEffect(() => {
+		const params = new URLSearchParams(location.search);
+		if (params.get("edit") !== "1") return;
+		setEditFocusTransportField(
+			resolveTransportFocusField(params.get("focus"), undefined),
+		);
+		setIsEditOpen(true);
+	}, [location.search]);
+
 	const {
 		data: server,
 		isLoading,
@@ -293,6 +308,18 @@ export function ServerDetailPage() {
 		},
 	});
 	const isOAuthServer = (server?.auth_mode ?? "").toLowerCase() === "oauth";
+	const transportValidity = server?.transport_validity;
+	const hasTransportIssue =
+		transportValidity?.state === "invalid" ||
+		transportValidity?.state === "missing";
+	const transportFocusField = resolveTransportFocusField(
+		transportValidity?.diagnostics[0]?.field,
+		server?.server_type,
+	);
+	const openTransportEditor = useCallback(() => {
+		setEditFocusTransportField(transportFocusField);
+		setIsEditOpen(true);
+	}, [transportFocusField]);
 	const oauthStatusQuery = useQuery({
 		queryKey: ["server-oauth", serverId],
 		queryFn: () => serversApi.getOAuthStatus(serverId!),
@@ -706,7 +733,11 @@ export function ServerDetailPage() {
 					<ServerEditDrawer
 						server={server}
 						isOpen={isEditOpen}
-						onClose={() => setIsEditOpen(false)}
+						onClose={() => {
+							setIsEditOpen(false);
+							setEditFocusTransportField(undefined);
+						}}
+						focusTransportField={editFocusTransportField}
 						onOAuthConnected={handleOAuthConnected}
 						onSubmit={async (data) => {
 							const {
@@ -848,6 +879,35 @@ export function ServerDetailPage() {
 									<Card className={DETAIL_OVERVIEW_PINNED_SECTION_CLASS}>
 										<CardContent className="p-4">
 											<div className="flex flex-col gap-4">
+												{hasTransportIssue ? (
+													<button
+														type="button"
+														onClick={openTransportEditor}
+														className="flex w-full items-start gap-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-left text-amber-950 transition-colors hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-950/60"
+													>
+														<AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+														<span className="min-w-0">
+															<span className="block text-sm font-medium">
+																{t(
+																	transportValidity?.state === "missing"
+																		? "detail.transportValidity.missingTitle"
+																		: "detail.transportValidity.invalidTitle",
+																	{ defaultValue: "Transport configuration needs attention" },
+																)}
+															</span>
+															<span className="block text-xs opacity-90">
+																{transportValidity?.diagnostics.length
+																	? transportValidity.diagnostics
+																			.map((diagnostic) => diagnostic.code)
+																			.join(", ")
+																	: t("detail.transportValidity.missingDescription", {
+																			defaultValue:
+																				"Open the editor to restore the server transport.",
+																		})}
+															</span>
+														</span>
+													</button>
+												) : null}
 												<div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
 													<div className="flex flex-wrap items-start gap-4">
 														<CachedAvatar

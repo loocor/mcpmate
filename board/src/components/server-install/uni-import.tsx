@@ -125,6 +125,7 @@ export const ServerInstallManualForm = forwardRef<
 			isRefreshingRegistry,
 			mode = "create",
 			initialDraft,
+			focusTransportField,
 			allowJsonEditing,
 			namespaceIssue,
 			namespaceIssueFeedback,
@@ -630,6 +631,23 @@ export const ServerInstallManualForm = forwardRef<
 		const metaRepositorySubfolderId = useId();
 		const metaRepositoryId = useId();
 		const manualJsonId = useId();
+
+		useEffect(() => {
+			if (!isOpen || !focusTransportField || viewMode !== "form") return;
+			const targetId =
+				focusTransportField === "command" ? commandId : urlId;
+			const frame = requestAnimationFrame(() => {
+				document.getElementById(targetId)?.focus();
+			});
+			return () => cancelAnimationFrame(frame);
+		}, [
+			commandId,
+			focusTransportField,
+			isOpen,
+			kind,
+			urlId,
+			viewMode,
+		]);
 
 		// Reset form when closed
 		useEffect(() => {

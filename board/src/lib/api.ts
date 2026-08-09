@@ -75,6 +75,7 @@ import type {
 	ServerMetaInfo,
 	ServerNamespaceIssue,
 	ServerSource,
+	ServerTransportValidity,
 	SurfaceIntentPreviewData,
 	SurfaceIntentPreviewReq,
 	SurfaceIntentResolveReq,
@@ -719,6 +720,96 @@ export const normalizeServerMeta = (
 	return Object.keys(normalized).length > 0 ? normalized : undefined;
 };
 
+const normalizeApiConfigValue = (value: unknown) => {
+	if (!value || typeof value !== "object") return undefined;
+	const record = value as Record<string, unknown>;
+	if (record.kind === "literal" && typeof record.value === "string") {
+		return { kind: "literal" as const, value: record.value };
+	}
+	if (record.kind === "secret_ref" && typeof record.alias === "string") {
+		return { kind: "secret_ref" as const, alias: record.alias };
+	}
+	return undefined;
+};
+
+const normalizeConfigValueRecord = (value: unknown) => {
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		return undefined;
+	}
+	const result: Record<string, NonNullable<ReturnType<typeof normalizeApiConfigValue>>> = {};
+	for (const [key, configValue] of Object.entries(value)) {
+		const normalized = normalizeApiConfigValue(configValue);
+		if (!normalized) return undefined;
+		result[key] = normalized;
+	}
+	return result;
+};
+
+const normalizeServerTransportValidity = (
+	value: unknown,
+): ServerTransportValidity | undefined => {
+	if (!value || typeof value !== "object") return undefined;
+	const record = value as Record<string, unknown>;
+	if (
+		record.state !== "valid" &&
+		record.state !== "invalid" &&
+		record.state !== "missing"
+	) {
+		return undefined;
+	}
+	const diagnostics = Array.isArray(record.diagnostics)
+		? record.diagnostics.flatMap((diagnostic) => {
+			if (!diagnostic || typeof diagnostic !== "object") return [];
+			const item = diagnostic as Record<string, unknown>;
+			return typeof item.code === "string" && typeof item.field === "string"
+				? [{ code: item.code, field: item.field }]
+				: [];
+		})
+		: [];
+
+	let draft: ServerTransportValidity["draft"];
+	if (record.draft && typeof record.draft === "object") {
+		const draftRecord = record.draft as Record<string, unknown>;
+		if (draftRecord.kind === "stdio") {
+			const env = normalizeConfigValueRecord(draftRecord.env);
+			if (env && Array.isArray(draftRecord.args) && draftRecord.args.every((arg) => typeof arg === "string")) {
+				draft = {
+					kind: "stdio",
+					command:
+						typeof draftRecord.command === "string" || draftRecord.command === null
+							? draftRecord.command
+							: undefined,
+					args: draftRecord.args,
+					env,
+				};
+			}
+		} else if (draftRecord.kind === "http") {
+			const headers = normalizeConfigValueRecord(draftRecord.headers);
+			if (
+				headers &&
+				(draftRecord.protocol === "sse" || draftRecord.protocol === "streamable_http")
+			) {
+				draft = {
+					kind: "http",
+					protocol: draftRecord.protocol,
+					endpoint:
+						typeof draftRecord.endpoint === "string" || draftRecord.endpoint === null
+							? draftRecord.endpoint
+							: undefined,
+					headers,
+				};
+			}
+		} else if (
+			draftRecord.kind === "unrecognized" &&
+			typeof draftRecord.declared_type === "string"
+		) {
+			draft = { kind: "unrecognized", declared_type: draftRecord.declared_type };
+		}
+	}
+
+	return { state: record.state, diagnostics, draft };
+};
+
 const serializeRepositoryForApi = (
 	repo: RegistryRepositoryInfo | null | undefined,
 ): Record<string, string> | undefined => {
@@ -906,6 +997,9 @@ const enrichServerRecord = <T extends Record<string, unknown>>(server: T) => {
 	const capability = normalizeCapabilitySummary(
 		server.capability,
 	);
+	const transportValidity = normalizeServerTransportValidity(
+		server.transport_validity,
+	);
 
 	if (meta || combinedIcons.length) {
 		base.meta = {
@@ -928,10 +1022,17 @@ const enrichServerRecord = <T extends Record<string, unknown>>(server: T) => {
 		delete base.capability;
 	}
 
+	if (transportValidity) {
+		base.transport_validity = transportValidity;
+	} else {
+		delete base.transport_validity;
+	}
+
 	return base as T & {
 		meta?: ServerMetaInfo;
 		icons?: ServerIcon[];
 		capability?: ServerCapabilitySummary;
+		transport_validity?: ServerTransportValidity;
 	};
 };
 
@@ -1009,6 +1110,9 @@ function normalizeServerDetail(
           : undefined,
 		icons: normalizeServerIconList(enhanced?.icons),
 		capability: enhanced.capability as ServerCapabilitySummary | undefined,
+		transport_validity: normalizeServerTransportValidity(
+			detailRecord.transport_validity,
+		),
 		source_revision_set:
 			enhanced.source_revision_set as CatalogRevisionSet | undefined,
 		namespace_issue:

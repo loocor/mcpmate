@@ -145,6 +145,51 @@ describe("serversApi.getServer", () => {
 		expect(server.capability?.resources.declaration).toBe("unsupported");
 	});
 
+	test("normalizes transport validity drafts and diagnostics", async () => {
+		globalThis.fetch = async () =>
+			new Response(
+				JSON.stringify({
+					data: {
+						id: "server-invalid",
+						name: "invalid-server",
+						status: "idle",
+						transport_validity: {
+							state: "invalid",
+							diagnostics: [
+								{ code: "stdio_command_missing", field: "command" },
+							],
+							draft: {
+								kind: "stdio",
+								command: null,
+								args: ["--verbose"],
+								env: {
+									TOKEN: { kind: "secret_ref", alias: "server-token" },
+								},
+							},
+						},
+					},
+				}),
+				{ headers: { "content-type": "application/json" } },
+			);
+
+		const server = await serversApi.getServer("server-invalid");
+
+		expect(server.transport_validity).toEqual({
+			state: "invalid",
+			diagnostics: [
+				{ code: "stdio_command_missing", field: "command" },
+			],
+			draft: {
+				kind: "stdio",
+				command: null,
+				args: ["--verbose"],
+				env: {
+					TOKEN: { kind: "secret_ref", alias: "server-token" },
+				},
+			},
+		});
+	});
+
 	test("rejects the legacy boolean and count capability summary", async () => {
 		globalThis.fetch = async () =>
 			new Response(

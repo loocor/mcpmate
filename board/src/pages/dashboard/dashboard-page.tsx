@@ -35,9 +35,41 @@ import {
 	surfaceReviewsApi,
 	systemApi,
 } from "../../lib/api";
-import type { ClientCheckData } from "../../lib/types";
+import {
+	resolveTransportFocusField,
+	type ClientCheckData,
+	type ServerSummary,
+} from "../../lib/types";
 import { getSurfaceReviewDestination } from "../../lib/surface-reviews";
 import { cn, formatUptime } from "../../lib/utils";
+
+type ServerTransportTodo = {
+	serverId: string;
+	serverName: string;
+	focus: "command" | "url";
+	destination: string;
+};
+
+function getServerTransportTodos(
+	servers: ServerSummary[] | undefined,
+): ServerTransportTodo[] {
+	return (servers ?? []).flatMap((server) => {
+		const validity = server.transport_validity;
+		if (validity?.state !== "invalid" && validity?.state !== "missing") {
+			return [];
+		}
+		const focus = resolveTransportFocusField(
+			validity.diagnostics[0]?.field,
+			server.server_type,
+		);
+		return [{
+			serverId: server.id,
+			serverName: server.name,
+			focus,
+			destination: `/servers/${encodeURIComponent(server.id)}?edit=1&focus=${focus}`,
+		}];
+	});
+}
 
 export function DashboardPage() {
 	usePageTranslations("dashboard");
@@ -115,6 +147,8 @@ export function DashboardPage() {
 	const totalClients = clientsData?.total ?? clientsData?.client?.length ?? 0;
 	const approvedClients =
 		clientsData?.client?.filter((client) => client.approval_status === "approved").length ?? 0;
+	const serverTransportTodos = getServerTransportTodos(servers?.servers);
+	const todoCount = pendingReviewItems.length + serverTransportTodos.length;
 
 	const effectiveSystemStatus = React.useMemo(() => {
 		if (
@@ -466,7 +500,7 @@ export function DashboardPage() {
 						</div>
 						<span className="rounded-full border border-amber-300 bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
 							{t("surfaceReview:dashboard.pending", {
-								count: pendingReviewItems.length,
+								count: todoCount,
 								defaultValue: "{{count}} pending",
 							})}
 						</span>
@@ -491,7 +525,7 @@ export function DashboardPage() {
 							})}
 						</div>
 					) : null}
-					{isLoadingReviews ? (
+					{isLoadingReviews && serverTransportTodos.length === 0 ? (
 						<div className="space-y-2">
 							{Array.from({ length: 2 }, (_, index) => (
 								<div
@@ -500,22 +534,52 @@ export function DashboardPage() {
 								/>
 							))}
 						</div>
-					) : reviewItemsError ? (
+					) : null}
+					{reviewItemsError ? (
 						<div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
 							<AlertTriangle className="h-4 w-4" />
 							{t("surfaceReview:errors.load", {
 								defaultValue: "Unable to load pending capability reviews.",
 							})}
 						</div>
-					) : pendingReviewItems.length === 0 ? (
+					) : null}
+					{serverTransportTodos.length === 0 &&
+					!isLoadingReviews &&
+					!reviewItemsError &&
+					pendingReviewItems.length === 0 ? (
 						<p className="text-sm text-muted-foreground">
 							{t("surfaceReview:dashboard.empty", {
 								defaultValue: "No capability reviews are pending.",
 							})}
 						</p>
-					) : (
+					) : serverTransportTodos.length > 0 ||
+					(!isLoadingReviews &&
+						!reviewItemsError &&
+						pendingReviewItems.length > 0) ? (
 						<div className="divide-y rounded-md border">
-							{pendingReviewItems.slice(0, 6).map((item) => {
+							{serverTransportTodos.slice(0, 6).map((item) => (
+								<Link
+									key={`server-transport:${item.serverId}`}
+									to={item.destination}
+									className="flex items-center justify-between gap-3 px-3 py-2.5 transition-colors hover:bg-muted/60"
+								>
+									<div className="min-w-0">
+										<div className="truncate text-sm font-medium">
+											{item.serverName}
+										</div>
+										<div className="truncate font-mono text-xs text-muted-foreground">
+											{t("dashboard:transportValidity.todo", {
+												defaultValue: "Server transport needs repair",
+											})}
+										</div>
+									</div>
+									<ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+								</Link>
+							))}
+							{!reviewItemsError &&
+								pendingReviewItems
+									.slice(0, Math.max(0, 6 - serverTransportTodos.length))
+									.map((item) => {
 								const owner = item.owners[0];
 								const destination = owner
 									? getSurfaceReviewDestination(
@@ -540,10 +604,10 @@ export function DashboardPage() {
 										</div>
 										<ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
 									</Link>
-								);
-							})}
+									);
+								})}
 						</div>
-					)}
+					) : null}
 				</CardContent>
 			</Card>
 		</div>

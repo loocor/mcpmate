@@ -2,8 +2,10 @@ import { z } from "zod";
 import type { ServerInstallDraft } from "../../hooks/use-server-install-pipeline";
 import type { ServerIngestPayload } from "../../lib/install-normalizer";
 import type {
+	ApiServerTransportDraft,
 	OAuthConfigRequest,
 	ServerNamespaceIssue,
+	TransportFocusField,
 } from "../../lib/types";
 import { isCanonicalServerNamespace } from "../../lib/server-namespace";
 import type { SegmentOption } from "../ui/segment";
@@ -212,6 +214,8 @@ export interface ServerInstallManualFormProps {
 	onAuthModeChange?: (mode: "header" | "oauth") => void;
 	/** Optional initial draft used to hydrate the form when editing an existing server. */
 	initialDraft?: ServerInstallDraft | null;
+	/** Field to focus after the edit drawer opens. */
+	focusTransportField?: TransportFocusField;
 	/** Allow users to modify the JSON representation. Defaults to true in create mode. */
 	allowJsonEditing?: boolean;
 	/** Existing namespace issue shown by the edit flow. */
@@ -251,3 +255,63 @@ export const cloneKeyValuePairs = (
 				value: item?.value ?? "",
 			}))
 		: [];
+
+export function transportDraftToFormFields(
+	draft: ApiServerTransportDraft,
+	legacyEnv?: Record<string, string>,
+): Pick<
+	ServerInstallDraft,
+	"kind" | "command" | "args" | "env" | "url" | "urlParams" | "headers"
+> | null {
+	if (draft.kind === "stdio") {
+		return {
+			kind: "stdio",
+			command: draft.command ?? undefined,
+			args: draft.args,
+				env: Object.fromEntries(
+					Object.entries(draft.env).map(([key, value]) => [
+						key,
+						value.kind === "secret_ref"
+							? `[[secret:${value.alias}]]`
+							: (legacyEnv?.[key] ?? value.value),
+					]),
+			),
+		};
+	}
+	if (draft.kind === "http") {
+		const endpoint = draft.endpoint ?? undefined;
+		const [url, query] = endpoint?.split("?") ?? [];
+		const urlParams: Record<string, string> = {};
+		if (query) {
+			new URLSearchParams(query).forEach((value, key) => {
+				urlParams[key] = value;
+			});
+		}
+		return {
+			kind: draft.protocol,
+			url,
+			urlParams: Object.keys(urlParams).length ? urlParams : undefined,
+			headers: Object.fromEntries(
+				Object.entries(draft.headers).map(([key, value]) => [
+					key,
+					value.kind === "secret_ref"
+						? `[[secret:${value.alias}]]`
+						: value.value,
+				]),
+			),
+		};
+	}
+	return null;
+}
+
+export function requireExplicitTransportSelection(
+	draft: Extract<ApiServerTransportDraft, { kind: "unrecognized" }>,
+	selectedKind?: ServerInstallDraft["kind"],
+): ServerInstallDraft["kind"] {
+	if (!selectedKind) {
+		throw new Error(
+			`Select a transport before updating server with unrecognized type: ${draft.declared_type}`,
+		);
+	}
+	return selectedKind;
+}
