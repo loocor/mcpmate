@@ -12,6 +12,13 @@ impl ClientConfigService {
         force_detect: bool,
         persist_detected: bool,
     ) -> ConfigResult<Vec<ClientDescriptor>> {
+        if let Err(err) = self.ensure_runtime_template_snapshot().await {
+            tracing::warn!(
+                error = %err,
+                "Admin discovery runtime template refresh failed during client listing; continuing with existing SQLite snapshot"
+            );
+        }
+
         if force_detect {
             self.template_source.reload().await?;
         }

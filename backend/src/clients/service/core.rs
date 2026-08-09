@@ -1,6 +1,6 @@
 use crate::clients::TemplateEngine;
 use crate::clients::detector::{ClientDetector, DetectedClient};
-use crate::clients::discovery::{admin_discovery_base_url, fetch_admin_discovery_client_templates};
+use crate::clients::discovery::{admin_discovery_base_url, fetch_admin_discovery_client_templates_strict};
 use crate::clients::document::{map_config_file_error, parse_config, persist_config_document};
 use crate::clients::engine::TemplateExecutionResult;
 use crate::clients::error::{ConfigError, ConfigResult};
@@ -15,6 +15,7 @@ use crate::clients::mutate::remove_managed_entries;
 use crate::clients::source::FileTemplateSource;
 use crate::clients::source::{ClientConfigSource, DbTemplateSource};
 use crate::system::paths::{PathService, get_path_service};
+use crate::system::settings::{get_settings, set_client_discovery_snapshot_last_success_at};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
@@ -22,6 +23,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs::OpenOptions;
+use tokio::sync::{Mutex, watch};
 
 #[derive(Debug, Clone, sqlx::FromRow, Default)]
 pub struct ClientStateRow {
@@ -630,27 +632,51 @@ pub struct ClientConfigService {
     pub(super) template_engine: Arc<TemplateEngine>,
     pub(super) detector: Arc<ClientDetector>,
     pub(super) db_pool: Arc<SqlitePool>,
+    pub(super) admin_discovery_refresh_enabled: bool,
+    runtime_template_snapshot_gate: Arc<Mutex<RuntimeTemplateSnapshotRefreshState>>,
+}
+
+#[derive(Default)]
+struct RuntimeTemplateSnapshotRefreshState {
+    completion: Option<watch::Receiver<bool>>,
+}
+
+struct RuntimeTemplateSnapshotRefreshAttempt {
+    completion: watch::Sender<bool>,
+}
+
+impl Drop for RuntimeTemplateSnapshotRefreshAttempt {
+    fn drop(&mut self) {
+        self.completion.send_replace(true);
+    }
 }
 
 impl ClientConfigService {
     /// Bootstrap service with default template root resolution
     pub async fn bootstrap(db_pool: Arc<SqlitePool>) -> crate::clients::error::ConfigResult<Self> {
-        let base_url = admin_discovery_base_url();
-        if let Err(err) = Self::refresh_runtime_templates_from_admin_discovery(db_pool.as_ref(), &base_url).await {
+        let runtime_source: Arc<dyn ClientConfigSource> = Arc::new(DbTemplateSource::new(db_pool.clone())?);
+        let service = Self::with_source_and_admin_discovery_refresh(db_pool, runtime_source, true).await?;
+        if let Err(err) = service.ensure_runtime_template_snapshot().await {
             tracing::warn!(
                 error = %err,
-                "Admin discovery refresh failed during client config bootstrap; continuing without runtime templates"
+                "Admin discovery refresh failed during client config bootstrap; retaining runtime templates"
             );
-            Self::clear_runtime_template_snapshots(db_pool.as_ref()).await?;
         }
-        let runtime_source: Arc<dyn ClientConfigSource> = Arc::new(DbTemplateSource::new(db_pool.clone())?);
-        Self::with_source(db_pool, runtime_source).await
+        Ok(service)
     }
 
     /// Initialize service with pre-built template source (primarily for tests)
     pub async fn with_source(
         db_pool: Arc<SqlitePool>,
         template_source: Arc<dyn ClientConfigSource>,
+    ) -> crate::clients::error::ConfigResult<Self> {
+        Self::with_source_and_admin_discovery_refresh(db_pool, template_source, false).await
+    }
+
+    async fn with_source_and_admin_discovery_refresh(
+        db_pool: Arc<SqlitePool>,
+        template_source: Arc<dyn ClientConfigSource>,
+        admin_discovery_refresh_enabled: bool,
     ) -> crate::clients::error::ConfigResult<Self> {
         let engine = TemplateEngine::with_defaults(template_source.clone());
         let detector = ClientDetector::new(template_source.clone())?;
@@ -660,12 +686,68 @@ impl ClientConfigService {
             template_engine: Arc::new(engine),
             detector: Arc::new(detector),
             db_pool,
+            admin_discovery_refresh_enabled,
+            runtime_template_snapshot_gate: Arc::new(Mutex::new(RuntimeTemplateSnapshotRefreshState::default())),
         })
     }
 
     /// Reload templates from disk, keeping previous index if reloading fails
     pub async fn reload_templates(&self) -> crate::clients::error::ConfigResult<()> {
         Ok(())
+    }
+
+    pub async fn ensure_runtime_template_snapshot(&self) -> crate::clients::error::ConfigResult<()> {
+        if !self.admin_discovery_refresh_enabled {
+            return Ok(());
+        }
+
+        let mut refresh_state = self.runtime_template_snapshot_gate.lock().await;
+        if let Some(completion) = refresh_state.completion.as_ref() {
+            if *completion.borrow() {
+                refresh_state.completion = None;
+            } else {
+                let mut completion = completion.clone();
+                drop(refresh_state);
+                let _ = completion.changed().await;
+                return Ok(());
+            }
+        }
+        if !Self::runtime_template_snapshot_needs_refresh(self.db_pool.as_ref()).await? {
+            return Ok(());
+        }
+
+        let (completion, receiver) = watch::channel(false);
+        refresh_state.completion = Some(receiver);
+        drop(refresh_state);
+        let _attempt = RuntimeTemplateSnapshotRefreshAttempt { completion };
+
+        let base_url = admin_discovery_base_url();
+        Self::refresh_runtime_templates_from_admin_discovery(self.db_pool.as_ref(), &base_url).await
+    }
+
+    async fn runtime_template_snapshot_needs_refresh(
+        db_pool: &SqlitePool
+    ) -> crate::clients::error::ConfigResult<bool> {
+        let settings = get_settings(db_pool).await?;
+        let runtime_template_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM client_template_runtime")
+            .fetch_one(db_pool)
+            .await
+            .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
+        if runtime_template_count == 0 {
+            return Ok(true);
+        }
+        if settings.client_discovery_snapshot_ttl_seconds <= 0 {
+            return Ok(true);
+        }
+
+        let Some(last_success_at) = settings.client_discovery_snapshot_last_success_at else {
+            return Ok(true);
+        };
+        let last_success_at = DateTime::parse_from_rfc3339(&last_success_at).map_err(|err| {
+            ConfigError::DataAccessError(format!("Invalid client discovery snapshot success time: {err}"))
+        })?;
+        let elapsed = Utc::now().signed_duration_since(last_success_at.with_timezone(&Utc));
+        Ok(elapsed >= chrono::Duration::seconds(settings.client_discovery_snapshot_ttl_seconds))
     }
 
     /// Get template for client identifier on current platform
@@ -948,8 +1030,9 @@ impl ClientConfigService {
         db_pool: &SqlitePool,
         base_url: &str,
     ) -> crate::clients::error::ConfigResult<()> {
-        let templates = fetch_admin_discovery_client_templates(base_url).await?;
-        Self::replace_runtime_template_snapshots_from_templates(db_pool, &templates).await
+        let templates = fetch_admin_discovery_client_templates_strict(base_url).await?;
+        Self::replace_runtime_template_snapshots_from_templates(db_pool, &templates).await?;
+        set_client_discovery_snapshot_last_success_at(db_pool, Utc::now().to_rfc3339()).await
     }
 
     async fn replace_runtime_template_snapshots_from_templates(
@@ -984,14 +1067,6 @@ impl ClientConfigService {
 
         tx.commit()
             .await
-            .map_err(|err| ConfigError::DataAccessError(err.to_string()))
-    }
-
-    async fn clear_runtime_template_snapshots(db_pool: &SqlitePool) -> crate::clients::error::ConfigResult<()> {
-        sqlx::query("DELETE FROM client_template_runtime")
-            .execute(db_pool)
-            .await
-            .map(|_| ())
             .map_err(|err| ConfigError::DataAccessError(err.to_string()))
     }
 
@@ -1183,6 +1258,105 @@ impl ClientConfigService {
             .resolve_user_path(candidate)
             .ok()
             .map(|value| value.to_string_lossy().to_string())
+    }
+}
+
+#[cfg(test)]
+mod runtime_template_snapshot_fixtures {
+    use super::*;
+
+    pub(super) fn runtime_template(identifier: &str) -> ClientTemplate {
+        ClientTemplate {
+            identifier: identifier.to_string(),
+            display_name: Some(identifier.to_string()),
+            ..Default::default()
+        }
+    }
+
+    pub(super) struct AdminDiscoveryBaseUrlOverride {
+        previous: Option<String>,
+    }
+
+    impl AdminDiscoveryBaseUrlOverride {
+        pub(super) fn set(value: String) -> Self {
+            let previous = std::env::var(crate::clients::discovery::ADMIN_DISCOVERY_BASE_URL_ENV).ok();
+            unsafe {
+                std::env::set_var(crate::clients::discovery::ADMIN_DISCOVERY_BASE_URL_ENV, value);
+            }
+            Self { previous }
+        }
+    }
+
+    pub(super) struct TempDirOverride {
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl TempDirOverride {
+        pub(super) fn set(path: &std::path::Path) -> Self {
+            let previous = std::env::var_os("TMPDIR");
+            unsafe {
+                std::env::set_var("TMPDIR", path);
+            }
+            Self { previous }
+        }
+    }
+
+    impl Drop for TempDirOverride {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => unsafe {
+                    std::env::set_var("TMPDIR", value);
+                },
+                None => unsafe {
+                    std::env::remove_var("TMPDIR");
+                },
+            }
+        }
+    }
+
+    impl Drop for AdminDiscoveryBaseUrlOverride {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => unsafe {
+                    std::env::set_var(crate::clients::discovery::ADMIN_DISCOVERY_BASE_URL_ENV, value);
+                },
+                None => unsafe {
+                    std::env::remove_var(crate::clients::discovery::ADMIN_DISCOVERY_BASE_URL_ENV);
+                },
+            }
+        }
+    }
+
+    pub(super) async fn configure_runtime_snapshot(
+        pool: &SqlitePool,
+        ttl_seconds: i64,
+        last_success_at: Option<String>,
+    ) {
+        let mut settings = crate::system::settings::get_settings(pool)
+            .await
+            .expect("read system settings");
+        settings.client_discovery_snapshot_ttl_seconds = ttl_seconds;
+        settings.client_discovery_snapshot_last_success_at = last_success_at;
+        crate::system::settings::set_settings(pool, &settings)
+            .await
+            .expect("write system settings");
+    }
+
+    pub(super) fn admin_discovery_file_client_response(identifier: &str) -> serde_json::Value {
+        serde_json::json!({
+            "clients": [{
+                "identifier": identifier,
+                "config": {
+                    "kind": "file",
+                    "file": {
+                        "paths": { "macos": "~/.recovered/mcp.json" },
+                        "container": { "keys": ["mcpServers"] }
+                    },
+                    "transports": { "stdio": { "command_field": "command" } }
+                }
+            }],
+            "page": { "limit": 100, "offset": 0, "total": 1 }
+        })
     }
 }
 
@@ -1458,6 +1632,15 @@ mod render_definition_tests {
             vec!["streamable_http".to_string()]
         );
     }
+}
+
+#[cfg(test)]
+mod runtime_template_snapshot_tests {
+    use super::runtime_template_snapshot_fixtures::{
+        AdminDiscoveryBaseUrlOverride, TempDirOverride, admin_discovery_file_client_response,
+        configure_runtime_snapshot, runtime_template,
+    };
+    use super::*;
 
     #[tokio::test]
     async fn refresh_admin_discovery_does_not_seed_embedded_static_templates() {
@@ -1496,6 +1679,163 @@ mod render_definition_tests {
     }
 
     #[tokio::test]
+    async fn refresh_admin_discovery_rejects_invalid_entry_without_replacing_snapshot_or_timestamp() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/discovery/clients"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "clients": [
+                    admin_discovery_file_client_response("valid-client")["clients"][0].clone(),
+                    {
+                        "identifier": "invalid-client",
+                        "config": { "kind": "file" }
+                    }
+                ],
+                "page": { "limit": 100, "offset": 0, "total": 2 }
+            })))
+            .mount(&server)
+            .await;
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        crate::test_helpers::prepare_config_database(&pool).await;
+        crate::config::client::init::initialize_client_table(&pool)
+            .await
+            .expect("init client table");
+        ClientConfigService::seed_runtime_template_snapshots_from_templates(
+            &pool,
+            &[runtime_template("cached-client")],
+        )
+        .await
+        .expect("seed cached runtime template");
+        let old_success_at = (Utc::now() - chrono::Duration::hours(2)).to_rfc3339();
+        configure_runtime_snapshot(&pool, 60, Some(old_success_at.clone())).await;
+
+        let result = ClientConfigService::refresh_runtime_templates_from_admin_discovery(&pool, &server.uri()).await;
+
+        assert!(result.is_err(), "invalid mapped entry must reject the whole refresh");
+        let cached: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM client_template_runtime WHERE identifier = 'cached-client'")
+                .fetch_one(&pool)
+                .await
+                .expect("cached runtime template count");
+        assert_eq!(cached, 1);
+        assert_eq!(
+            crate::system::settings::get_settings(&pool)
+                .await
+                .expect("read settings after rejected refresh")
+                .client_discovery_snapshot_last_success_at,
+            Some(old_success_at)
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_admin_discovery_rejects_nonobject_file_entry_without_replacing_snapshot_or_timestamp() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/discovery/clients"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "clients": [
+                    admin_discovery_file_client_response("valid-client")["clients"][0].clone(),
+                    {
+                        "identifier": "non-object-file-client",
+                        "config": { "kind": "file", "file": [] }
+                    }
+                ],
+                "page": { "limit": 100, "offset": 0, "total": 3 }
+            })))
+            .mount(&server)
+            .await;
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        crate::test_helpers::prepare_config_database(&pool).await;
+        crate::config::client::init::initialize_client_table(&pool)
+            .await
+            .expect("init client table");
+        ClientConfigService::seed_runtime_template_snapshots_from_templates(
+            &pool,
+            &[runtime_template("cached-client")],
+        )
+        .await
+        .expect("seed cached runtime template");
+        let old_success_at = (Utc::now() - chrono::Duration::hours(2)).to_rfc3339();
+        configure_runtime_snapshot(&pool, 60, Some(old_success_at.clone())).await;
+
+        let result = ClientConfigService::refresh_runtime_templates_from_admin_discovery(&pool, &server.uri()).await;
+
+        assert!(
+            result.is_err(),
+            "a declared file entry must contain an object file mapping"
+        );
+        let cached: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM client_template_runtime WHERE identifier = 'cached-client'")
+                .fetch_one(&pool)
+                .await
+                .expect("cached runtime template count");
+        assert_eq!(cached, 1);
+        assert_eq!(
+            crate::system::settings::get_settings(&pool)
+                .await
+                .expect("read settings after rejected refresh")
+                .client_discovery_snapshot_last_success_at,
+            Some(old_success_at)
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_admin_discovery_skips_nonfile_entry_without_identifier_and_replaces_snapshot() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/discovery/clients"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "clients": [
+                    { "config": { "kind": "none" } },
+                    admin_discovery_file_client_response("valid-client")["clients"][0].clone()
+                ],
+                "page": { "limit": 100, "offset": 0, "total": 2 }
+            })))
+            .mount(&server)
+            .await;
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        crate::test_helpers::prepare_config_database(&pool).await;
+        crate::config::client::init::initialize_client_table(&pool)
+            .await
+            .expect("init client table");
+        ClientConfigService::seed_runtime_template_snapshots_from_templates(
+            &pool,
+            &[runtime_template("cached-client")],
+        )
+        .await
+        .expect("seed cached runtime template");
+
+        ClientConfigService::refresh_runtime_templates_from_admin_discovery(&pool, &server.uri())
+            .await
+            .expect("non-file entries must not make strict runtime discovery fail");
+
+        let cached: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM client_template_runtime WHERE identifier = 'cached-client'")
+                .fetch_one(&pool)
+                .await
+                .expect("cached runtime template count");
+        let valid: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM client_template_runtime WHERE identifier = 'valid-client'")
+                .fetch_one(&pool)
+                .await
+                .expect("valid runtime template count");
+        assert_eq!(cached, 0, "successful strict refresh must replace the old snapshot");
+        assert_eq!(valid, 1, "a valid file entry must survive non-file catalog entries");
+    }
+
+    #[tokio::test]
     #[serial_test::serial]
     async fn bootstrap_continues_when_admin_discovery_is_unavailable() {
         let server = wiremock::MockServer::start().await;
@@ -1513,62 +1853,552 @@ mod render_definition_tests {
         crate::config::client::init::initialize_client_table(&pool)
             .await
             .expect("init client table");
-        let mut transports = HashMap::new();
-        transports.insert(
-            "stdio".to_string(),
-            FormatRule {
-                template: serde_json::json!({ "command": "{{command}}" }),
-                include_type: false,
-                ..Default::default()
-            },
-        );
-        let cached_template = ClientTemplate {
-            identifier: "cached-client".to_string(),
-            display_name: Some("Cached Client".to_string()),
-            format: TemplateFormat::Json,
-            storage: StorageConfig {
-                kind: StorageKind::File,
-                path_strategy: Some("config_path".to_string()),
-                adapter: None,
-            },
-            config_mapping: ConfigMapping {
-                container_keys: vec!["mcpServers".to_string()],
-                container_type: crate::clients::models::ContainerType::ObjectMap,
-                merge_strategy: MergeStrategy::Replace,
-                keep_original_config: false,
-                managed_endpoint: None,
-                managed_source: Some("profile".to_string()),
-                parse: None,
-                format_rules: transports,
-            },
-            ..Default::default()
-        };
-        ClientConfigService::seed_runtime_template_snapshots_from_templates(&pool, &[cached_template])
-            .await
-            .expect("seed cached runtime template");
-        let previous = std::env::var(crate::clients::discovery::ADMIN_DISCOVERY_BASE_URL_ENV).ok();
-        unsafe {
-            std::env::set_var(crate::clients::discovery::ADMIN_DISCOVERY_BASE_URL_ENV, server.uri());
-        }
+        ClientConfigService::seed_runtime_template_snapshots_from_templates(
+            &pool,
+            &[runtime_template("cached-client")],
+        )
+        .await
+        .expect("seed cached runtime template");
+        let _base_url = AdminDiscoveryBaseUrlOverride::set(server.uri());
 
         let result = ClientConfigService::bootstrap(Arc::new(pool.clone())).await;
 
-        match previous {
-            Some(value) => unsafe {
-                std::env::set_var(crate::clients::discovery::ADMIN_DISCOVERY_BASE_URL_ENV, value);
-            },
-            None => unsafe {
-                std::env::remove_var(crate::clients::discovery::ADMIN_DISCOVERY_BASE_URL_ENV);
-            },
-        }
         let service = result.expect("bootstrap should continue without Admin discovery data");
+        let templates = service
+            .template_source
+            .list_client()
+            .await
+            .expect("list runtime templates");
+        assert_eq!(templates.len(), 1);
+        assert_eq!(templates[0].identifier, "cached-client");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn fresh_runtime_snapshot_skips_discovery_during_bootstrap_and_forced_list() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/discovery/clients"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(admin_discovery_file_client_response("unexpected-client")),
+            )
+            .mount(&server)
+            .await;
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        crate::test_helpers::prepare_config_database(&pool).await;
+        crate::config::client::init::initialize_client_table(&pool)
+            .await
+            .expect("init client table");
+        ClientConfigService::seed_runtime_template_snapshots_from_templates(
+            &pool,
+            &[runtime_template("cached-client")],
+        )
+        .await
+        .expect("seed cached runtime template");
+        configure_runtime_snapshot(&pool, 3_600, Some(Utc::now().to_rfc3339())).await;
+        let _base_url = AdminDiscoveryBaseUrlOverride::set(server.uri());
+
+        let service = ClientConfigService::bootstrap(Arc::new(pool.clone()))
+            .await
+            .expect("bootstrap with a fresh snapshot");
+        service
+            .list_clients(true, false)
+            .await
+            .expect("forced detection with a fresh snapshot");
+
         assert!(
-            service
-                .template_source
-                .list_client()
+            server
+                .received_requests()
                 .await
-                .expect("list runtime templates")
-                .is_empty()
+                .expect("read captured requests")
+                .is_empty(),
+            "fresh snapshot must not call Admin discovery"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn list_clients_refreshes_runtime_templates_after_snapshot_becomes_stale() {
+        let server = wiremock::MockServer::start().await;
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        crate::test_helpers::prepare_config_database(&pool).await;
+        crate::config::client::init::initialize_client_table(&pool)
+            .await
+            .expect("init client table");
+        ClientConfigService::seed_runtime_template_snapshots_from_templates(
+            &pool,
+            &[runtime_template("cached-client")],
+        )
+        .await
+        .expect("seed cached runtime template");
+        configure_runtime_snapshot(&pool, 3_600, Some(Utc::now().to_rfc3339())).await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/discovery/clients"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(admin_discovery_file_client_response("recovered-client")),
+            )
+            .mount(&server)
+            .await;
+        let _base_url = AdminDiscoveryBaseUrlOverride::set(server.uri());
+
+        let service = ClientConfigService::bootstrap(Arc::new(pool.clone()))
+            .await
+            .expect("bootstrap should retain a fresh snapshot");
+        configure_runtime_snapshot(&pool, 60, Some((Utc::now() - chrono::Duration::hours(2)).to_rfc3339())).await;
+        service
+            .list_clients(true, false)
+            .await
+            .expect("list should refresh a stale runtime snapshot");
+
+        assert_eq!(
+            server.received_requests().await.expect("read captured requests").len(),
+            1,
+            "list must refresh exactly once after the snapshot becomes stale"
+        );
+        let settings = crate::system::settings::get_settings(&pool)
+            .await
+            .expect("read settings after refresh");
+        assert!(settings.client_discovery_snapshot_last_success_at.is_some());
+
+        let recovered: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM client_template_runtime WHERE identifier = 'recovered-client'")
+                .fetch_one(&pool)
+                .await
+                .expect("runtime template count");
+        assert_eq!(recovered, 1);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn list_clients_retains_stale_templates_when_runtime_snapshot_refresh_fails() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/discovery/clients"))
+            .respond_with(wiremock::ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        crate::test_helpers::prepare_config_database(&pool).await;
+        crate::config::client::init::initialize_client_table(&pool)
+            .await
+            .expect("init client table");
+        ClientConfigService::seed_runtime_template_snapshots_from_templates(
+            &pool,
+            &[runtime_template("cached-client")],
+        )
+        .await
+        .expect("seed cached runtime template");
+        ClientConfigService::seed_client_runtime_rows_from_templates(&pool, &[runtime_template("cached-client")])
+            .await
+            .expect("seed cached client row");
+        let old_success_at = (Utc::now() - chrono::Duration::hours(2)).to_rfc3339();
+        configure_runtime_snapshot(&pool, 3_600, Some(Utc::now().to_rfc3339())).await;
+        let _base_url = AdminDiscoveryBaseUrlOverride::set(server.uri());
+
+        let service = ClientConfigService::bootstrap(Arc::new(pool.clone()))
+            .await
+            .expect("bootstrap should retain cached snapshot");
+        configure_runtime_snapshot(&pool, 60, Some(old_success_at.clone())).await;
+        let descriptors = service
+            .list_clients(true, false)
+            .await
+            .expect("list should retain cached snapshot when refresh fails");
+
+        assert!(descriptors.iter().any(|descriptor| {
+            descriptor.state.identifier() == "cached-client"
+                && descriptor
+                    .template
+                    .as_ref()
+                    .map(|template| template.identifier.as_str())
+                    == Some("cached-client")
+        }));
+
+        let cached: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM client_template_runtime WHERE identifier = 'cached-client'")
+                .fetch_one(&pool)
+                .await
+                .expect("cached runtime template count");
+        assert_eq!(cached, 1);
+        assert_eq!(
+            crate::system::settings::get_settings(&pool)
+                .await
+                .expect("read settings after failed refresh")
+                .client_discovery_snapshot_last_success_at,
+            Some(old_success_at)
+        );
+        assert_eq!(
+            server.received_requests().await.expect("read captured requests").len(),
+            1,
+            "list must attempt the stale snapshot refresh exactly once"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn timestamp_write_failure_keeps_replaced_runtime_snapshot_and_retries_discovery() {
+        let temp_dir = tempfile::TempDir::new().expect("create isolated temp root");
+        let _tmpdir = TempDirOverride::set(temp_dir.path());
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/discovery/clients"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(admin_discovery_file_client_response("recovered-client")),
+            )
+            .mount(&server)
+            .await;
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        crate::test_helpers::prepare_config_database(&pool).await;
+        crate::config::client::init::initialize_client_table(&pool)
+            .await
+            .expect("init client table");
+        ClientConfigService::seed_runtime_template_snapshots_from_templates(
+            &pool,
+            &[runtime_template("cached-client")],
+        )
+        .await
+        .expect("seed cached runtime template");
+        let old_success_at = (Utc::now() - chrono::Duration::hours(2)).to_rfc3339();
+        configure_runtime_snapshot(&pool, 60, Some(old_success_at.clone())).await;
+
+        let settings_path = std::fs::read_dir(temp_dir.path())
+            .expect("read isolated temp root")
+            .map(|entry| entry.expect("read temp root entry").path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("mcpmate-system-settings-test-"))
+            })
+            .expect("find test settings config");
+        let backup_root = settings_path.parent().expect("settings config parent").join("backups");
+        std::fs::create_dir(&backup_root).expect("create backup root parent");
+        std::fs::write(backup_root.join("client"), b"block backup directory creation")
+            .expect("create backup root blocker");
+        let _base_url = AdminDiscoveryBaseUrlOverride::set(server.uri());
+        let source: Arc<dyn ClientConfigSource> =
+            Arc::new(DbTemplateSource::new(Arc::new(pool.clone())).expect("runtime source"));
+        let service =
+            ClientConfigService::with_source_and_admin_discovery_refresh(Arc::new(pool.clone()), source, true)
+                .await
+                .expect("create runtime service");
+
+        let first_refresh = service.ensure_runtime_template_snapshot().await;
+
+        assert!(
+            matches!(first_refresh, Err(ConfigError::FileOperationError(_))),
+            "timestamp write must surface its JSON error"
+        );
+        let recovered: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM client_template_runtime WHERE identifier = 'recovered-client'")
+                .fetch_one(&pool)
+                .await
+                .expect("recovered runtime template count");
+        let cached: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM client_template_runtime WHERE identifier = 'cached-client'")
+                .fetch_one(&pool)
+                .await
+                .expect("cached runtime template count");
+        assert_eq!(recovered, 1, "successful discovery must replace the SQLite snapshot");
+        assert_eq!(cached, 0, "previous SQLite snapshot entries must be replaced");
+        assert_eq!(
+            crate::system::settings::get_settings(&pool)
+                .await
+                .expect("read settings after timestamp write failure")
+                .client_discovery_snapshot_last_success_at,
+            Some(old_success_at.clone())
+        );
+
+        service
+            .list_clients(false, false)
+            .await
+            .expect("list continues with the replaced SQLite snapshot");
+
+        assert_eq!(
+            server.received_requests().await.expect("read captured requests").len(),
+            2,
+            "stale timestamp must retry Admin discovery during the next list"
+        );
+        assert_eq!(
+            service
+                .get_client_template("recovered-client")
+                .await
+                .expect("read replaced runtime template")
+                .identifier,
+            "recovered-client"
+        );
+        assert_eq!(
+            crate::system::settings::get_settings(&pool)
+                .await
+                .expect("read settings after retry")
+                .client_discovery_snapshot_last_success_at,
+            Some(old_success_at)
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn runtime_snapshot_refresh_is_single_flight() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/discovery/clients"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_delay(std::time::Duration::from_millis(50))
+                    .set_body_json(admin_discovery_file_client_response("discovered-client")),
+            )
+            .mount(&server)
+            .await;
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        crate::test_helpers::prepare_config_database(&pool).await;
+        crate::config::client::init::initialize_client_table(&pool)
+            .await
+            .expect("init client table");
+        configure_runtime_snapshot(&pool, 3_600, None).await;
+        let _base_url = AdminDiscoveryBaseUrlOverride::set(server.uri());
+        let source: Arc<dyn ClientConfigSource> =
+            Arc::new(DbTemplateSource::new(Arc::new(pool.clone())).expect("create runtime source"));
+        let service = Arc::new(
+            ClientConfigService::with_source_and_admin_discovery_refresh(Arc::new(pool), source, true)
+                .await
+                .expect("create runtime service"),
+        );
+
+        let (first, second) = tokio::join!(
+            service.ensure_runtime_template_snapshot(),
+            service.ensure_runtime_template_snapshot(),
+        );
+        first.expect("first refresh");
+        second.expect("second refresh");
+        assert_eq!(
+            server.received_requests().await.expect("read captured requests").len(),
+            1,
+            "concurrent refreshes must share one Admin discovery request"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn concurrent_list_clients_shares_failed_runtime_refresh_attempt() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/discovery/clients"))
+            .respond_with(wiremock::ResponseTemplate::new(503).set_delay(std::time::Duration::from_millis(50)))
+            .mount(&server)
+            .await;
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        crate::test_helpers::prepare_config_database(&pool).await;
+        crate::config::client::init::initialize_client_table(&pool)
+            .await
+            .expect("init client table");
+        ClientConfigService::seed_runtime_template_snapshots_from_templates(
+            &pool,
+            &[runtime_template("cached-client")],
+        )
+        .await
+        .expect("seed cached runtime template");
+        ClientConfigService::seed_client_runtime_rows_from_templates(&pool, &[runtime_template("cached-client")])
+            .await
+            .expect("seed cached client row");
+        configure_runtime_snapshot(&pool, 60, Some((Utc::now() - chrono::Duration::hours(2)).to_rfc3339())).await;
+        let _base_url = AdminDiscoveryBaseUrlOverride::set(server.uri());
+        let source: Arc<dyn ClientConfigSource> =
+            Arc::new(DbTemplateSource::new(Arc::new(pool.clone())).expect("create runtime source"));
+        let service = Arc::new(
+            ClientConfigService::with_source_and_admin_discovery_refresh(Arc::new(pool), source, true)
+                .await
+                .expect("create runtime service"),
+        );
+
+        let (first, second) = tokio::join!(service.list_clients(false, false), service.list_clients(false, false),);
+
+        for descriptors in [first, second] {
+            assert!(
+                descriptors
+                    .expect("list must retain the local snapshot after discovery failure")
+                    .iter()
+                    .any(|descriptor| descriptor.state.identifier() == "cached-client")
+            );
+        }
+        assert_eq!(
+            server.received_requests().await.expect("read captured requests").len(),
+            1,
+            "concurrent lists must share the in-flight failed discovery attempt"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn concurrent_list_clients_shares_nonpositive_ttl_runtime_refresh_attempt() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/discovery/clients"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_delay(std::time::Duration::from_millis(50))
+                    .set_body_json(admin_discovery_file_client_response("discovered-client")),
+            )
+            .mount(&server)
+            .await;
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        crate::test_helpers::prepare_config_database(&pool).await;
+        crate::config::client::init::initialize_client_table(&pool)
+            .await
+            .expect("init client table");
+        ClientConfigService::seed_runtime_template_snapshots_from_templates(
+            &pool,
+            &[runtime_template("cached-client")],
+        )
+        .await
+        .expect("seed cached runtime template");
+        ClientConfigService::seed_client_runtime_rows_from_templates(&pool, &[runtime_template("cached-client")])
+            .await
+            .expect("seed cached client row");
+        configure_runtime_snapshot(&pool, -1, Some(Utc::now().to_rfc3339())).await;
+        let _base_url = AdminDiscoveryBaseUrlOverride::set(server.uri());
+        let source: Arc<dyn ClientConfigSource> =
+            Arc::new(DbTemplateSource::new(Arc::new(pool.clone())).expect("create runtime source"));
+        let service = Arc::new(
+            ClientConfigService::with_source_and_admin_discovery_refresh(Arc::new(pool), source, true)
+                .await
+                .expect("create runtime service"),
+        );
+
+        let (first, second) = tokio::join!(service.list_clients(false, false), service.list_clients(false, false),);
+
+        for descriptors in [first, second] {
+            assert!(
+                descriptors
+                    .expect("list must retain the local snapshot after the shared refresh")
+                    .iter()
+                    .any(|descriptor| descriptor.state.identifier() == "cached-client")
+            );
+        }
+        assert_eq!(
+            server.received_requests().await.expect("read captured requests").len(),
+            1,
+            "concurrent lists must share the in-flight nonpositive-TTL discovery attempt"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn list_clients_refreshes_fresh_timestamp_when_runtime_snapshot_is_empty() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/discovery/clients"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(admin_discovery_file_client_response("discovered-client")),
+            )
+            .mount(&server)
+            .await;
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        crate::test_helpers::prepare_config_database(&pool).await;
+        crate::config::client::init::initialize_client_table(&pool)
+            .await
+            .expect("init client table");
+        configure_runtime_snapshot(&pool, 3_600, Some(Utc::now().to_rfc3339())).await;
+        let _base_url = AdminDiscoveryBaseUrlOverride::set(server.uri());
+        let source: Arc<dyn ClientConfigSource> =
+            Arc::new(DbTemplateSource::new(Arc::new(pool.clone())).expect("create runtime source"));
+        let service =
+            ClientConfigService::with_source_and_admin_discovery_refresh(Arc::new(pool.clone()), source, true)
+                .await
+                .expect("create runtime service");
+
+        service
+            .list_clients(false, false)
+            .await
+            .expect("list refreshes an empty runtime snapshot");
+
+        assert_eq!(
+            server.received_requests().await.expect("read captured requests").len(),
+            1,
+            "a fresh timestamp without a physical runtime snapshot must refresh"
+        );
+        let discovered: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM client_template_runtime WHERE identifier = 'discovered-client'")
+                .fetch_one(&pool)
+                .await
+                .expect("discovered runtime template count");
+        assert_eq!(discovered, 1);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn negative_runtime_snapshot_ttl_refreshes_on_every_list_access() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/discovery/clients"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(admin_discovery_file_client_response("discovered-client")),
+            )
+            .mount(&server)
+            .await;
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        crate::test_helpers::prepare_config_database(&pool).await;
+        crate::config::client::init::initialize_client_table(&pool)
+            .await
+            .expect("init client table");
+        ClientConfigService::seed_runtime_template_snapshots_from_templates(
+            &pool,
+            &[runtime_template("cached-client")],
+        )
+        .await
+        .expect("seed cached runtime template");
+        configure_runtime_snapshot(&pool, 3_600, Some(Utc::now().to_rfc3339())).await;
+        let _base_url = AdminDiscoveryBaseUrlOverride::set(server.uri());
+        let service = ClientConfigService::bootstrap(Arc::new(pool.clone()))
+            .await
+            .expect("bootstrap with fresh runtime snapshot");
+        configure_runtime_snapshot(&pool, -1, Some(Utc::now().to_rfc3339())).await;
+
+        service.list_clients(false, false).await.expect("first list refresh");
+        service.list_clients(false, false).await.expect("second list refresh");
+
+        assert_eq!(
+            server.received_requests().await.expect("read captured requests").len(),
+            2,
+            "negative TTL must refresh on every list access"
         );
     }
 }
