@@ -2,6 +2,10 @@ import { useMutation } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+	buildPreviewPayload,
+	type ServerInstallDraft,
+} from "../hooks/use-server-install-pipeline";
+import {
 	completeServerImportForProfile,
 	extractImportStats,
 	serversApi,
@@ -51,22 +55,65 @@ interface PreviewResult {
 	error?: unknown | null;
 }
 
-interface PreviewServerDefinition {
-	name: string;
-	kind: string;
-	command?: unknown;
-	args?: unknown;
-	env?: unknown;
-	url?: unknown;
-}
-
-interface PreviewPayload {
-	servers: PreviewServerDefinition[];
-	include_details: boolean;
-}
+type PreviewPayload = ReturnType<typeof buildPreviewPayload>;
 
 interface ImportPayload {
-	mcpServers: Record<string, PreviewServerDefinition>;
+	mcpServers: Record<string, unknown>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function parseStringArray(value: unknown, field: string): string[] | undefined {
+	if (value === undefined || value === null) return undefined;
+	if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
+		throw new Error(`${field} must be an array of strings`);
+	}
+	return value;
+}
+
+function parseStringRecord(
+	value: unknown,
+	field: string,
+): Record<string, string> | undefined {
+	if (value === undefined || value === null) return undefined;
+	if (!isRecord(value) || !Object.values(value).every((item) => typeof item === "string")) {
+		throw new Error(`${field} must be an object with string values`);
+	}
+	return value as Record<string, string>;
+}
+
+function parsePreviewDraft(
+	name: string,
+	definition: unknown,
+): ServerInstallDraft {
+	if (!isRecord(definition)) {
+		throw new Error(`Server "${name}" must be an object`);
+	}
+	const kind = definition.type ?? definition.kind ?? "stdio";
+	if (
+		kind !== "stdio" &&
+		kind !== "sse" &&
+		kind !== "streamable_http"
+	) {
+		throw new Error(`Server "${name}" must declare a supported transport type`);
+	}
+	if (definition.command !== undefined && definition.command !== null && typeof definition.command !== "string") {
+		throw new Error(`Server "${name}" command must be a string`);
+	}
+	if (definition.url !== undefined && definition.url !== null && typeof definition.url !== "string") {
+		throw new Error(`Server "${name}" url must be a string`);
+	}
+	return {
+		name,
+		kind,
+		command: definition.command ?? undefined,
+		args: parseStringArray(definition.args, `Server "${name}" args`),
+		env: parseStringRecord(definition.env, `Server "${name}" env`),
+		url: definition.url ?? undefined,
+		headers: parseStringRecord(definition.headers, `Server "${name}" headers`),
+	};
 }
 
 export function ServerImportDrawer({
@@ -103,28 +150,23 @@ export function ServerImportDrawer({
 		error?: string;
 	} {
 		try {
-			const obj = JSON.parse(text);
-			if (obj.mcpServers && typeof obj.mcpServers === "object") {
-				const servers = Object.keys(obj.mcpServers).map((name) => {
-					const c = obj.mcpServers[name] || {};
-					return {
-						name,
-						kind: c.type || c.kind || "stdio",
-						command: c.command ?? null,
-						args: c.args ?? null,
-						env: c.env ?? null,
-						url: c.url ?? null,
-					};
-				});
-				return { ok: true, payload: { servers, include_details: true } };
+			const obj = JSON.parse(text) as unknown;
+			if (isRecord(obj) && isRecord(obj.mcpServers)) {
+				const drafts = Object.entries(obj.mcpServers).map(([name, definition]) =>
+					parsePreviewDraft(name, definition),
+				);
+				return { ok: true, payload: buildPreviewPayload(drafts) };
 			}
-			if (Array.isArray(obj.servers)) {
+			if (isRecord(obj) && Array.isArray(obj.servers)) {
+				const drafts = obj.servers.map((definition) => {
+					if (!isRecord(definition) || typeof definition.name !== "string") {
+						throw new Error("servers[] items must include name");
+					}
+					return parsePreviewDraft(definition.name, definition);
+				});
 				return {
 					ok: true,
-					payload: {
-						servers: obj.servers as PreviewServerDefinition[],
-						include_details: true,
-					},
+					payload: buildPreviewPayload(drafts),
 				};
 			}
 			return {
@@ -147,7 +189,7 @@ export function ServerImportDrawer({
 				return { ok: true, payload: { mcpServers: obj.mcpServers } };
 			}
 			if (Array.isArray(obj.servers)) {
-				const mapping: Record<string, PreviewServerDefinition> = {};
+				const mapping: Record<string, unknown> = {};
 				for (const s of obj.servers) {
 					if (!s?.name)
 						return { ok: false, error: "servers[] items must include name" };

@@ -892,7 +892,7 @@ const serializeTransportConfigValues = (
 	);
 };
 
-const serializeServerTransport = (
+export const serializeServerTransport = (
 	serverConfig: Partial<MCPServerConfig>,
 	requireKind = false,
 ) => {
@@ -916,6 +916,16 @@ const serializeServerTransport = (
 		endpoint: serverConfig.url ?? serverConfig.command ?? null,
 		headers: serializeTransportConfigValues(serverConfig.headers),
 	};
+};
+
+export type ServersPreviewRequest = {
+	include_details?: boolean | null;
+	timeout_ms?: number | null;
+	servers: Array<{
+		name: string;
+		server_id?: string;
+		transport: ReturnType<typeof serializeServerTransport>;
+	}>;
 };
 
 const normalizeCapabilitySummary = (
@@ -1856,19 +1866,9 @@ export const serversApi = {
 	},
 
 	// Preview capabilities for proposed server configs without importing
-	previewServers: async (payload: {
-		include_details?: boolean | null;
-		timeout_ms?: number | null;
-		servers: Array<{
-			name: string;
-			server_id?: string | null;
-			kind: string;
-			command?: string | null;
-			args?: string[] | null;
-			env?: Record<string, string> | null;
-			url?: string | null;
-		}>;
-	}): Promise<ServersPreviewResponse> => {
+	previewServers: async (
+		payload: ServersPreviewRequest,
+	): Promise<ServersPreviewResponse> => {
 		return await fetchApi(`/api/mcp/servers/preview`, {
 			method: "POST",
 			body: JSON.stringify(payload),

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import {
 	completeServerImportForProfile,
 	extractImportStats,
+	serializeServerTransport,
 	serversApi,
   systemApi,
 	type ServersImportResponse,
@@ -53,6 +54,32 @@ function hasEntries(
 ): value is Record<string, string> {
 	return Boolean(value && Object.keys(value).length > 0);
 }
+
+export const buildPreviewPayload = (items: ServerInstallDraft[]) => {
+	return {
+		include_details: true,
+		servers: items.map((item) => {
+			const url =
+				item.kind !== "stdio" && item.url && hasEntries(item.urlParams)
+					? urlWithMergedSearchParams(item.url, item.urlParams)
+					: item.url;
+			const previewItem = {
+				name: item.name,
+				transport: serializeServerTransport({
+					kind: item.kind,
+					command: item.command,
+					args: item.args,
+					env: item.env,
+					url,
+					headers: item.headers,
+				}),
+			};
+			return item.serverId === undefined
+				? previewItem
+				: { ...previewItem, server_id: item.serverId };
+		}),
+	};
+};
 
 export function useServerInstallPipeline(
 	opts: UseServerInstallPipelineOptions = {},
@@ -147,30 +174,6 @@ export function useServerInstallPipeline(
 		setDryRunError(null);
 	}, []);
 
-	const buildPreviewPayload = useCallback((items: ServerInstallDraft[]) => {
-		return {
-			include_details: true,
-			servers: items.map((item) => ({
-				name: item.name,
-				server_id: item.serverId ?? null,
-				kind: item.kind,
-				command: item.kind === "stdio" ? (item.command ?? null) : null,
-				args: item.args?.length ? item.args : null,
-				env: hasEntries(item.env) ? item.env : null,
-				url:
-					item.kind !== "stdio" && item.url
-						? hasEntries(item.urlParams)
-							? urlWithMergedSearchParams(item.url, item.urlParams)
-							: item.url
-						: null,
-				headers:
-					item.kind !== "stdio" && hasEntries(item.headers)
-						? item.headers
-						: null,
-			})),
-		};
-	}, []);
-
 	const previewDrafts = useCallback(
 		async (items: ServerInstallDraft[]) => {
 			if (!items.length) {
@@ -207,7 +210,7 @@ export function useServerInstallPipeline(
 				}
 			}
 		},
-		[buildPreviewPayload],
+		[],
 	);
 
 	const begin = useCallback(

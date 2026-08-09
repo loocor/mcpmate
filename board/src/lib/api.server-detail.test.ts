@@ -248,6 +248,53 @@ describe("serversApi.refreshCapabilities", () => {
 	});
 });
 
+describe("serversApi.previewServers", () => {
+	test("posts only the tagged candidate transport preview contract", async () => {
+		let request: { url: string; init?: RequestInit } | undefined;
+		globalThis.fetch = async (input, init) => {
+			request = { url: String(input), init };
+			return Response.json({ success: true, data: { items: [] } });
+		};
+
+		await serversApi.previewServers({
+			include_details: true,
+			servers: [
+				{
+					name: "candidate",
+					server_id: "saved-server",
+					transport: {
+						kind: "http",
+						protocol: "streamable_http",
+						endpoint: "https://example.com/mcp",
+						headers: {
+							Authorization: { kind: "secret_ref", alias: "preview-token" },
+						},
+					},
+				},
+			],
+		});
+
+		expect(request?.url).toEndWith("/api/mcp/servers/preview");
+		expect(JSON.parse(String(request?.init?.body))).toEqual({
+			include_details: true,
+			servers: [
+				{
+					name: "candidate",
+					server_id: "saved-server",
+					transport: {
+						kind: "http",
+						protocol: "streamable_http",
+						endpoint: "https://example.com/mcp",
+						headers: {
+							Authorization: { kind: "secret_ref", alias: "preview-token" },
+						},
+					},
+				},
+			],
+		});
+	});
+});
+
 describe("serversApi capability lists", () => {
 	test("loads all capability kinds through the batch lists endpoint", async () => {
 		let requestUrl: string | undefined;
