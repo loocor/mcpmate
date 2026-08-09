@@ -1,5 +1,38 @@
 [
 	{
+		"version": "0.3.6",
+		"date": "2026-08-09",
+		"highlights": [
+			"MCPMate v0.3.6-beta は、管理対象 Server の設定と復旧をより信頼できるものにします。Server definition は構造化された transport data を保持し、Discovery は不完全なローカル metadata から復旧でき、Profile、Capability、client configuration の runtime boundary も明確に保たれます。"
+		],
+		"changes": [
+			{
+				"type": "feat",
+				"text": "管理対象 Server definition は構造化された transport detail を永続化し、対応する stdio と HTTP configuration を明示的かつ編集可能に保ち、runtime connection に渡す前に安全に検証できます。"
+			},
+			{
+				"type": "fix",
+				"text": "ローカル client Discovery は不完全な cached metadata から復旧し、検証済みの client information を更新することで onboarding と writeback flow が検出データ不足のまま止まることを防ぎます。"
+			},
+			{
+				"type": "fix",
+				"text": "Capability refactor 後も Profile の capability state が catalog と同期され、Profile management は実際に設定された Server と capability を正確に表示します。"
+			},
+			{
+				"type": "fix",
+				"text": "upstream UCAN の部分的な failure は診断のため保持され、Authoring flow は元の connection error を隠さず、より明確な repair information を表示します。"
+			},
+			{
+				"type": "ref",
+				"text": "Capability catalog、identity、runtime pool はより明確な SQLite-backed ownership boundary を使うようになり、API、Profile、client、management surface の一貫性を高めます。"
+			},
+			{
+				"type": "chore",
+				"text": "Desktop delivery は macOS、Windows、Linux の完全な asset set を updater metadata、tracked download redirect、対応する Homebrew update handoff とともに公開します。"
+			}
+		]
+	},
+	{
 		"version": "0.3.5",
 		"date": "2026-07-18",
 		"highlights": [
