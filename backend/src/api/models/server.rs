@@ -1202,7 +1202,42 @@ pub struct ServerUpdateReq {
 
 #[cfg(test)]
 mod server_update_request_tests {
-    use super::{ServerCreateReq, ServerUpdateReq, ServersImportReq};
+    use super::{ServerCreateReq, ServerPreviewReq, ServerUpdateReq, ServersImportReq};
+
+    #[test]
+    fn server_preview_requests_require_tagged_transport() {
+        let tagged = serde_json::json!({
+            "servers": [{
+                "name": "server_a",
+                "transport": {
+                    "kind": "http",
+                    "protocol": "streamable_http",
+                    "endpoint": "https://example.com/mcp",
+                    "headers": {}
+                }
+            }]
+        });
+
+        serde_json::from_value::<ServerPreviewReq>(tagged).expect("tagged preview transport must decode");
+
+        for field in ["kind", "command", "url", "args", "env", "headers"] {
+            let mut item = serde_json::json!({
+                "name": "server_a",
+                "transport": {
+                    "kind": "stdio",
+                    "command": "server-a",
+                    "args": [],
+                    "env": {}
+                }
+            });
+            item[field] = serde_json::json!("legacy");
+            let payload = serde_json::json!({ "servers": [item] });
+
+            let error = serde_json::from_value::<ServerPreviewReq>(payload)
+                .expect_err("flat preview transport fields must be rejected");
+            assert!(error.to_string().contains(&format!("unknown field `{field}`")));
+        }
+    }
 
     #[test]
     fn server_definition_requests_require_tagged_transport() {
@@ -1513,23 +1548,15 @@ api_resp!(
 // ================= Preview Capabilities =================
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 #[schemars(description = "Single server preview item request")]
 pub struct ServerPreviewItemReq {
     pub name: String,
     #[serde(default)]
     pub server_id: Option<String>,
-    pub kind: String, // stdio|streamable_http
-    #[serde(default)]
-    pub command: Option<String>,
-    #[serde(default)]
-    pub url: Option<String>,
-    #[serde(default)]
-    pub args: Option<Vec<String>>,
-    #[serde(default)]
-    pub env: Option<std::collections::HashMap<String, String>>,
-    /// Optional HTTP headers for streamable_http preview
-    #[serde(default)]
-    pub headers: Option<std::collections::HashMap<String, String>>,
+
+    #[schemars(description = "Tagged candidate server transport definition")]
+    pub transport: ServerTransportDraft,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
