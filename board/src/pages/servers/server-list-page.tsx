@@ -45,6 +45,7 @@ import {
 } from "../../lib/hooks/use-responsive-catalog-pagination";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { useUrlView } from "../../lib/hooks/use-url-state";
+import { notifyCapabilityDiscoveryFailure } from "../../lib/capability-discovery-notice";
 import { notifyError, notifyInfo, notifySuccess } from "../../lib/notify";
 import type { ServerIngestPayload } from "../../lib/install-normalizer";
 import {
@@ -337,7 +338,7 @@ export function ServerListPage() {
 			}
 			return result;
 		},
-		onSuccess: (_, variables) => {
+		onSuccess: (result, variables) => {
 			notifySuccess(
 				t("notifications.update.title", {
 					defaultValue: "Server updated",
@@ -347,6 +348,7 @@ export function ServerListPage() {
 					defaultValue: "Server {{serverId}}",
 				}),
 			);
+			notifyCapabilityDiscoveryFailure(result.data?.capability_discovery, t);
 			queryClient.invalidateQueries({ queryKey: ["servers"] });
 		},
 		onError: (error, variables) => {

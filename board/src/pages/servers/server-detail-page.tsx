@@ -83,6 +83,10 @@ import {
 } from "../../lib/api";
 import { totalCapabilityCount } from "../../lib/capability-lifecycle";
 import {
+	notifyCapabilityDiscoveryFailure,
+	notifyCapabilityRefreshFailure,
+} from "../../lib/capability-discovery-notice";
+import {
 	useCapabilityKindFilters,
 } from "../../hooks/use-capability-kind-filters";
 import { useSecretStoreStatusQuery } from "../../lib/hooks/use-secret-store-status";
@@ -120,21 +124,6 @@ const TRANSITIONAL_SERVER_STATUSES = new Set([
 
 function isTransitionalServerStatus(status: string | undefined): boolean {
 	return TRANSITIONAL_SERVER_STATUSES.has(String(status || "").toLowerCase());
-}
-
-function notifyCapabilityRefreshFailure(
-	t: ReturnType<typeof useTranslation>["t"],
-	message: string,
-) {
-	notifyError(
-		t("detail.notifications.refreshFailed.title", {
-			defaultValue: "Refresh failed",
-		}),
-		t("detail.notifications.refreshFailed.message", {
-			message,
-			defaultValue: "Unable to refresh server capabilities: {{message}}",
-		}),
-	);
 }
 
 type InspectorTarget = {
@@ -751,18 +740,7 @@ export function ServerDetailPage() {
 							);
 							const capabilityDiscovery =
 								updateResponse.data?.capability_discovery;
-							if (
-								capabilityDiscovery?.attempted &&
-								capabilityDiscovery.status === "failed"
-							) {
-								notifyCapabilityRefreshFailure(
-									t,
-									capabilityDiscovery.error?.trim() ||
-										t("detail.notifications.refreshFailed.defaultMessage", {
-											defaultValue: "Unknown error",
-										}),
-								);
-							}
+							notifyCapabilityDiscoveryFailure(capabilityDiscovery, t);
 							if (
 								requestedEligibility !== undefined &&
 								requestedEligibility !==

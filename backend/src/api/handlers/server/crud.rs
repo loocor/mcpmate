@@ -414,11 +414,17 @@ pub async fn create_server(
     }
 
     // Initial capability discovery persists the transactional SQLite catalog.
-    if !server_row.pending_import {
-        if let Err(error) = discover_server_capabilities(&state, db.clone(), &server_id).await {
-            tracing::warn!(server_id = %server_id, error = %error, "Initial capability sync failed after server creation");
+    let capability_discovery = if !server_row.pending_import {
+        match discover_server_capabilities(&state, db.clone(), &server_id).await {
+            Ok(()) => Some(ServerCapabilityDiscoveryData::succeeded()),
+            Err(error) => {
+                tracing::warn!(server_id = %server_id, error = %error, "Initial capability sync failed after server creation");
+                Some(ServerCapabilityDiscoveryData::failed())
+            }
         }
-    }
+    } else {
+        None
+    };
 
     let server_name = server_row.name.clone();
     let source = server_row.source.clone();
@@ -477,7 +483,7 @@ pub async fn create_server(
         .map_err(|error| ApiError::InternalError(error.to_string()))?
         .into_iter()
         .collect(),
-        capability_discovery: None,
+        capability_discovery,
     }));
 
     let mut data = Map::new();
@@ -1001,6 +1007,23 @@ mod tests {
         database: Arc<Database>,
     }
 
+    async fn upsert_typed_streamable_http_server(
+        pool: &sqlx::SqlitePool,
+        server: &Server,
+    ) {
+        server::upsert_server_definition(
+            pool,
+            server,
+            &ServerTransportDraft::Http {
+                protocol: HttpTransportKind::StreamableHttp,
+                endpoint: server.url.clone(),
+                headers: Default::default(),
+            },
+        )
+        .await
+        .expect("insert typed server definition");
+    }
+
     #[tokio::test]
     async fn delete_server_records_continues_when_oauth_secret_cleanup_needs_secure_store() {
         let context = create_test_context().await;
@@ -1009,9 +1032,7 @@ mod tests {
         let mut server =
             Server::new_streamable_http("oauth server".to_string(), Some("https://example.com/mcp".to_string()));
         server.id = Some(server_id.to_string());
-        server::upsert_server(&context.database.pool, &server)
-            .await
-            .expect("insert server");
+        upsert_typed_streamable_http_server(&context.database.pool, &server).await;
 
         server::upsert_server_oauth_config(
             &context.database.pool,
@@ -1090,9 +1111,7 @@ mod tests {
             Some("https://example.com/mcp".to_string()),
         );
         server.id = Some(server_id.to_string());
-        server::upsert_server(&context.database.pool, &server)
-            .await
-            .expect("insert server");
+        upsert_typed_streamable_http_server(&context.database.pool, &server).await;
 
         insert_plain_oauth_auth_source(&context.database.pool, server_id).await;
 
@@ -1241,9 +1260,7 @@ mod tests {
             Some("http://127.0.0.1:9/previous".to_string()),
         );
         server.id = Some(server_id.to_string());
-        server::upsert_server(&context.database.pool, &server)
-            .await
-            .expect("insert server");
+        upsert_typed_streamable_http_server(&context.database.pool, &server).await;
 
         let response = update_server(
             State(context.app_state.clone()),
@@ -1274,6 +1291,49 @@ mod tests {
         let discovery = response_json
             .pointer("/data/capability_discovery")
             .expect("update response must report attempted discovery");
+        assert_eq!(discovery["attempted"], true);
+        assert_eq!(discovery["status"], "failed");
+        let error = discovery["error"].as_str().expect("safe failure message");
+        assert_eq!(
+            error,
+            "Capability discovery failed. Check the server configuration and upstream availability."
+        );
+        assert!(!error.contains("127.0.0.1"), "must not reveal transport configuration");
+    }
+
+    #[tokio::test]
+    async fn create_server_reports_failed_capability_discovery_after_persisting_configuration() {
+        let context = create_test_context().await;
+
+        let response = create_server(
+            State(context.app_state.clone()),
+            Json(
+                serde_json::from_value(serde_json::json!({
+                    "name": "discovery_failure_create",
+                    "transport": {
+                        "kind": "http",
+                        "protocol": "streamable_http",
+                        "endpoint": "http://127.0.0.1:9/mcp",
+                        "headers": {}
+                    }
+                }))
+                .expect("decode create request"),
+            ),
+        )
+        .await
+        .expect("discovery failure must not fail a persisted create");
+
+        assert!(response.0.success, "persisted create must return success");
+        let created = server::get_server(&context.database.pool, "discovery_failure_create")
+            .await
+            .expect("load created server")
+            .expect("created server exists");
+        assert_eq!(created.url.as_deref(), Some("http://127.0.0.1:9/mcp"));
+
+        let response_json = serde_json::to_value(response.0).expect("serialize create response");
+        let discovery = response_json
+            .pointer("/data/capability_discovery")
+            .expect("create response must report attempted discovery");
         assert_eq!(discovery["attempted"], true);
         assert_eq!(discovery["status"], "failed");
         let error = discovery["error"].as_str().expect("safe failure message");
@@ -1383,9 +1443,7 @@ mod tests {
             Some("https://example.com/existing".to_string()),
         );
         existing.id = Some("server-existing".to_string());
-        server::upsert_server(&context.database.pool, &existing)
-            .await
-            .expect("insert existing server");
+        upsert_typed_streamable_http_server(&context.database.pool, &existing).await;
 
         let error = create_server(
             State(context.app_state.clone()),
@@ -1449,16 +1507,17 @@ for line in sys.stdin:
         .expect("write namespace remediation fixture");
         let mut legacy = Server::new_stdio("Sequential Thinking".to_string(), Some("python3".to_string()));
         legacy.id = Some("server-legacy".to_string());
-        server::upsert_server(&context.database.pool, &legacy)
-            .await
-            .expect("insert legacy server");
-        server::upsert_server_args(
+        server::upsert_server_definition(
             &context.database.pool,
-            "server-legacy",
-            &[fixture.to_string_lossy().to_string()],
+            &legacy,
+            &ServerTransportDraft::Stdio {
+                command: Some("python3".to_string()),
+                args: vec![fixture.to_string_lossy().to_string()],
+                env: Default::default(),
+            },
         )
         .await
-        .expect("store fixture argument");
+        .expect("insert typed legacy namespace fixture");
 
         let response = remediate_server_namespace(
             State(context.app_state.clone()),
@@ -1557,9 +1616,7 @@ for line in sys.stdin:
             Some("https://example.com/mcp".to_string()),
         );
         server.id = Some(server_id.to_string());
-        server::upsert_server(&context.database.pool, &server)
-            .await
-            .expect("insert server");
+        upsert_typed_streamable_http_server(&context.database.pool, &server).await;
         insert_plain_oauth_auth_source(&context.database.pool, server_id).await;
 
         clear_oauth_auth_source_for_manual_authorization(

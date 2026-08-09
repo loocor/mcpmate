@@ -668,12 +668,12 @@ pub struct ServerDetailsData {
     pub namespace_issue: Option<ServerNamespaceIssue>,
     /// Exact capability catalog revision set represented by this response.
     pub source_revision_set: super::CatalogRevisionSet,
-    /// Discovery result from the update operation that produced this response.
+    /// Discovery result from the create or update operation that produced this response.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capability_discovery: Option<ServerCapabilityDiscoveryData>,
 }
 
-/// Outcome of a capability discovery attempt triggered by a server update.
+/// Outcome of a capability discovery attempt triggered by a server save.
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Clone, Copy, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ServerCapabilityDiscoveryStatus {
@@ -681,10 +681,10 @@ pub enum ServerCapabilityDiscoveryStatus {
     Failed,
 }
 
-/// Safe, displayable result of an update-triggered capability discovery attempt.
+/// Safe, displayable result of a server-save capability discovery attempt.
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Clone, Eq, PartialEq)]
 pub struct ServerCapabilityDiscoveryData {
-    /// Whether capability discovery ran after the update was persisted.
+    /// Whether capability discovery ran after the server was persisted.
     pub attempted: bool,
     /// Whether the attempted discovery completed successfully.
     pub status: ServerCapabilityDiscoveryStatus,
