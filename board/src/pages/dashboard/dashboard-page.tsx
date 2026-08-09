@@ -21,6 +21,7 @@ import { MetricsTrendChart } from "../../components/metrics-trend-chart";
 import { TokenSavingsTrendCard } from "../../components/token-savings-trend-card";
 import { APP_VERSION_LABEL } from "../../lib/app-version";
 import { StatusBadge } from "../../components/status-badge";
+import { STATS_CARD_GRID_CLASS } from "../../components/page-layout";
 import {
 	Card,
 	CardContent,
@@ -176,20 +177,20 @@ export function DashboardPage() {
 	const localCoreServiceStatus = coreView?.localService.status;
 	const localCoreStatusLabel = localCoreServiceStatus
 		? t(`dashboard:core.localServiceStatus.${localCoreServiceStatus}`, {
-				defaultValue: localCoreServiceStatus,
-			})
+			defaultValue: localCoreServiceStatus,
+		})
 		: "";
 	const localCoreDetail =
 		localCoreRuntimeMode && localCoreServiceStatus
 			? t(
-					`dashboard:core.localServiceDetail.${localCoreRuntimeMode}.${localCoreServiceStatus}`,
-					{
-						defaultValue: t("dashboard:core.localServiceDetailFallback", {
-							defaultValue:
-								"The configured local core status will appear here.",
-						}),
-					},
-				)
+				`dashboard:core.localServiceDetail.${localCoreRuntimeMode}.${localCoreServiceStatus}`,
+				{
+					defaultValue: t("dashboard:core.localServiceDetailFallback", {
+						defaultValue:
+							"The configured local core status will appear here.",
+					}),
+				},
+			)
 			: "";
 
 	/**
@@ -262,7 +263,7 @@ export function DashboardPage() {
 				</div>
 			) : null}
 			<div className={cn("shrink-0 px-0.5", statsGridBleedClass)}>
-				<div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+				<div className={STATS_CARD_GRID_CLASS}>
 					<Link to="/runtime" className="block h-full">
 						<Card className="h-full min-h-[160px] cursor-pointer transition-all duration-200 hover:-translate-y-1 hover:border-primary/40 hover:shadow-xl">
 							<CardHeader className="flex flex-row items-center justify-between space-y-0">
@@ -544,18 +545,18 @@ export function DashboardPage() {
 						</div>
 					) : null}
 					{serverTransportTodos.length === 0 &&
-					!isLoadingReviews &&
-					!reviewItemsError &&
-					pendingReviewItems.length === 0 ? (
+						!isLoadingReviews &&
+						!reviewItemsError &&
+						pendingReviewItems.length === 0 ? (
 						<p className="text-sm text-muted-foreground">
 							{t("surfaceReview:dashboard.empty", {
 								defaultValue: "No capability reviews are pending.",
 							})}
 						</p>
 					) : serverTransportTodos.length > 0 ||
-					(!isLoadingReviews &&
-						!reviewItemsError &&
-						pendingReviewItems.length > 0) ? (
+						(!isLoadingReviews &&
+							!reviewItemsError &&
+							pendingReviewItems.length > 0) ? (
 						<div className="divide-y rounded-md border">
 							{serverTransportTodos.slice(0, 6).map((item) => (
 								<Link
@@ -578,32 +579,32 @@ export function DashboardPage() {
 								pendingReviewItems
 									.slice(0, Math.max(0, 6 - serverTransportTodos.length))
 									.map((item) => {
-								const owner = item.owners[0];
-								const destination = owner
-									? getSurfaceReviewDestination(
-											item,
-											owner,
-											clientsData?.client ?? [],
-										)
-									: `/clients?filter=needs_review`;
-								return (
-									<Link
-										key={item.review_item_id}
-										to={destination}
-										className="flex items-center justify-between gap-3 px-3 py-2.5 transition-colors hover:bg-muted/60"
-									>
-										<div className="min-w-0">
-											<div className="truncate text-sm font-medium">
-												{owner?.owner_id ?? item.consumer_id}
-											</div>
-											<div className="truncate font-mono text-xs text-muted-foreground">
-												{item.change_class} · {item.ref_id}
-											</div>
-										</div>
-										<ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-									</Link>
-									);
-								})}
+										const owner = item.owners[0];
+										const destination = owner
+											? getSurfaceReviewDestination(
+												item,
+												owner,
+												clientsData?.client ?? [],
+											)
+											: `/clients?filter=needs_review`;
+										return (
+											<Link
+												key={item.review_item_id}
+												to={destination}
+												className="flex items-center justify-between gap-3 px-3 py-2.5 transition-colors hover:bg-muted/60"
+											>
+												<div className="min-w-0">
+													<div className="truncate text-sm font-medium">
+														{owner?.owner_id ?? item.consumer_id}
+													</div>
+													<div className="truncate font-mono text-xs text-muted-foreground">
+														{item.change_class} · {item.ref_id}
+													</div>
+												</div>
+												<ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+											</Link>
+										);
+									})}
 						</div>
 					) : null}
 				</CardContent>

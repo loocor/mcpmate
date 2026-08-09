@@ -20,6 +20,7 @@ import {
 	YAxis,
 } from "recharts";
 import { StatusBadge } from "../../components/status-badge";
+import { STATS_CARD_GRID_CLASS } from "../../components/page-layout";
 import { Button } from "../../components/ui/button";
 import {
 	Card,
@@ -103,7 +104,7 @@ export function SystemPage() {
 				</Button>
 			</div>
 
-			<div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+			<div className={STATS_CARD_GRID_CLASS}>
 				<Card>
 					<CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
 						<CardTitle className="text-sm font-medium">

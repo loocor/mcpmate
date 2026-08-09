@@ -8,12 +8,15 @@ import {
 } from "./ui/card";
 import { cn } from "../lib/utils";
 
+/** Shared stats card grid: one row from sm up, 2x2 on mobile. */
+export const STATS_CARD_GRID_CLASS = "grid grid-cols-2 gap-4 sm:grid-cols-4";
+
 export interface PageLayoutProps {
-    title: string;
-    children: ReactNode;
-    headerActions?: ReactNode;
-    statsCards?: ReactNode;
-    className?: string;
+	title: string;
+	children: ReactNode;
+	headerActions?: ReactNode;
+	statsCards?: ReactNode;
+	className?: string;
 }
 
 export function PageLayout({
@@ -23,28 +26,26 @@ export function PageLayout({
 	statsCards,
 	className = "",
 }: PageLayoutProps) {
-    return (
-        <div className={`space-y-4 ${className}`}>
-            {/* Page header (single-line, squeezable description) */}
-            <div className="flex items-center gap-2 min-w-0">
-                <p className="flex-1 min-w-0 truncate whitespace-nowrap text-base text-muted-foreground">
-                    {title}
-                </p>
-                {headerActions && (
-                    <div className="flex items-center gap-2 whitespace-nowrap flex-shrink-0">
-                        {headerActions}
-                    </div>
-                )}
-            </div>
+	return (
+		<div className={`space-y-4 ${className}`}>
+			{/* Page header (single-line, squeezable description) */}
+			<div className="flex items-center gap-2 min-w-0">
+				<p className="flex-1 min-w-0 truncate whitespace-nowrap text-base text-muted-foreground">
+					{title}
+				</p>
+				{headerActions && (
+					<div className="flex items-center gap-2 whitespace-nowrap flex-shrink-0">
+						{headerActions}
+					</div>
+				)}
+			</div>
 
-        {/* Stats cards */}
-        {statsCards && (
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                {statsCards}
-            </div>
-        )}
+			{statsCards && (
+				<div className={STATS_CARD_GRID_CLASS}>
+					{statsCards}
+				</div>
+			)}
 
-			{/* Main content */}
 			{children}
 		</div>
 	);
@@ -109,9 +110,15 @@ export function StatsCard({
 					</div>
 				) : null}
 			</CardHeader>
-			<CardContent className="pt-0">
+			<CardContent className="min-w-0 pt-0">
 				<div className="text-2xl font-bold">{value}</div>
-				<CardDescription className={statsCardDescriptionClassName(tone)}>
+				<CardDescription
+					className={cn(
+						"truncate",
+						statsCardDescriptionClassName(tone),
+					)}
+					title={description}
+				>
 					{description}
 				</CardDescription>
 			</CardContent>
