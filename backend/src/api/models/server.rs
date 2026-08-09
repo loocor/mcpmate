@@ -668,6 +668,49 @@ pub struct ServerDetailsData {
     pub namespace_issue: Option<ServerNamespaceIssue>,
     /// Exact capability catalog revision set represented by this response.
     pub source_revision_set: super::CatalogRevisionSet,
+    /// Discovery result from the update operation that produced this response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capability_discovery: Option<ServerCapabilityDiscoveryData>,
+}
+
+/// Outcome of a capability discovery attempt triggered by a server update.
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Clone, Copy, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ServerCapabilityDiscoveryStatus {
+    Succeeded,
+    Failed,
+}
+
+/// Safe, displayable result of an update-triggered capability discovery attempt.
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Clone, Eq, PartialEq)]
+pub struct ServerCapabilityDiscoveryData {
+    /// Whether capability discovery ran after the update was persisted.
+    pub attempted: bool,
+    /// Whether the attempted discovery completed successfully.
+    pub status: ServerCapabilityDiscoveryStatus,
+    /// Safe failure guidance, without upstream configuration or credentials.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl ServerCapabilityDiscoveryData {
+    pub fn succeeded() -> Self {
+        Self {
+            attempted: true,
+            status: ServerCapabilityDiscoveryStatus::Succeeded,
+            error: None,
+        }
+    }
+
+    pub fn failed() -> Self {
+        Self {
+            attempted: true,
+            status: ServerCapabilityDiscoveryStatus::Failed,
+            error: Some(
+                "Capability discovery failed. Check the server configuration and upstream availability.".to_string(),
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

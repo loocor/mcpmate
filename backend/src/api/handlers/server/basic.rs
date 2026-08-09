@@ -250,6 +250,7 @@ async fn server_details_core(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .into_iter()
         .collect(),
+        capability_discovery: None,
     };
 
     Ok(ServerDetailsResp::success(server_details))
@@ -403,6 +404,7 @@ async fn server_list_core(
             oauth_issue,
             namespace_issue,
             source_revision_set: source_revision_set.clone(),
+            capability_discovery: None,
         });
     }
 

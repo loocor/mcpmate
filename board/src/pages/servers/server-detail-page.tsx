@@ -118,6 +118,21 @@ function isTransitionalServerStatus(status: string | undefined): boolean {
 	return TRANSITIONAL_SERVER_STATUSES.has(String(status || "").toLowerCase());
 }
 
+function notifyCapabilityRefreshFailure(
+	t: ReturnType<typeof useTranslation>["t"],
+	message: string,
+) {
+	notifyError(
+		t("detail.notifications.refreshFailed.title", {
+			defaultValue: "Refresh failed",
+		}),
+		t("detail.notifications.refreshFailed.message", {
+			message,
+			defaultValue: "Unable to refresh server capabilities: {{message}}",
+		}),
+	);
+}
+
 type InspectorTarget = {
 	kind: "tool" | "resource" | "prompt" | "template";
 	item: CapabilityRecord | null;
@@ -379,15 +394,7 @@ export function ServerDetailPage() {
 					: t("detail.notifications.refreshFailed.defaultMessage", {
 						defaultValue: "Unknown error",
 					});
-			notifyError(
-				t("detail.notifications.refreshFailed.title", {
-					defaultValue: "Refresh failed",
-				}),
-				t("detail.notifications.refreshFailed.message", {
-					message,
-					defaultValue: "Unable to refresh server capabilities: {{message}}",
-				}),
-			);
+			notifyCapabilityRefreshFailure(t, message);
 		},
 	});
 	const handleOAuthConnected = useCallback(
@@ -707,7 +714,24 @@ export function ServerDetailPage() {
 								requestedEligibility,
 								...crudConfig
 							} = data;
-							await serversApi.updateServer(serverId, crudConfig);
+							const updateResponse = await serversApi.updateServer(
+								serverId,
+								crudConfig,
+							);
+							const capabilityDiscovery =
+								updateResponse.data?.capability_discovery;
+							if (
+								capabilityDiscovery?.attempted &&
+								capabilityDiscovery.status === "failed"
+							) {
+								notifyCapabilityRefreshFailure(
+									t,
+									capabilityDiscovery.error?.trim() ||
+										t("detail.notifications.refreshFailed.defaultMessage", {
+											defaultValue: "Unknown error",
+										}),
+								);
+							}
 							if (
 								requestedEligibility !== undefined &&
 								requestedEligibility !==

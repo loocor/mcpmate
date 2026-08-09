@@ -3,9 +3,9 @@
 
 use super::{basic::load_server_transport_validity, common, shared::*};
 use crate::api::models::server::{
-    ServerCreateReq, ServerDeleteReq, ServerDetailsData, ServerDetailsResp, ServerMetaPayload,
-    ServerNamespaceRemediationReq, ServerOperationData, ServerOperationResp, ServerUpdateReq, ServersImportData,
-    ServersImportReq, ServersImportResp, SkippedServerData,
+    ServerCapabilityDiscoveryData, ServerCreateReq, ServerDeleteReq, ServerDetailsData, ServerDetailsResp,
+    ServerMetaPayload, ServerNamespaceRemediationReq, ServerOperationData, ServerOperationResp, ServerUpdateReq,
+    ServersImportData, ServersImportReq, ServersImportResp, SkippedServerData,
 };
 use crate::{
     api::handlers::{
@@ -477,6 +477,7 @@ pub async fn create_server(
         .map_err(|error| ApiError::InternalError(error.to_string()))?
         .into_iter()
         .collect(),
+        capability_discovery: None,
     }));
 
     let mut data = Map::new();
@@ -592,11 +593,19 @@ pub async fn update_server(
         drop(pool);
     }
 
-    if !updated_server.pending_import && (configuration_changed || existing_server.pending_import) {
-        if let Err(error) = discover_server_capabilities(&state, db.clone(), &server_id).await {
-            tracing::warn!(server_id = %server_id, error = %error, "Capability sync failed after server configuration update");
+    let capability_discovery = if !updated_server.pending_import
+        && (configuration_changed || existing_server.pending_import)
+    {
+        match discover_server_capabilities(&state, db.clone(), &server_id).await {
+            Ok(()) => Some(ServerCapabilityDiscoveryData::succeeded()),
+            Err(error) => {
+                tracing::warn!(server_id = %server_id, error = %error, "Capability sync failed after server configuration update");
+                Some(ServerCapabilityDiscoveryData::failed())
+            }
         }
-    }
+    } else {
+        None
+    };
 
     // Get server details via shared helper
     let details = common::get_complete_server_details(&db.pool, &server_id, &updated_server.name, &state).await;
@@ -647,6 +656,7 @@ pub async fn update_server(
         .map_err(|error| ApiError::InternalError(error.to_string()))?
         .into_iter()
         .collect(),
+        capability_discovery,
     }));
 
     let mut data = Map::new();
@@ -1220,6 +1230,58 @@ mod tests {
             );
             assert!(!headers.contains_key("X-Removed"));
         }
+    }
+
+    #[tokio::test]
+    async fn update_server_reports_failed_capability_discovery_after_persisting_configuration() {
+        let context = create_test_context().await;
+        let server_id = "serv_discovery_failure";
+        let mut server = Server::new_streamable_http(
+            "discovery failure server".to_string(),
+            Some("http://127.0.0.1:9/previous".to_string()),
+        );
+        server.id = Some(server_id.to_string());
+        server::upsert_server(&context.database.pool, &server)
+            .await
+            .expect("insert server");
+
+        let response = update_server(
+            State(context.app_state.clone()),
+            Json(
+                serde_json::from_value(serde_json::json!({
+                    "id": server_id,
+                    "transport": {
+                        "kind": "http",
+                        "protocol": "streamable_http",
+                        "endpoint": "http://127.0.0.1:9/updated",
+                        "headers": {}
+                    }
+                }))
+                .expect("decode update request"),
+            ),
+        )
+        .await
+        .expect("discovery failure must not fail a persisted update");
+
+        assert!(response.0.success, "persisted update must return success");
+        let persisted = server::get_server_by_id(&context.database.pool, server_id)
+            .await
+            .expect("load updated server")
+            .expect("updated server exists");
+        assert_eq!(persisted.url.as_deref(), Some("http://127.0.0.1:9/updated"));
+
+        let response_json = serde_json::to_value(response.0).expect("serialize update response");
+        let discovery = response_json
+            .pointer("/data/capability_discovery")
+            .expect("update response must report attempted discovery");
+        assert_eq!(discovery["attempted"], true);
+        assert_eq!(discovery["status"], "failed");
+        let error = discovery["error"].as_str().expect("safe failure message");
+        assert_eq!(
+            error,
+            "Capability discovery failed. Check the server configuration and upstream availability."
+        );
+        assert!(!error.contains("127.0.0.1"), "must not reveal transport configuration");
     }
 
     #[tokio::test]

@@ -161,6 +161,13 @@ export interface ServerDetail extends ServerSummary {
   env?: Record<string, string>;
   headers?: Record<string, string> | null;
   instances: InstanceSummary[];
+  capability_discovery?: ServerCapabilityDiscovery;
+}
+
+export interface ServerCapabilityDiscovery {
+  attempted: boolean;
+  status: "succeeded" | "failed";
+  error?: string;
 }
 
 export interface RegistryInput {
