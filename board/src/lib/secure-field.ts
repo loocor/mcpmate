@@ -7,7 +7,7 @@ export const STORED_SECRET_JSON_PLACEHOLDER = "[[secret:stored-secret]]";
 const SECRET_PLACEHOLDER_PATTERN = /\[\[secret:([^\]]+)\]\]/g;
 const WHOLE_SECRET_PLACEHOLDER_PATTERN = /^\[\[secret:([^\]]+)\]\]$/;
 // IMPORTANT: keep in sync with backend/src/config/models/transport.rs is_redacted_display_value.
-const PARTIAL_REDACTED_PATTERN = /^[\x00-\x7F]{6}\*\*\*[\x00-\x7F]{2}$/;
+const PARTIAL_REDACTED_PATTERN = /^[\p{ASCII}]{6}\*{3}[\p{ASCII}]{2}$/u;
 
 export type FieldValueKind = "plain" | "secret_ref" | "redacted";
 

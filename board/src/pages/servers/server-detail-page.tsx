@@ -39,13 +39,19 @@ import {
 	CapsuleStripeListItem,
 } from "../../components/capsule-stripe-list";
 import InspectorDrawer from "../../components/inspector-drawer";
-import { ServerAuthBadge } from "../../components/server-auth-badge";
+import {
+	resolveElevatedServerWarningLabel,
+	resolveServerAuthWarningLabel,
+	ServerAuthBadge,
+	ServerWarningBadge,
+} from "../../components/server-auth-badge";
 import {
 	getOAuthReadinessActionTarget,
 	resolveOAuthReadiness,
 	resolveServerOAuthReadiness,
 	type OAuthReadiness,
 } from "../../lib/oauth-readiness";
+import { isRemoteHttpTransport } from "../../lib/server-transport";
 import { ServerEditDrawer } from "../../components/server-edit-drawer";
 import { StatusBadge } from "../../components/status-badge";
 import {
@@ -298,17 +304,22 @@ export function ServerDetailPage() {
 	});
 	const isOAuthServer = (server?.auth_mode ?? "").toLowerCase() === "oauth";
 	const transportValidity = server?.transport_validity;
-	const hasTransportIssue =
-		transportValidity?.state === "invalid" ||
-		transportValidity?.state === "missing";
-	const transportFocusField = resolveTransportFocusField(
-		transportValidity?.diagnostics[0]?.field,
-		server?.server_type,
-	);
+	const unrecognizedTransport =
+		transportValidity?.draft?.kind === "unrecognized"
+			? transportValidity.draft
+			: null;
+	const transportFocusField = unrecognizedTransport
+		? "type"
+		: resolveTransportFocusField(
+			transportValidity?.diagnostics[0]?.field,
+			server?.server_type,
+		);
 	const openTransportEditor = useCallback(() => {
 		setEditFocusTransportField(transportFocusField);
 		setIsEditOpen(true);
 	}, [transportFocusField]);
+	const requiresTransportRepair = unrecognizedTransport !== null;
+	const requiresRepair = Boolean(server?.namespace_issue || requiresTransportRepair);
 	const oauthStatusQuery = useQuery({
 		queryKey: ["server-oauth", serverId],
 		queryFn: () => serversApi.getOAuthStatus(serverId!),
@@ -571,7 +582,9 @@ export function ServerDetailPage() {
 		server?.server_version ??
 		readLegacyString(server, "serverVersion");
 	const defaultTab = "overview";
-	const validTabs = ["overview", "capabilities"];
+	const validTabs = requiresTransportRepair
+		? ["overview"]
+		: ["overview", "capabilities"];
 	const { activeTab: capabilityTab, setActiveTab: setCapabilityTab } =
 		useUrlTab({
 			paramName: "tab",
@@ -645,9 +658,18 @@ export function ServerDetailPage() {
 		isOAuthServer && liveOAuthStatus
 			? liveOAuthStatus.state
 			: server?.oauth_status;
-	const isRemoteHttpServer = ["streamable_http", "sse"].includes(
-		String(server?.server_type ?? "").toLowerCase(),
-	);
+	const authWarningLabel = resolveServerAuthWarningLabel({
+		authMode: server?.auth_mode,
+		oauthStatus: authBadgeOAuthStatus,
+		readiness: authReadiness,
+		t,
+	});
+	const headerWarningLabel = resolveElevatedServerWarningLabel({
+		requiresTransportRepair,
+		authWarningLabel,
+		t,
+	});
+	const isRemoteHttpServer = isRemoteHttpTransport(server?.server_type);
 	const handleAuthAction = useCallback(() => {
 		if (getOAuthReadinessActionTarget(authReadiness) === "security-settings") {
 			navigate("/settings?tab=security");
@@ -707,6 +729,8 @@ export function ServerDetailPage() {
 							statusLabel={namespaceIssueStatusLabel}
 							isServerEnabled={false}
 						/>
+					) : headerWarningLabel ? (
+						<ServerWarningBadge label={headerWarningLabel} />
 					) : server ? (
 						<StatusBadge
 							status={runtimeStatus}
@@ -807,7 +831,10 @@ export function ServerDetailPage() {
 						className="flex min-h-0 flex-1 flex-col gap-4"
 					>
 						<div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-							<ServerCapabilityTabsHeader server={server} />
+							<ServerCapabilityTabsHeader
+								server={server}
+								isCapabilitiesDisabled={requiresTransportRepair}
+							/>
 							<ButtonGroup className="ml-auto flex-shrink-0 flex-nowrap self-start">
 								<Button
 									size="sm"
@@ -815,7 +842,7 @@ export function ServerDetailPage() {
 									onClick={() => {
 										refreshCapabilitiesMutation.mutate();
 									}}
-									disabled={isOverviewRefreshing}
+									disabled={isOverviewRefreshing || requiresTransportRepair}
 									className={overviewActionButtonClass}
 								>
 									<RefreshCw
@@ -827,16 +854,20 @@ export function ServerDetailPage() {
 								</Button>
 								<Button
 									size="sm"
-									variant={server.namespace_issue ? "warning" : "outline"}
-									onClick={() => setIsEditOpen(true)}
+									variant={requiresRepair ? "warning" : "outline"}
+									onClick={
+										requiresTransportRepair
+											? openTransportEditor
+											: () => setIsEditOpen(true)
+									}
 									className={overviewActionButtonClass}
 								>
-									{server.namespace_issue ? (
+									{requiresRepair ? (
 										<Wrench className="h-4 w-4" />
 									) : (
 										<Edit3 className="h-4 w-4" />
 									)}
-									{server.namespace_issue
+									{requiresRepair
 										? t("detail.namespaceIssue.action")
 										: t("detail.actions.edit", {
 											defaultValue: "Edit",
@@ -857,35 +888,6 @@ export function ServerDetailPage() {
 									<Card className={DETAIL_OVERVIEW_PINNED_SECTION_CLASS}>
 										<CardContent className="p-4">
 											<div className="flex flex-col gap-4">
-												{hasTransportIssue ? (
-													<button
-														type="button"
-														onClick={openTransportEditor}
-														className="flex w-full items-start gap-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-left text-amber-950 transition-colors hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-950/60"
-													>
-														<AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-														<span className="min-w-0">
-															<span className="block text-sm font-medium">
-																{t(
-																	transportValidity?.state === "missing"
-																		? "detail.transportValidity.missingTitle"
-																		: "detail.transportValidity.invalidTitle",
-																	{ defaultValue: "Transport configuration needs attention" },
-																)}
-															</span>
-															<span className="block text-xs opacity-90">
-																{transportValidity?.diagnostics.length
-																	? transportValidity.diagnostics
-																			.map((diagnostic) => diagnostic.code)
-																			.join(", ")
-																	: t("detail.transportValidity.missingDescription", {
-																			defaultValue:
-																				"Open the editor to restore the server transport.",
-																		})}
-															</span>
-														</span>
-													</button>
-												) : null}
 												<div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
 													<div className="flex flex-wrap items-start gap-4">
 														<CachedAvatar
@@ -910,7 +912,7 @@ export function ServerDetailPage() {
 																		type="button"
 																		variant="ghost"
 																		onClick={() => setIsEditOpen(true)}
-																		className="h-auto p-0 font-normal text-inherit hover:bg-transparent hover:text-inherit"
+																		className="h-auto p-0 font-normal text-destructive hover:bg-transparent hover:text-destructive"
 																	>
 																		{server.name}
 																		<AlertTriangle
@@ -927,7 +929,16 @@ export function ServerDetailPage() {
 																	defaultValue: "Type",
 																})}
 															>
-																{server.server_type}
+																{unrecognizedTransport ? (
+																	<ServerWarningBadge
+																		label={t("detail.transportValidity.unrecognizedType", {
+																			declaredType: unrecognizedTransport.declared_type,
+																		})}
+																		onAction={openTransportEditor}
+																	/>
+																) : (
+																	server.server_type
+																)}
 															</OverviewMetadataRow>
 															{server.auth_mode || isRemoteHttpServer ? (
 																<OverviewMetadataRow
@@ -1161,7 +1172,9 @@ export function ServerDetailPage() {
 								server={server}
 								oauthStatus={authBadgeOAuthStatus}
 								authReadiness={authReadiness}
-								enabled={capabilityTab === "capabilities"}
+								enabled={
+									capabilityTab === "capabilities" && !requiresTransportRepair
+								}
 								enableInspect={enableServerDebug}
 								onAuthenticationAction={handleAuthAction}
 								onViewLogs={() =>
@@ -1190,7 +1203,13 @@ export function ServerDetailPage() {
 	);
 }
 
-function ServerCapabilityTabsHeader({ server }: { server: ServerDetail }) {
+function ServerCapabilityTabsHeader({
+	server,
+	isCapabilitiesDisabled = false,
+}: {
+	server: ServerDetail;
+	isCapabilitiesDisabled?: boolean;
+}) {
 	const { t } = useTranslation("servers");
 	const totalCount = totalCapabilityCount(server.capability);
 	return (
@@ -1198,7 +1217,7 @@ function ServerCapabilityTabsHeader({ server }: { server: ServerDetail }) {
 			<TabsTrigger value="overview">
 				{t("detail.tabs.overview", { defaultValue: "Overview" })}
 			</TabsTrigger>
-			<TabsTrigger value="capabilities">
+			<TabsTrigger value="capabilities" disabled={isCapabilitiesDisabled}>
 				{t("detail.tabs.capabilities", {
 					count: totalCount,
 					defaultValue: "Capabilities ({{count}})",

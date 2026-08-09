@@ -4,6 +4,7 @@ mod v0006_normalize_client_configuration;
 mod v0008_validate_secure_store;
 mod v0010_create_capability_catalog;
 mod v0012_create_structured_server_transport;
+mod v0013_canonicalize_unrecognized_server_transport;
 
 use super::Migration;
 use anyhow::Result;
@@ -30,6 +31,7 @@ pub(crate) fn all() -> Vec<Migration> {
         v0010_create_capability_catalog::migration(),
         Migration::sql(11, "add profile authoring generation", PROFILE_AUTHORING_GENERATION),
         v0012_create_structured_server_transport::migration(),
+        v0013_canonicalize_unrecognized_server_transport::migration(),
     ]
 }
 

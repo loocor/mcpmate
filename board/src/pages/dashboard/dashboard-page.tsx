@@ -568,9 +568,7 @@ export function DashboardPage() {
 											{item.serverName}
 										</div>
 										<div className="truncate font-mono text-xs text-muted-foreground">
-											{t("dashboard:transportValidity.todo", {
-												defaultValue: "Server transport needs repair",
-											})}
+											{t("dashboard:transportValidity.todo")}
 										</div>
 									</div>
 									<ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />

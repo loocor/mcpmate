@@ -216,6 +216,8 @@ export interface ServerInstallManualFormProps {
 	initialDraft?: ServerInstallDraft | null;
 	/** Field to focus after the edit drawer opens. */
 	focusTransportField?: TransportFocusField;
+	/** Called when a user explicitly interacts with the transport type selector. */
+	onTransportTypeInteraction?: (kind: ManualServerFormValues["kind"]) => void;
 	/** Allow users to modify the JSON representation. Defaults to true in create mode. */
 	allowJsonEditing?: boolean;
 	/** Existing namespace issue shown by the edit flow. */
@@ -263,6 +265,9 @@ export function transportDraftToFormFields(
 	ServerInstallDraft,
 	"kind" | "command" | "args" | "env" | "url" | "urlParams" | "headers"
 > | null {
+	if (draft.kind === "unrecognized") {
+		return null;
+	}
 	if (draft.kind === "stdio") {
 		return {
 			kind: "stdio",
@@ -302,6 +307,25 @@ export function transportDraftToFormFields(
 		};
 	}
 	return null;
+}
+
+/**
+ * Empty typed fields for unrecognized-transport repair.
+ * Do not hydrate command/URL from the stdio compatibility projection.
+ */
+export function unrecognizedTransportRepairFormFields(): Pick<
+	ServerInstallDraft,
+	"kind" | "command" | "args" | "env" | "url" | "urlParams" | "headers"
+> {
+	return {
+		kind: "stdio",
+		command: undefined,
+		args: undefined,
+		env: undefined,
+		url: undefined,
+		urlParams: undefined,
+		headers: undefined,
+	};
 }
 
 export function requireExplicitTransportSelection(

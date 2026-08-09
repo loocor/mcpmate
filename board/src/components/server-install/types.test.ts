@@ -5,6 +5,7 @@ import {
 	manualServerSchema,
 	requireExplicitTransportSelection,
 	transportDraftToFormFields,
+	unrecognizedTransportRepairFormFields,
 } from "./types";
 import { resolveTransportFocusField } from "../../lib/types";
 
@@ -51,13 +52,22 @@ describe("server install namespace validation", () => {
 });
 
 describe("transport repair focus", () => {
-	test("keeps an unrecognized transport out of the form until a user selects one", () => {
+	test("keeps an unrecognized transport out of typed draft hydration until confirmed", () => {
 		const unrecognizedTransport = {
 			kind: "unrecognized" as const,
 			declared_type: "websocket",
 		};
 
 		expect(transportDraftToFormFields(unrecognizedTransport)).toBeNull();
+		expect(unrecognizedTransportRepairFormFields()).toEqual({
+			kind: "stdio",
+			command: undefined,
+			args: undefined,
+			env: undefined,
+			url: undefined,
+			urlParams: undefined,
+			headers: undefined,
+		});
 		expect(() => requireExplicitTransportSelection(unrecognizedTransport)).toThrow(
 			"websocket",
 		);
@@ -67,6 +77,7 @@ describe("transport repair focus", () => {
 	});
 
 	test("maps transport diagnostics to the editable form fields", () => {
+		expect(resolveTransportFocusField("transport", "stdio")).toBe("type");
 		expect(resolveTransportFocusField("command", "stdio")).toBe("command");
 		expect(resolveTransportFocusField("endpoint", "streamable_http")).toBe("url");
 		expect(resolveTransportFocusField(undefined, "stdio")).toBe("command");

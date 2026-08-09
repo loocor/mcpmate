@@ -164,6 +164,9 @@ export const dashboardTranslations = {
 				},
 			},
 		},
+		transportValidity: {
+			todo: "Server transport needs repair",
+		},
 		tokenSavings: {
 			title: "Token Savings",
 			description: "Estimated context savings from profile filtering",
@@ -346,6 +349,9 @@ export const dashboardTranslations = {
 					resolve: "详细故障在对应的完整控制台页面处理。",
 				},
 			},
+		},
+		transportValidity: {
+			todo: "服务器传输配置需要修复",
 		},
 		tokenSavings: {
 			title: "Token 节省",
@@ -538,6 +544,9 @@ export const dashboardTranslations = {
 					resolve: "詳細な障害は対応するフルコンソール画面で解決します。",
 				},
 			},
+		},
+		transportValidity: {
+			todo: "サーバーのトランスポート設定を修復してください",
 		},
 		tokenSavings: {
 			title: "トークン節約",

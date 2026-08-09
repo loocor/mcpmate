@@ -115,6 +115,7 @@ export const serversTranslations = {
 		entity: {
 			tags: {
 				unifyEligible: "Direct Exposure",
+				repairRequired: "Repair required",
 			},
 			description: {
 				serverLabel: "Server: {{name}}",
@@ -123,9 +124,10 @@ export const serversTranslations = {
 				stdio: "STDIO",
 				http: "HTTP",
 				streamableHttp: "Streamable HTTP",
+				unknown: "Unknown",
 				headerAuth: "Header auth",
 				oauth: "OAuth",
-				oauthWarning: "Authorization expired — reauthorize required",
+				oauthWarning: "Reauthorize required",
 				authOff: "Off",
 			},
 			iconAlt: {
@@ -160,6 +162,10 @@ export const serversTranslations = {
 				},
 			},
 		detail: {
+			transportValidity: {
+				invalidTitle: "Transport configuration needs attention",
+				unrecognizedType: "Unknown transport: {{declaredType}}",
+			},
 			errors: {
 				noServerId: "No server ID provided",
 			},
@@ -1140,6 +1146,7 @@ export const serversTranslations = {
 		entity: {
 			tags: {
 				unifyEligible: "直达暴露",
+				repairRequired: "待修正",
 			},
 			description: {
 				serverLabel: "服务器：{{name}}",
@@ -1148,9 +1155,10 @@ export const serversTranslations = {
 				stdio: "STDIO",
 				http: "HTTP",
 				streamableHttp: "Streamable HTTP",
+				unknown: "未知",
 				headerAuth: "请求头鉴权",
 				oauth: "OAuth",
-				oauthWarning: "授权已过期，请重新授权",
+				oauthWarning: "需要重新授权",
 				authOff: "关闭",
 			},
 			iconAlt: {
@@ -1185,6 +1193,10 @@ export const serversTranslations = {
 				},
 			},
 		detail: {
+			transportValidity: {
+				invalidTitle: "传输配置需要处理",
+				unrecognizedType: "未知传输类型：{{declaredType}}",
+			},
 			errors: {
 				noServerId: "未提供服务器 ID。",
 			},
@@ -2111,15 +2123,17 @@ export const serversTranslations = {
 		entity: {
 			tags: {
 				unifyEligible: "直接公開",
+				repairRequired: "修正が必要",
 			},
       description: { serverLabel: "サーバー: {{name}}" },
 			connectionTags: {
 				stdio: "STDIO",
 				http: "HTTP",
 				streamableHttp: "Streamable HTTP",
+				unknown: "不明",
 				headerAuth: "ヘッダー認証",
 				oauth: "OAuth",
-				oauthWarning: "認可の期限切れ — 再認可が必要です",
+				oauthWarning: "再認可が必要",
 				authOff: "オフ",
 			},
 			iconAlt: {
@@ -2154,6 +2168,10 @@ export const serversTranslations = {
 			},
 		},
 		detail: {
+			transportValidity: {
+				invalidTitle: "トランスポート設定を確認してください",
+				unrecognizedType: "不明なトランスポート: {{declaredType}}",
+			},
 			errors: {
 				noServerId: "サーバー ID が指定されていません。",
 			},

@@ -4,6 +4,7 @@ import { serversApi } from "../lib/api";
 import { notifyError, notifySuccess, notifyWarning } from "../lib/notify";
 import { startOAuthAccessFlow } from "../lib/oauth-callback-access";
 import { isRegistrySource } from "../lib/source";
+import { inferServerInstallKind } from "../lib/server-transport";
 import type { ServerInstallDraft } from "../hooks/use-server-install-pipeline";
 import type {
 	MCPServerConfig,
@@ -15,19 +16,11 @@ import type {
 import { ServerInstallManualForm, type ServerInstallManualFormHandle } from "./server-install";
 import {
 	requireExplicitTransportSelection,
-	SERVER_TYPE_OPTIONS,
 	transportDraftToFormFields,
+	unrecognizedTransportRepairFormFields,
 } from "./server-install/types";
-import {
-	Drawer,
-	DrawerContent,
-	DrawerDescription,
-	DrawerHeader,
-	DrawerTitle,
-} from "./ui/drawer";
 import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
-import { Segment } from "./ui/segment";
 
 interface ServerEditDrawerProps {
 	server: ServerDetail | null;
@@ -160,14 +153,6 @@ const buildMetaFromServer = (
 	return Object.keys(meta).length ? meta : undefined;
 };
 
-const inferKind = (serverType?: string | null): ServerInstallDraft["kind"] => {
-	const kind = serverType?.toLowerCase() ?? "";
-	if (kind.includes("streamable")) return "streamable_http";
-	if (kind === "sse") return "sse";
-	if (kind.includes("http")) return "streamable_http";
-	return "stdio";
-};
-
 const parseUrl = (
 	raw: string | undefined,
 ): { url?: string; urlParams?: Record<string, string> } => {
@@ -203,18 +188,14 @@ const buildUrlWithParams = (
 	return query ? `${trimmedUrl}?${query}` : trimmedUrl;
 };
 
-const convertServerDetailToDraft = (
-	server: ServerDetail,
-	selectedUnrecognizedTransport?: ServerInstallDraft["kind"],
-): ServerInstallDraft | null => {
+const convertServerDetailToDraft = (server: ServerDetail): ServerInstallDraft | null => {
 	const meta = buildMetaFromServer(server);
 	const source = server.source ?? undefined;
 	const transportDraft = server.transport_validity?.draft;
 	if (transportDraft?.kind === "unrecognized") {
-		if (!selectedUnrecognizedTransport) return null;
 		return {
 			name: server.name,
-			kind: selectedUnrecognizedTransport,
+			...unrecognizedTransportRepairFormFields(),
 			meta,
 			source,
 		};
@@ -231,7 +212,7 @@ const convertServerDetailToDraft = (
 		};
 	}
 
-	const kind = inferKind(server.server_type);
+	const kind = inferServerInstallKind(server.server_type);
 	const args = Array.isArray(server.args)
 		? server.args.filter((item): item is string => Boolean(item))
 		: undefined;
@@ -338,7 +319,6 @@ export function ServerEditDrawer({
 		server?.transport_validity?.draft?.kind === "unrecognized"
 			? server.transport_validity.draft
 			: null;
-
 	useEffect(() => {
 		if (isOpen && server) {
 			setUnifyEligible(server.unify_direct_exposure_eligible ?? false);
@@ -348,11 +328,8 @@ export function ServerEditDrawer({
 	}, [isOpen, server]);
 
 	const initialDraft = useMemo(
-		() =>
-			server
-				? convertServerDetailToDraft(server, selectedUnrecognizedTransport)
-				: null,
-		[server, selectedUnrecognizedTransport],
+		() => (server ? convertServerDetailToDraft(server) : null),
+		[server],
 	);
 	const canRefreshFromRegistry = isRegistrySource(server?.source);
 
@@ -527,39 +504,6 @@ export function ServerEditDrawer({
 		</div>
 	);
 
-	if (unrecognizedTransport && !selectedUnrecognizedTransport) {
-		return (
-			<Drawer open={isOpen} onOpenChange={(open) => !open && onClose()}>
-				<DrawerContent className="mx-auto max-w-2xl">
-					<DrawerHeader>
-						<DrawerTitle>
-							{t("manual.transport.unrecognized.title", {
-								defaultValue: "Choose a transport to repair this server",
-							})}
-						</DrawerTitle>
-						<DrawerDescription>
-							{t("manual.transport.unrecognized.description", {
-								declaredType: unrecognizedTransport.declared_type,
-								defaultValue:
-									'The saved transport type "{{declaredType}}" is not recognized. Select its intended transport before editing; existing command and URL values will not be copied.',
-							})}
-						</DrawerDescription>
-					</DrawerHeader>
-					<div className="px-4 pb-8 sm:px-6">
-						<Segment
-							options={SERVER_TYPE_OPTIONS}
-							onValueChange={(value) =>
-								setSelectedUnrecognizedTransport(
-									value as ServerInstallDraft["kind"],
-								)
-							}
-						/>
-					</div>
-				</DrawerContent>
-			</Drawer>
-		);
-	}
-
 	return (
 		<ServerInstallManualForm
 			ref={formRef}
@@ -576,6 +520,11 @@ export function ServerEditDrawer({
 			namespaceIssueFeedback={namespaceRemediationFeedback}
 			initialDraft={initialDraft ?? undefined}
 			focusTransportField={focusTransportField}
+			onTransportTypeInteraction={
+				unrecognizedTransport
+					? setSelectedUnrecognizedTransport
+					: undefined
+			}
 			onRefreshFromRegistry={canRefreshFromRegistry ? handleRefreshFromRegistry : undefined}
 			isRefreshingRegistry={isRefreshing}
 			extraTab={{

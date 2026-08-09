@@ -141,13 +141,14 @@ export interface ServerTransportValidity {
   draft?: ApiServerTransportDraft | null;
 }
 
-export type TransportFocusField = "command" | "url";
+export type TransportFocusField = "type" | "command" | "url";
 
 export function resolveTransportFocusField(
   diagnosticField: string | null | undefined,
   serverType: string | null | undefined,
 ): TransportFocusField {
-  if (diagnosticField === "command") return "command";
+	if (diagnosticField === "transport") return "type";
+	if (diagnosticField === "command") return "command";
   if (diagnosticField === "endpoint" || diagnosticField === "url") {
     return "url";
   }

@@ -1,5 +1,6 @@
 import { Plug } from "lucide-react";
 import { memo, useCallback, useMemo } from "react";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 
 import { resolveServerOAuthReadiness } from "../../lib/oauth-readiness";
@@ -12,10 +13,19 @@ import {
 	formatServerEndpoint,
 	getServerDisplayName,
 } from "../../lib/server-display";
+import {
+	classifyServerTransport,
+	type ClassifiedServerTransport,
+} from "../../lib/server-transport";
 import type { ServerSummary } from "../../lib/types";
 import { EntityCard } from "../entity-card";
 import { EntityListItem } from "../entity-list-item";
-import { ServerAuthBadge } from "../server-auth-badge";
+import {
+	resolveElevatedServerWarningLabel,
+	resolveServerAuthBadgeDisplay,
+	ServerAuthBadge,
+	ServerWarningBadge,
+} from "../server-auth-badge";
 import { StatusBadge } from "../status-badge";
 import { Badge } from "../ui/badge";
 import { Switch } from "../ui/switch";
@@ -83,6 +93,29 @@ function buildCapabilityStats(
 	);
 }
 
+function resolveConnectionTypeLabel(
+	transport: ClassifiedServerTransport,
+	unrecognized: boolean,
+	t: TFunction<"servers">,
+): string {
+	if (unrecognized) {
+		return t("entity.connectionTags.unknown", { defaultValue: "Unknown" });
+	}
+
+	switch (transport) {
+		case "stdio":
+			return t("entity.connectionTags.stdio", { defaultValue: "STDIO" });
+		case "sse":
+		case "streamable_http":
+			return t("entity.connectionTags.streamableHttp", {
+				defaultValue: "Streamable HTTP",
+			});
+		case "http":
+		case "unknown":
+			return t("entity.connectionTags.http", { defaultValue: "HTTP" });
+	}
+}
+
 function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 	const { t } = useTranslation("servers");
 	const {
@@ -93,6 +126,9 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 		isToggleDisabled,
 	} = props;
 	const displayName = getServerDisplayName(server);
+	const requiresTransportRepair =
+		server.transport_validity?.draft?.kind === "unrecognized";
+	const classifiedTransport = classifyServerTransport(server.server_type);
 	const lifecycleLabels: CapabilityLifecycleLabels = {
 		unavailable: t("capabilityLifecycle.capabilityUnavailable"),
 		unsupported: t("capabilityLifecycle.capabilityUnsupported"),
@@ -123,97 +159,54 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 		[onToggle, server.id],
 	);
 
-	function renderUnifyEligibilityTag() {
-		if (!server.unify_direct_exposure_eligible) return null;
-		return (
-			<Badge
-				variant="secondary"
-				className="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200"
-			>
-				{t("entity.tags.unifyEligible", { defaultValue: "Unify Direct" })}
-			</Badge>
-		);
-	}
+	const unifyEligibilityTag = server.unify_direct_exposure_eligible ? (
+		<Badge
+			variant="secondary"
+			className="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200"
+		>
+			{t("entity.tags.unifyEligible", { defaultValue: "Unify Direct" })}
+		</Badge>
+	) : null;
 
-	const connectionTypeTags = useMemo(() => {
-		const tags = [];
-		const lower = (server.server_type || "").toLowerCase();
-		const isStdio = lower.includes("stdio") || lower.includes("process");
-		const isStreamable =
-			lower.includes("stream") ||
-			lower.includes("sse") ||
-			lower.includes("streamable");
-		const isGenericHttp = lower.includes("http") || lower.includes("rest");
-
-		if (isStdio) {
-			tags.push(
-				<span
-					key="stdio"
-					className="flex items-center gap-1 text-xs"
-					data-decorative
-				>
-					<Plug className="h-3 w-3" />
-					{t("entity.connectionTags.stdio", { defaultValue: "STDIO" })}
-				</span>,
-			);
-		} else if (isStreamable) {
-			tags.push(
-				<span
-					key="streamable_http"
-					className="flex items-center gap-1 text-xs"
-					data-decorative
-				>
-					<Plug className="h-3 w-3" />
-					{t("entity.connectionTags.streamableHttp", {
-						defaultValue: "Streamable HTTP",
-					})}
-				</span>,
-			);
-		} else if (isGenericHttp) {
-			tags.push(
-				<span
-					key="http"
-					className="flex items-center gap-1 text-xs"
-					data-decorative
-				>
-					<Plug className="h-3 w-3" />
-					{t("entity.connectionTags.http", { defaultValue: "HTTP" })}
-				</span>,
-			);
-		}
-
-		if (tags.length === 0) {
-			tags.push(
-				<span
-					key="default"
-					className="flex items-center gap-1 text-xs"
-					data-decorative
-				>
-					<Plug className="h-3 w-3" />
-					{t("entity.connectionTags.http", { defaultValue: "HTTP" })}
-				</span>,
-			);
-		}
-
-		return tags;
-	}, [server.server_type, t]);
-
-	const unifyEligibilityDescriptionTag = renderUnifyEligibilityTag();
-	const unifyEligibilityTitleTag = renderUnifyEligibilityTag();
-
-	const authBadge = useMemo(
-		() => (
-			<ServerAuthBadge
-				authMode={server.auth_mode}
-				oauthStatus={server.oauth_status}
-				readiness={resolveServerOAuthReadiness(server)}
-				showLabel={props.variant === "list"}
-			/>
-		),
-		[props.variant, server],
+	const connectionTypeTag = (
+		<span className="flex items-center gap-1 text-xs" data-decorative>
+			<Plug className="h-3 w-3" />
+			{resolveConnectionTypeLabel(
+				classifiedTransport,
+				requiresTransportRepair,
+				t,
+			)}
+		</span>
 	);
 
-	const statusBadge = useMemo(() => {
+	const oauthReadiness = resolveServerOAuthReadiness(server);
+	const authDisplay = resolveServerAuthBadgeDisplay({
+		authMode: server.auth_mode,
+		oauthStatus: server.oauth_status,
+		readiness: oauthReadiness,
+		t,
+	});
+	const authWarningLabel =
+		authDisplay.kind === "warning" ? authDisplay.label : null;
+	const primaryWarningLabel = resolveElevatedServerWarningLabel({
+		requiresTransportRepair,
+		authWarningLabel,
+		t,
+	});
+
+	const authBadge =
+		authDisplay.kind === "none" || authDisplay.kind === "warning" ? null : (
+			<ServerAuthBadge
+				display={authDisplay}
+				showLabel={props.variant === "list"}
+			/>
+		);
+
+	const statusBadge = (() => {
+		if (primaryWarningLabel) {
+			return <ServerWarningBadge label={primaryWarningLabel} />;
+		}
+
 		const namespaceIssue = server.namespace_issue;
 		const namespaceIssueLabel = namespaceIssue
 			? t(
@@ -238,13 +231,7 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 				isServerEnabled={namespaceIssue ? false : server.enabled}
 			/>
 		);
-	}, [
-		server.enabled,
-		server.instances,
-		server.namespace_issue,
-		server.status,
-		t,
-	]);
+	})();
 
 	const stats = hasCapabilityAuthenticationFailure(server.capability)
 		? []
@@ -252,23 +239,26 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 
 	const gridDescription = useMemo(() => {
 		const serverTypeRaw = server.server_type || "";
-		const serverType = serverTypeRaw.toLowerCase();
+		const fallbackServerLabel = t("entity.description.serverLabel", {
+			name: server.name || server.id,
+			defaultValue: "Server: {{name}}",
+		});
 
-		let technicalLine = "";
-		if (serverType.includes("stdio") || serverType.includes("process")) {
-			technicalLine = `stdio://${server.name || server.id}`;
-		} else if (serverType.includes("http") || serverType.includes("sse")) {
-			technicalLine =
-				formatServerEndpoint(server.url) ??
-				t("entity.description.serverLabel", {
-					name: server.name || server.id,
-					defaultValue: "Server: {{name}}",
-				});
-		} else {
-			technicalLine = t("entity.description.serverLabel", {
-				name: server.name || server.id,
-				defaultValue: "Server: {{name}}",
-			});
+		let technicalLine = fallbackServerLabel;
+		if (!requiresTransportRepair) {
+			switch (classifiedTransport) {
+				case "stdio":
+					technicalLine = `stdio://${server.name || server.id}`;
+					break;
+				case "sse":
+				case "streamable_http":
+				case "http":
+					technicalLine =
+						formatServerEndpoint(server.url) ?? fallbackServerLabel;
+					break;
+				case "unknown":
+					break;
+			}
 		}
 
 		const metaDescription = server.meta?.description?.trim();
@@ -285,6 +275,8 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 			</div>
 		);
 	}, [
+		classifiedTransport,
+		requiresTransportRepair,
 		server.id,
 		server.meta?.description,
 		server.name,
@@ -293,15 +285,12 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 		t,
 	]);
 
-	const listDescription = useMemo(
-		() => (
-			<div className="flex items-center gap-2">
-				{connectionTypeTags}
-				{unifyEligibilityDescriptionTag}
-				{authBadge}
-			</div>
-		),
-		[authBadge, connectionTypeTags, unifyEligibilityDescriptionTag],
+	const listDescription = (
+		<div className="flex items-center gap-2">
+			{connectionTypeTag}
+			{unifyEligibilityTag}
+			{authBadge}
+		</div>
 	);
 
 	const avatar = useMemo(
@@ -320,9 +309,7 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 				title={displayName}
 				description={listDescription}
 				avatar={avatar}
-				titleBadges={
-					unifyEligibilityTitleTag ? [unifyEligibilityTitleTag] : []
-				}
+				titleBadges={unifyEligibilityTag ? [unifyEligibilityTag] : []}
 				stats={stats}
 				statusBadge={statusBadge}
 				enableSwitch={{
@@ -344,8 +331,8 @@ function ServerCatalogEntryComponent(props: ServerCatalogEntryProps) {
 			stats={stats}
 			topRightBadge={
 				<div className="flex items-center gap-2">
-					{connectionTypeTags}
-					{unifyEligibilityDescriptionTag}
+					{connectionTypeTag}
+					{unifyEligibilityTag}
 					{authBadge}
 				</div>
 			}
