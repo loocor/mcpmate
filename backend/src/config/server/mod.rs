@@ -45,7 +45,6 @@ pub use capabilities::{CapabilitySnapshot, discover_from_config, discover_from_c
 pub use enabled::{
     ServerEnabledService, get_enabled_servers, get_enabled_servers_by_profile, get_server_global_status,
     is_server_enabled_in_any_active_profile, is_server_enabled_in_any_profile, is_server_in_profile,
-    update_server_global_status,
 };
 pub use import::{
     ConflictPolicy, ImportOptions, ImportOutcome, SkipReason, SkippedServer, import_batch,
