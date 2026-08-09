@@ -3,7 +3,6 @@ use crate::clients::error::{ConfigError, ConfigResult};
 use crate::clients::models::{CapabilitySource, ServerTemplateInput};
 use crate::common::constants::defaults;
 use crate::config::profile::basic::get_active_profile;
-use crate::config::server::{args::get_server_args, env::get_server_env};
 use serde_json::json;
 use sqlx::FromRow;
 
@@ -11,9 +10,6 @@ use sqlx::FromRow;
 pub struct ServerRow {
     pub id: String,
     pub name: String,
-    pub command: Option<String>,
-    pub url: Option<String>,
-    pub server_type: String,
 }
 
 #[derive(Debug)]
@@ -100,7 +96,7 @@ impl ClientConfigService {
             ServerSelection::AllEnabled => {
                 let rows = sqlx::query_as::<_, ServerRow>(
                     r#"
-                    SELECT id, name, command, url, server_type
+                    SELECT id, name
                     FROM server_config
                     WHERE enabled = 1
                     ORDER BY name
@@ -114,7 +110,7 @@ impl ClientConfigService {
             ServerSelection::Profile(profile_id) => {
                 let rows = sqlx::query_as::<_, ServerRow>(
                     r#"
-                    SELECT sc.id, sc.name, sc.command, sc.url, sc.server_type
+                    SELECT sc.id, sc.name
                     FROM server_config sc
                     WHERE sc.enabled = 1
                       AND (
@@ -157,7 +153,7 @@ impl ClientConfigService {
                 let placeholders = vec!["?"; profile_ids.len()].join(", ");
                 let sql = format!(
                     r#"
-                    SELECT DISTINCT sc.id, sc.name, sc.command, sc.url, sc.server_type
+                    SELECT DISTINCT sc.id, sc.name
                     FROM server_config sc
                     WHERE sc.enabled = 1
                       AND (
@@ -206,7 +202,7 @@ impl ClientConfigService {
                 let placeholders = vec!["?"; ids.len()].join(", ");
                 let sql = format!(
                     r#"
-                    SELECT id, name, command, url, server_type
+                    SELECT id, name
                     FROM server_config
                     WHERE id IN ({}) AND enabled = 1
                     ORDER BY name
@@ -231,18 +227,27 @@ impl ClientConfigService {
         &self,
         row: crate::clients::service::query::ServerRow,
     ) -> ConfigResult<ServerTemplateInput> {
-        let args = get_server_args(&self.db_pool, &row.id)
-            .await
-            .map_err(|err| ConfigError::DataAccessError(err.to_string()))?
-            .into_iter()
-            .map(|arg| arg.arg_value)
-            .collect::<Vec<_>>();
-
-        let env = get_server_env(&self.db_pool, &row.id)
+        let validated = crate::config::server::load_validated_server_transport(&self.db_pool, &row.id)
             .await
             .map_err(|err| ConfigError::DataAccessError(err.to_string()))?;
-
-        let transport = row.server_type.as_str().to_string();
+        let transport = validated.server_type().client_format().to_string();
+        let (command, args, env, url) = match validated {
+            crate::config::models::ValidatedTransport::Stdio { command, args, env } => (
+                Some(command),
+                args,
+                env.into_iter()
+                    .map(|(key, value)| (key, value.runtime_value()))
+                    .collect(),
+                None,
+            ),
+            crate::config::models::ValidatedTransport::Sse { endpoint, .. }
+            | crate::config::models::ValidatedTransport::StreamableHttp { endpoint, .. } => (
+                None,
+                Vec::new(),
+                std::collections::HashMap::new(),
+                Some(endpoint.to_string()),
+            ),
+        };
 
         let mut metadata = std::collections::HashMap::new();
         metadata.insert("server_id".to_string(), json!(row.id));
@@ -252,10 +257,10 @@ impl ClientConfigService {
             name: row.name.clone(),
             display_name: Some(row.name),
             transport,
-            command: row.command,
+            command,
             args,
             env,
-            url: row.url,
+            url,
             headers: std::collections::HashMap::new(),
             metadata,
         })
@@ -268,9 +273,16 @@ mod tests {
     use crate::clients::models::ConfigMode;
     use crate::clients::source::{ClientConfigSource, DbTemplateSource, FileTemplateSource, TemplateRoot};
     use crate::common::profile::ProfileType;
-    use crate::config::{models::Profile, profile};
+    use crate::config::{
+        models::{ConfigValue, HttpTransportKind, Profile, Server, ServerTransportDraft},
+        profile,
+        server::upsert_server_definition,
+    };
     use sqlx::sqlite::SqlitePoolOptions;
-    use std::{collections::HashMap, sync::Arc};
+    use std::{
+        collections::{BTreeMap, HashMap},
+        sync::Arc,
+    };
     use tempfile::TempDir;
 
     async fn create_test_service() -> (TempDir, ClientConfigService) {
@@ -317,6 +329,196 @@ mod tests {
         let mut profile = Profile::new(name.to_string(), profile_type);
         profile.is_active = is_active;
         crate::test_helpers::insert_profile(service.db_pool.as_ref(), &profile).await
+    }
+
+    fn native_render_options(server_id: String) -> crate::clients::ClientRenderOptions {
+        crate::clients::ClientRenderOptions {
+            client_id: "client-a".to_string(),
+            mode: ConfigMode::Native,
+            profile_id: None,
+            server_ids: Some(vec![server_id]),
+            dry_run: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn prepare_servers_uses_validated_stdio_transport_over_legacy_projections() {
+        let (_temp_dir, service) = create_test_service().await;
+        let server = Server::new_stdio("typed-stdio".to_string(), Some("unused".to_string()));
+        let server_id = upsert_server_definition(
+            service.db_pool.as_ref(),
+            &server,
+            &ServerTransportDraft::Stdio {
+                command: Some("typed-command".to_string()),
+                args: vec!["--typed-arg".to_string()],
+                env: BTreeMap::from([
+                    (
+                        "MODE".to_string(),
+                        ConfigValue::Literal {
+                            value: "typed".to_string(),
+                        },
+                    ),
+                    (
+                        "TOKEN".to_string(),
+                        ConfigValue::SecretRef {
+                            alias: "typed-token".to_string(),
+                        },
+                    ),
+                ]),
+            },
+        )
+        .await
+        .expect("store typed stdio definition");
+
+        sqlx::query(
+            "UPDATE server_config \
+             SET command = 'legacy-command', \
+                 url = 'https://legacy.example.test/mcp', \
+                 server_type = 'streamable_http' \
+             WHERE id = ?",
+        )
+        .bind(&server_id)
+        .execute(service.db_pool.as_ref())
+        .await
+        .expect("diverge legacy server projection");
+        sqlx::query("DELETE FROM server_args WHERE server_id = ?")
+            .bind(&server_id)
+            .execute(service.db_pool.as_ref())
+            .await
+            .expect("clear projected arguments");
+        sqlx::query(
+            "INSERT INTO server_args (id, server_id, server_name, arg_index, arg_value) \
+             VALUES ('legacy-arg', ?, 'typed-stdio', 0, '--legacy-arg')",
+        )
+        .bind(&server_id)
+        .execute(service.db_pool.as_ref())
+        .await
+        .expect("insert legacy argument");
+        sqlx::query("DELETE FROM server_env WHERE server_id = ?")
+            .bind(&server_id)
+            .execute(service.db_pool.as_ref())
+            .await
+            .expect("clear projected environment");
+        sqlx::query(
+            "INSERT INTO server_env (id, server_id, server_name, env_key, env_value) \
+             VALUES ('legacy-env', ?, 'typed-stdio', 'TOKEN', 'legacy-token')",
+        )
+        .bind(&server_id)
+        .execute(service.db_pool.as_ref())
+        .await
+        .expect("insert legacy environment");
+
+        let servers = service
+            .prepare_servers(&native_render_options(server_id))
+            .await
+            .expect("prepare typed server");
+
+        assert_eq!(servers.len(), 1);
+        let exported = &servers[0];
+        assert_eq!(exported.transport, "stdio");
+        assert_eq!(exported.command.as_deref(), Some("typed-command"));
+        assert_eq!(exported.args, ["--typed-arg"]);
+        assert_eq!(
+            exported.env,
+            HashMap::from([
+                ("MODE".to_string(), "typed".to_string()),
+                ("TOKEN".to_string(), "[[secret:typed-token]]".to_string()),
+            ])
+        );
+        assert!(exported.url.is_none());
+        assert!(exported.headers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn prepare_servers_uses_typed_http_endpoint_without_exporting_headers() {
+        let (_temp_dir, service) = create_test_service().await;
+        let server = Server::new_stdio("typed-http".to_string(), Some("unused".to_string()));
+        let server_id = upsert_server_definition(
+            service.db_pool.as_ref(),
+            &server,
+            &ServerTransportDraft::Http {
+                protocol: HttpTransportKind::StreamableHttp,
+                endpoint: Some("https://typed.example.test/mcp".to_string()),
+                headers: BTreeMap::from([(
+                    "Authorization".to_string(),
+                    ConfigValue::SecretRef {
+                        alias: "http-token".to_string(),
+                    },
+                )]),
+            },
+        )
+        .await
+        .expect("store typed HTTP definition");
+
+        sqlx::query(
+            "UPDATE server_config \
+             SET command = 'legacy-command', \
+                 url = 'https://legacy.example.test/mcp', \
+                 server_type = 'stdio' \
+             WHERE id = ?",
+        )
+        .bind(&server_id)
+        .execute(service.db_pool.as_ref())
+        .await
+        .expect("diverge legacy HTTP projection");
+
+        let servers = service
+            .prepare_servers(&native_render_options(server_id))
+            .await
+            .expect("prepare typed HTTP server");
+
+        assert_eq!(servers.len(), 1);
+        let exported = &servers[0];
+        assert_eq!(exported.transport, "streamable_http");
+        assert!(exported.command.is_none());
+        assert!(exported.args.is_empty());
+        assert!(exported.env.is_empty());
+        assert_eq!(exported.url.as_deref(), Some("https://typed.example.test/mcp"));
+        assert!(exported.headers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn prepare_servers_fails_closed_when_the_transport_draft_is_missing() {
+        let (_temp_dir, service) = create_test_service().await;
+        let server_id = crate::config::server::upsert_server(
+            service.db_pool.as_ref(),
+            &Server::new_stdio("missing-transport".to_string(), Some("legacy-command".to_string())),
+        )
+        .await
+        .expect("store legacy server projection");
+
+        let error = service
+            .prepare_servers(&native_render_options(server_id))
+            .await
+            .expect_err("missing transport draft must fail the entire export");
+
+        assert!(matches!(error, ConfigError::DataAccessError(_)));
+        assert!(error.to_string().contains("ServerTransportDraft is missing"));
+    }
+
+    #[tokio::test]
+    async fn prepare_servers_fails_closed_when_the_transport_draft_is_invalid() {
+        let (_temp_dir, service) = create_test_service().await;
+        let server_id = crate::config::server::upsert_server(
+            service.db_pool.as_ref(),
+            &Server::new_stdio("invalid-transport".to_string(), Some("legacy-command".to_string())),
+        )
+        .await
+        .expect("store legacy server projection");
+        sqlx::query("INSERT INTO server_transport (server_id, draft_json) VALUES (?, ?)")
+            .bind(&server_id)
+            .bind(r#"{"kind":"stdio","command":null,"args":[],"env":{}}"#)
+            .execute(service.db_pool.as_ref())
+            .await
+            .expect("store invalid transport draft");
+
+        let error = service
+            .prepare_servers(&native_render_options(server_id))
+            .await
+            .expect_err("invalid transport draft must fail the entire export");
+
+        assert!(matches!(error, ConfigError::DataAccessError(_)));
+        assert!(error.to_string().contains("ServerTransportDraft is invalid"));
     }
 
     #[tokio::test]

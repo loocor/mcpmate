@@ -1,9 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use sha2::{Digest, Sha256};
 use url::Url;
 
-use crate::common::server::ServerType;
+use crate::{
+    common::server::ServerType,
+    config::models::{ConfigValue, ValidatedTransport},
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct ServerDedupFingerprint {
@@ -84,6 +87,63 @@ pub(crate) fn materialized_runtime_fingerprint(
         env: config.env.as_ref().unwrap_or(&empty),
         headers: config.headers.as_ref().unwrap_or(&empty),
     })
+}
+
+/// Fingerprints the validated persisted transport definition used by capability catalog observations.
+///
+/// This intentionally has no global enabled flag and never resolves OAuth or secret values. Secret
+/// references contribute only through their persisted canonical placeholder representation.
+pub(crate) fn validated_transport_fingerprint(transport: &ValidatedTransport) -> serde_json::Result<String> {
+    let (server_type, command, url, args, env, headers) = match transport {
+        ValidatedTransport::Stdio { command, args, env } => (
+            ServerType::Stdio.client_format(),
+            Some(command.clone()),
+            None,
+            args.iter()
+                .enumerate()
+                .map(|(index, value)| (index as i64, value.clone()))
+                .collect(),
+            canonical_config_values(env),
+            Vec::new(),
+        ),
+        ValidatedTransport::Sse { endpoint, headers } => (
+            ServerType::Sse.client_format(),
+            None,
+            Some(endpoint.to_string()),
+            Vec::new(),
+            Vec::new(),
+            canonical_headers(headers),
+        ),
+        ValidatedTransport::StreamableHttp { endpoint, headers } => (
+            ServerType::StreamableHttp.client_format(),
+            None,
+            Some(endpoint.to_string()),
+            Vec::new(),
+            Vec::new(),
+            canonical_headers(headers),
+        ),
+    };
+    let value = serde_json::to_vec(&(server_type, command, url, args, env, headers))?;
+    Ok(format!("sha256:{:x}", Sha256::digest(value)))
+}
+
+fn canonical_config_values(values: &BTreeMap<String, ConfigValue>) -> Vec<(String, String)> {
+    values
+        .iter()
+        .map(|(key, value)| (key.clone(), value.runtime_value()))
+        .collect()
+}
+
+fn canonical_headers(values: &BTreeMap<String, ConfigValue>) -> Vec<(String, String)> {
+    let mut headers = values
+        .iter()
+        .filter_map(|(key, value)| {
+            let key = key.trim().to_ascii_lowercase();
+            (!key.is_empty()).then(|| (key, value.runtime_value()))
+        })
+        .collect::<Vec<_>>();
+    headers.sort_unstable();
+    headers
 }
 
 // Public entrypoints

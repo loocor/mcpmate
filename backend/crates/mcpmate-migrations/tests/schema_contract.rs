@@ -25,6 +25,31 @@ async fn table_columns(
         .expect("inspect SQLite columns")
 }
 
+async fn rewind_config_to_version(
+    pool: &sqlx::SqlitePool,
+    version: i64,
+) {
+    sqlx::query("DELETE FROM mcpmate_schema_migrations WHERE target = 'config' AND version > ?")
+        .bind(version)
+        .execute(pool)
+        .await
+        .expect("rewind config migration ledger");
+    sqlx::query(
+        "UPDATE mcpmate_schema_migration_state
+         SET version = ?,
+             checksum = (
+                 SELECT checksum FROM mcpmate_schema_migrations
+                 WHERE target = 'config' AND version = ?
+             )
+         WHERE target = 'config'",
+    )
+    .bind(version)
+    .bind(version)
+    .execute(pool)
+    .await
+    .expect("rewind config migration state");
+}
+
 #[tokio::test]
 async fn fresh_config_schema_contains_profile_authoring_generation() {
     let pool = memory_support::pool().await;
@@ -87,6 +112,285 @@ async fn creates_config_and_audit_schema_through_independent_ledgers() {
             .await
             .expect("count audit migrations");
     assert_eq!(audit_versions, 1);
+}
+
+#[tokio::test]
+async fn creates_one_tagged_transport_draft_per_server() {
+    let pool = memory_support::pool().await;
+    prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect("prepare fresh config database");
+
+    assert!(table_exists(&pool, "server_transport").await);
+    let columns = table_columns(&pool, "server_transport").await;
+    for column in ["server_id", "draft_json", "created_at", "updated_at"] {
+        assert!(columns.contains(&column.to_string()), "missing {column} column");
+    }
+
+    sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'A', 'stdio')")
+        .execute(&pool)
+        .await
+        .expect("insert server identity");
+    sqlx::query("INSERT INTO server_transport (server_id, draft_json) VALUES ('server-a', ?)")
+        .bind(r#"{"kind":"stdio","command":"echo","args":[],"env":{}}"#)
+        .execute(&pool)
+        .await
+        .expect("insert transport draft");
+
+    let duplicate = sqlx::query("INSERT INTO server_transport (server_id, draft_json) VALUES ('server-a', ?)")
+        .bind(r#"{"kind":"stdio","command":"other","args":[],"env":{}}"#)
+        .execute(&pool)
+        .await;
+    assert!(duplicate.is_err(), "a server may own only one transport draft");
+
+    sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-b', 'B', 'stdio')")
+        .execute(&pool)
+        .await
+        .expect("insert second server identity");
+    let missing_kind = sqlx::query("INSERT INTO server_transport (server_id, draft_json) VALUES ('server-b', '{}')")
+        .execute(&pool)
+        .await;
+    assert!(missing_kind.is_err(), "transport draft must declare a supported kind");
+
+    sqlx::query("DELETE FROM server_config WHERE id = 'server-a'")
+        .execute(&pool)
+        .await
+        .expect("delete server identity");
+    let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM server_transport WHERE server_id = 'server-a'")
+        .fetch_one(&pool)
+        .await
+        .expect("count transport drafts");
+    assert_eq!(remaining, 0, "transport draft must not outlive its server");
+}
+
+#[tokio::test]
+async fn upgrades_legacy_server_into_a_draft_and_redacted_audit() {
+    let pool = memory_support::pool().await;
+    prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect("prepare v12 config database");
+
+    rewind_config_to_version(&pool, 11).await;
+    sqlx::query("DROP TABLE server_config_migration_audit")
+        .execute(&pool)
+        .await
+        .expect("remove v12 audit table");
+    sqlx::query("DROP TABLE server_transport")
+        .execute(&pool)
+        .await
+        .expect("remove v12 transport table");
+
+    sqlx::query(
+        "INSERT INTO server_config (id, name, server_type, command, url)
+         VALUES ('legacy-stdio', 'Legacy stdio', 'stdio', NULL, 'https://ignored.example/mcp')",
+    )
+    .execute(&pool)
+    .await
+    .expect("insert legacy server");
+    sqlx::query(
+        "INSERT INTO server_args (id, server_id, server_name, arg_index, arg_value)
+         VALUES ('arg-1', 'legacy-stdio', 'Legacy stdio', 0, '--flag')",
+    )
+    .execute(&pool)
+    .await
+    .expect("insert legacy argument");
+    sqlx::query(
+        "INSERT INTO server_env (id, server_id, server_name, env_key, env_value)
+         VALUES ('env-1', 'legacy-stdio', 'Legacy stdio', 'TOKEN', '[[secret:token]]')",
+    )
+    .execute(&pool)
+    .await
+    .expect("insert secret reference");
+    sqlx::query(
+        "INSERT INTO server_headers (id, server_id, header_key, header_value)
+         VALUES ('header-1', 'legacy-stdio', 'authorization', 'Bearer should-not-leak')",
+    )
+    .execute(&pool)
+    .await
+    .expect("insert conflicting header");
+
+    prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect("upgrade v11 server configuration");
+
+    let draft: String = sqlx::query_scalar("SELECT draft_json FROM server_transport WHERE server_id = 'legacy-stdio'")
+        .fetch_one(&pool)
+        .await
+        .expect("load structured transport draft");
+    assert_eq!(
+        draft,
+        r#"{"args":["--flag"],"command":null,"env":{"TOKEN":{"alias":"token","kind":"secret_ref"}},"kind":"stdio"}"#,
+    );
+
+    let audit: (String, String, String) = sqlx::query_as(
+        "SELECT original_shape_json, ignored_field_names_json, diagnostic_codes_json
+         FROM server_config_migration_audit WHERE server_id = 'legacy-stdio'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("load migration audit");
+    assert_eq!(
+        audit.0,
+        r#"{"arg_count":1,"command_present":false,"env_keys":["TOKEN"],"header_keys":["authorization"],"server_type":"stdio","url_present":true}"#,
+    );
+    assert_eq!(audit.1, r#"["headers","url"]"#);
+    assert_eq!(audit.2, r#"["stdio_command_missing","transport_field_conflict"]"#);
+    assert!(!audit.0.contains("should-not-leak"));
+}
+
+#[tokio::test]
+async fn audits_a_legacy_http_endpoint_that_cannot_reach_runtime() {
+    let pool = memory_support::pool().await;
+    prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect("prepare v12 config database");
+    rewind_config_to_version(&pool, 11).await;
+    sqlx::query("DROP TABLE server_config_migration_audit")
+        .execute(&pool)
+        .await
+        .expect("remove v12 audit table");
+    sqlx::query("DROP TABLE server_transport")
+        .execute(&pool)
+        .await
+        .expect("remove v12 transport table");
+    sqlx::query(
+        "INSERT INTO server_config (id, name, server_type, url)
+         VALUES ('legacy-http', 'Legacy HTTP', 'streamable_http', 'ftp://invalid.example/mcp')",
+    )
+    .execute(&pool)
+    .await
+    .expect("insert legacy HTTP server");
+
+    prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect("upgrade v11 server configuration");
+
+    let diagnostics: String = sqlx::query_scalar(
+        "SELECT diagnostic_codes_json FROM server_config_migration_audit WHERE server_id = 'legacy-http'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("load invalid URL audit");
+    assert_eq!(diagnostics, r#"["url_invalid"]"#);
+}
+
+#[tokio::test]
+async fn canonicalizes_audited_unrecognized_transport_projection() {
+    let pool = memory_support::pool().await;
+    prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect("prepare v13 config database");
+    rewind_config_to_version(&pool, 12).await;
+
+    sqlx::query("PRAGMA ignore_check_constraints = ON")
+        .execute(&pool)
+        .await
+        .expect("allow historical unknown transport projection");
+    sqlx::query(
+        "INSERT INTO server_config (id, name, server_type, command, url)
+         VALUES ('legacy-websocket', 'Legacy WebSocket', 'websocket', 'old-command', 'wss://legacy.example/mcp')",
+    )
+    .execute(&pool)
+    .await
+    .expect("insert unknown historical transport projection");
+    sqlx::query("PRAGMA ignore_check_constraints = OFF")
+        .execute(&pool)
+        .await
+        .expect("restore transport projection constraint checks");
+
+    let draft = r#"{"kind":"unrecognized","declared_type":"websocket"}"#;
+    let audit = r#"{"server_type":"websocket","command_present":true,"url_present":true,"arg_count":0,"env_keys":[],"header_keys":[]}"#;
+    sqlx::query("INSERT INTO server_transport (server_id, draft_json) VALUES ('legacy-websocket', ?)")
+        .bind(draft)
+        .execute(&pool)
+        .await
+        .expect("insert unrecognized transport draft");
+    sqlx::query(
+        "INSERT INTO server_config_migration_audit (
+            server_id, original_shape_json, ignored_field_names_json, diagnostic_codes_json
+         ) VALUES ('legacy-websocket', ?, '[]', '[\"transport_unrecognized\"]')",
+    )
+    .bind(audit)
+    .execute(&pool)
+    .await
+    .expect("insert v12 migration audit");
+
+    prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect("canonicalize historical unknown transport projection");
+
+    let projection: (String, String, String, String) = sqlx::query_as(
+        "SELECT server_config.server_type, server_config.command, server_config.url,
+                server_transport.draft_json
+         FROM server_config
+         JOIN server_transport ON server_transport.server_id = server_config.id
+         WHERE server_config.id = 'legacy-websocket'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("load canonicalized transport projection");
+    assert_eq!(projection.0, "stdio");
+    assert_eq!(projection.1, "old-command");
+    assert_eq!(projection.2, "wss://legacy.example/mcp");
+    assert_eq!(projection.3, draft);
+    let preserved_audit: String = sqlx::query_scalar(
+        "SELECT original_shape_json FROM server_config_migration_audit WHERE server_id = 'legacy-websocket'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("load preserved v12 migration audit");
+    assert_eq!(preserved_audit, audit);
+}
+
+#[tokio::test]
+async fn rejects_unrecognized_projection_without_matching_audit() {
+    let pool = memory_support::pool().await;
+    prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect("prepare v13 config database");
+    rewind_config_to_version(&pool, 12).await;
+
+    sqlx::query("PRAGMA ignore_check_constraints = ON")
+        .execute(&pool)
+        .await
+        .expect("allow historical unknown transport projection");
+    sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('unknown', 'Unknown', 'websocket')")
+        .execute(&pool)
+        .await
+        .expect("insert unknown historical transport projection");
+    sqlx::query("PRAGMA ignore_check_constraints = OFF")
+        .execute(&pool)
+        .await
+        .expect("restore transport projection constraint checks");
+    sqlx::query("INSERT INTO server_transport (server_id, draft_json) VALUES ('unknown', ?)")
+        .bind(r#"{"kind":"unrecognized","declared_type":"websocket"}"#)
+        .execute(&pool)
+        .await
+        .expect("insert unrecognized transport draft");
+    sqlx::query(
+        "INSERT INTO server_config_migration_audit (
+            server_id, original_shape_json, ignored_field_names_json, diagnostic_codes_json
+         ) VALUES ('unknown', '{\"server_type\":\"websocket\"}', '[]', '[]')",
+    )
+    .execute(&pool)
+    .await
+    .expect("insert incompatible v12 migration audit");
+
+    let error = prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect_err("unknown projection with incompatible v12 audit must fail closed");
+    assert!(error.to_string().contains("incompatible migration audit"));
+    let projection: String = sqlx::query_scalar("SELECT server_type FROM server_config WHERE id = 'unknown'")
+        .fetch_one(&pool)
+        .await
+        .expect("load unmodified transport projection");
+    assert_eq!(projection, "websocket");
+    let recorded: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM mcpmate_schema_migrations WHERE target = 'config' AND version = 13")
+            .fetch_one(&pool)
+            .await
+            .expect("inspect rolled-back v13 ledger record");
+    assert_eq!(recorded, 0);
 }
 
 #[tokio::test]
@@ -373,7 +677,7 @@ async fn adopts_complete_epoch_four_capability_storage_without_losing_data() {
     .fetch_one(&pool)
     .await
     .expect("load adopted migration version");
-    assert_eq!(version, 11);
+    assert_eq!(version, 13);
 }
 
 #[tokio::test]

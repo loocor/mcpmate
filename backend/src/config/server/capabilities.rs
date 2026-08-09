@@ -1335,43 +1335,26 @@ async fn config_fingerprint_in_transaction(
     tx: &mut Transaction<'_, Sqlite>,
     server_id: &str,
 ) -> mcpmate_capability_store::Result<String> {
-    let server = sqlx::query_as::<_, (String, Option<String>, Option<String>, bool)>(
-        "SELECT server_type, command, url, enabled FROM server_config WHERE id = ?",
-    )
-    .bind(server_id)
-    .fetch_one(&mut **tx)
-    .await?;
-    let args = sqlx::query_as::<_, (i64, String)>(
-        "SELECT arg_index, arg_value FROM server_args WHERE server_id = ? ORDER BY arg_index",
-    )
-    .bind(server_id)
-    .fetch_all(&mut **tx)
-    .await?;
-    let env = sqlx::query_as::<_, (String, String)>(
-        "SELECT env_key, env_value FROM server_env WHERE server_id = ? ORDER BY env_key",
-    )
-    .bind(server_id)
-    .fetch_all(&mut **tx)
-    .await?;
-    let headers = sqlx::query_as::<_, (String, String)>(
-        "SELECT header_key, header_value FROM server_headers WHERE server_id = ? ORDER BY header_key",
-    )
-    .bind(server_id)
-    .fetch_all(&mut **tx)
-    .await?;
-    let env = env.into_iter().collect::<HashMap<_, _>>();
-    let headers = headers.into_iter().collect::<HashMap<_, _>>();
-    Ok(super::fingerprint::runtime_config_fingerprint(
-        &super::fingerprint::RuntimeConfigFingerprintInput {
-            server_type: &server.0,
-            command: server.1.as_deref(),
-            url: server.2.as_deref(),
-            enabled: server.3,
-            args: &args,
-            env: &env,
-            headers: &headers,
-        },
-    )?)
+    let draft_json: Option<String> = sqlx::query_scalar("SELECT draft_json FROM server_transport WHERE server_id = ?")
+        .bind(server_id)
+        .fetch_optional(&mut **tx)
+        .await?;
+    let draft_json = draft_json.ok_or_else(|| mcpmate_capability_store::CatalogError::InvalidValue {
+        field: "server_transport.draft_json",
+        value: format!("persisted ServerTransportDraft is missing for server '{server_id}'"),
+    })?;
+    let draft: crate::config::models::ServerTransportDraft =
+        serde_json::from_str(&draft_json).map_err(|error| mcpmate_capability_store::CatalogError::InvalidValue {
+            field: "server_transport.draft_json",
+            value: format!("persisted ServerTransportDraft could not be decoded for server '{server_id}': {error}"),
+        })?;
+    let transport = draft
+        .validate()
+        .map_err(|diagnostics| mcpmate_capability_store::CatalogError::InvalidValue {
+            field: "server_transport.draft_json",
+            value: format!("persisted ServerTransportDraft is invalid for server '{server_id}': {diagnostics:?}"),
+        })?;
+    Ok(super::fingerprint::validated_transport_fingerprint(&transport)?)
 }
 
 pub async fn current_config_fingerprint(
@@ -1382,6 +1365,29 @@ pub async fn current_config_fingerprint(
     let fingerprint = config_fingerprint_in_transaction(&mut transaction, server_id).await?;
     transaction.commit().await?;
     Ok(fingerprint)
+}
+
+/// Reads the previous fingerprint when the persisted transport is valid.
+///
+/// An invalid historical draft has no trustworthy baseline. Callers repairing it
+/// should treat that as a configuration change, while runtime consumers keep
+/// using `current_config_fingerprint` and remain fail-closed.
+pub async fn previous_valid_config_fingerprint(
+    pool: &Pool<Sqlite>,
+    server_id: &str,
+) -> Result<Option<String>> {
+    match current_config_fingerprint(pool, server_id).await {
+        Ok(fingerprint) => Ok(Some(fingerprint)),
+        Err(error)
+            if matches!(
+                error.downcast_ref::<mcpmate_capability_store::CatalogError>(),
+                Some(mcpmate_capability_store::CatalogError::InvalidValue { .. })
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 async fn persist_server_info_in_transaction(
@@ -1861,12 +1867,35 @@ pub async fn store_dual_write_for_kinds(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use chrono::Utc;
     use serde::de::DeserializeOwned;
     use serde_json::{Value, json};
     use sqlx::sqlite::SqlitePoolOptions;
 
     use super::*;
+
+    async fn insert_typed_stdio_server(
+        pool: &Pool<Sqlite>,
+        server_id: &str,
+        server_name: &str,
+        command: &str,
+    ) {
+        let mut server = crate::config::models::Server::new_stdio(server_name.to_string(), Some(command.to_string()));
+        server.id = Some(server_id.to_string());
+        crate::config::server::upsert_server_definition(
+            pool,
+            &server,
+            &crate::config::models::ServerTransportDraft::Stdio {
+                command: Some(command.to_string()),
+                args: Vec::new(),
+                env: BTreeMap::new(),
+            },
+        )
+        .await
+        .expect("insert typed server definition");
+    }
 
     async fn capability_store_pool() -> Pool<Sqlite> {
         let pool = SqlitePoolOptions::new()
@@ -1888,70 +1917,154 @@ mod tests {
             .ensure_schema()
             .await
             .expect("initialize capability catalog");
-        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'docs', 'stdio')")
-            .execute(&pool)
-            .await
-            .expect("insert server");
+        insert_typed_stdio_server(&pool, "server-a", "docs", "node").await;
         pool
     }
 
-    #[tokio::test]
-    async fn runtime_config_fingerprint_matches_persisted_config() {
-        let pool = capability_store_pool().await;
-        sqlx::query("UPDATE server_config SET command = 'python3', enabled = 1 WHERE id = 'server-a'")
-            .execute(&pool)
+    async fn persist_typed_streamable_http_draft(pool: &Pool<Sqlite>) {
+        let draft = crate::config::models::ServerTransportDraft::Http {
+            protocol: crate::config::models::HttpTransportKind::StreamableHttp,
+            endpoint: Some("https://typed.example.test/mcp".to_string()),
+            headers: BTreeMap::from([
+                (
+                    "Authorization".to_string(),
+                    crate::config::models::ConfigValue::SecretRef {
+                        alias: "capability-token".to_string(),
+                    },
+                ),
+                (
+                    "X-Tenant".to_string(),
+                    crate::config::models::ConfigValue::Literal {
+                        value: "typed".to_string(),
+                    },
+                ),
+            ]),
+        };
+        let mut transaction = pool.begin().await.expect("begin typed draft transaction");
+        crate::config::server::upsert_server_transport_draft_tx(&mut transaction, "server-a", &draft)
             .await
-            .expect("configure persisted server");
-        crate::config::server::args::upsert_server_args(
-            &pool,
-            "server-a",
-            &["server.py".to_string(), "--json".to_string()],
+            .expect("persist typed transport draft");
+        transaction.commit().await.expect("commit typed transport draft");
+    }
+
+    #[tokio::test]
+    async fn current_config_fingerprint_uses_validated_typed_transport_not_legacy_projection() {
+        let pool = capability_store_pool().await;
+        persist_typed_streamable_http_draft(&pool).await;
+
+        sqlx::query(
+            "UPDATE server_config
+             SET server_type = 'stdio', command = 'legacy-command', url = NULL, enabled = 1
+             WHERE id = 'server-a'",
         )
+        .execute(&pool)
         .await
-        .expect("insert persisted arguments");
+        .expect("corrupt legacy server projection");
+        crate::config::server::args::upsert_server_args(&pool, "server-a", &["--legacy-argument".to_string()])
+            .await
+            .expect("corrupt legacy arguments projection");
         crate::config::server::env::upsert_server_env(
             &pool,
             "server-a",
-            &HashMap::from([("A".to_string(), "1".to_string()), ("B".to_string(), "2".to_string())]),
+            &HashMap::from([("LEGACY_ENV".to_string(), "incorrect".to_string())]),
         )
         .await
-        .expect("insert persisted environment variables");
+        .expect("corrupt legacy environment projection");
         crate::config::server::headers::upsert_server_headers(
             &pool,
             "server-a",
-            &HashMap::from([
-                ("X-Tenant".to_string(), "alpha".to_string()),
-                ("X-Mode".to_string(), "preview".to_string()),
-            ]),
+            &HashMap::from([("X-Legacy".to_string(), "incorrect".to_string())]),
         )
         .await
-        .expect("insert persisted headers");
-
-        let args = vec![(0, "server.py".to_string()), (1, "--json".to_string())];
-        let env = HashMap::from([("B".to_string(), "2".to_string()), ("A".to_string(), "1".to_string())]);
-        let headers = HashMap::from([
-            ("X-Tenant".to_string(), "alpha".to_string()),
-            ("X-Mode".to_string(), "preview".to_string()),
-        ]);
-        let draft = crate::config::server::fingerprint::runtime_config_fingerprint(
-            &crate::config::server::fingerprint::RuntimeConfigFingerprintInput {
-                server_type: "stdio",
-                command: Some("python3"),
-                url: None,
-                enabled: true,
-                args: &args,
-                env: &env,
-                headers: &headers,
-            },
-        )
-        .expect("fingerprint draft runtime config");
+        .expect("corrupt legacy headers projection");
         let persisted = current_config_fingerprint(&pool, "server-a")
             .await
             .expect("fingerprint persisted runtime config");
 
-        const EXPECTED: &str = "sha256:223c8439277bd5817b067918dd0eff2aab1ad692cc5399361ef82c41c48dd111";
-        assert_eq!(draft, EXPECTED);
+        const EXPECTED: &str = "sha256:da8bd73c163b93db045fafe3be8d80ed4671c98555d36726d1e0819b738e011b";
         assert_eq!(persisted, EXPECTED);
+    }
+
+    #[tokio::test]
+    async fn current_config_fingerprint_ignores_global_enabled() {
+        let pool = capability_store_pool().await;
+        persist_typed_streamable_http_draft(&pool).await;
+
+        let enabled = current_config_fingerprint(&pool, "server-a")
+            .await
+            .expect("fingerprint enabled server");
+        sqlx::query("UPDATE server_config SET enabled = 0 WHERE id = 'server-a'")
+            .execute(&pool)
+            .await
+            .expect("disable server globally");
+        let disabled = current_config_fingerprint(&pool, "server-a")
+            .await
+            .expect("fingerprint disabled server");
+
+        assert_eq!(disabled, enabled);
+    }
+
+    #[tokio::test]
+    async fn current_config_fingerprint_rejects_missing_typed_transport_draft() {
+        let pool = capability_store_pool().await;
+
+        sqlx::query("DELETE FROM server_transport WHERE server_id = 'server-a'")
+            .execute(&pool)
+            .await
+            .expect("remove typed transport draft");
+
+        let error = current_config_fingerprint(&pool, "server-a")
+            .await
+            .expect_err("missing typed transport draft must fail closed");
+
+        assert!(error.to_string().contains("ServerTransportDraft is missing"));
+    }
+
+    #[tokio::test]
+    async fn current_config_fingerprint_rejects_invalid_typed_transport_draft() {
+        let pool = capability_store_pool().await;
+        sqlx::query("UPDATE server_transport SET draft_json = ? WHERE server_id = ?")
+            .bind(r#"{"kind":"stdio","command":null,"args":[],"env":{}}"#)
+            .bind("server-a")
+            .execute(&pool)
+            .await
+            .expect("persist invalid typed transport draft");
+
+        let error = current_config_fingerprint(&pool, "server-a")
+            .await
+            .expect_err("invalid typed transport draft must fail closed");
+
+        assert!(error.to_string().contains("ServerTransportDraft is invalid"));
+    }
+
+    #[tokio::test]
+    async fn previous_valid_config_fingerprint_allows_transport_repair_baselines() {
+        let pool = capability_store_pool().await;
+
+        sqlx::query("DELETE FROM server_transport WHERE server_id = 'server-a'")
+            .execute(&pool)
+            .await
+            .expect("remove typed transport draft");
+        assert_eq!(
+            previous_valid_config_fingerprint(&pool, "server-a")
+                .await
+                .expect("missing draft is an absent baseline"),
+            None
+        );
+
+        persist_typed_streamable_http_draft(&pool).await;
+        sqlx::query("UPDATE server_transport SET draft_json = ? WHERE server_id = ?")
+            .bind(r#"{"kind":"stdio","command":null,"args":[],"env":{}}"#)
+            .bind("server-a")
+            .execute(&pool)
+            .await
+            .expect("persist invalid typed transport draft");
+        assert_eq!(
+            previous_valid_config_fingerprint(&pool, "server-a")
+                .await
+                .expect("invalid draft is an absent baseline"),
+            None
+        );
     }
 
     fn decode<T: DeserializeOwned>(value: Value) -> T {
@@ -2709,12 +2822,7 @@ mod tests {
         let pool = capability_store_pool().await;
         let server_id = "server-fresh-failure-event";
         let server_name = "fresh_failure_docs";
-        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES (?, ?, 'stdio')")
-            .bind(server_id)
-            .bind(server_name)
-            .execute(&pool)
-            .await
-            .expect("insert event-isolated server");
+        insert_typed_stdio_server(&pool, server_id, server_name, "node").await;
         let cache = DerivedCapabilityCache::default();
         let catalog = SqliteCapabilityCatalog::new(pool.clone());
         assert!(
@@ -3074,12 +3182,7 @@ mod tests {
         let pool = capability_store_pool().await;
         let server_id = "server-identical-noop";
         let server_name = "identical_noop_docs";
-        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES (?, ?, 'stdio')")
-            .bind(server_id)
-            .bind(server_name)
-            .execute(&pool)
-            .await
-            .expect("insert event-isolated server");
+        insert_typed_stdio_server(&pool, server_id, server_name, "node").await;
         let cache = DerivedCapabilityCache::default();
         let (initialize, tool, resource, prompt, template) = protocol_fixture();
         let observation = CapabilityProtocolObservation {
@@ -3182,20 +3285,11 @@ mod tests {
         let pool = capability_store_pool().await;
         let server_id = "server-config-race";
         let server_name = "config_race_docs";
-        sqlx::query("INSERT INTO server_config (id, name, server_type, command) VALUES (?, ?, 'stdio', 'old-command')")
-            .bind(server_id)
-            .bind(server_name)
-            .execute(&pool)
-            .await
-            .expect("insert server");
+        insert_typed_stdio_server(&pool, server_id, server_name, "old-command").await;
         let expected_fingerprint = current_config_fingerprint(&pool, server_id)
             .await
             .expect("capture owner fingerprint");
-        sqlx::query("UPDATE server_config SET command = 'new-command' WHERE id = ?")
-            .bind(server_id)
-            .execute(&pool)
-            .await
-            .expect("update server configuration");
+        insert_typed_stdio_server(&pool, server_id, server_name, "new-command").await;
 
         let cache = DerivedCapabilityCache::default();
         let (initialize, tool, resource, prompt, template) = protocol_fixture();
@@ -3276,10 +3370,7 @@ mod tests {
         crate::config::server::init::initialize_server_tables(&pool)
             .await
             .expect("initialize server tables");
-        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'everything', 'stdio')")
-            .execute(&pool)
-            .await
-            .expect("insert server");
+        insert_typed_stdio_server(&pool, "server-a", "everything", "node").await;
         let snapshot = CapabilitySnapshot {
             upstream_name: Some("io.modelcontextprotocol/everything".to_string()),
             upstream_title: Some("Everything Reference Server".to_string()),
@@ -3322,10 +3413,7 @@ mod tests {
         crate::config::client::init::initialize_client_table(&pool)
             .await
             .expect("initialize client table");
-        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'searxng', 'stdio')")
-            .execute(&pool)
-            .await
-            .expect("insert server");
+        insert_typed_stdio_server(&pool, "server-a", "searxng", "node").await;
 
         let now = Utc::now();
         store_dual_write(
@@ -3431,10 +3519,7 @@ mod tests {
         crate::config::client::init::initialize_client_table(&pool)
             .await
             .expect("initialize client table");
-        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'docs', 'stdio')")
-            .execute(&pool)
-            .await
-            .expect("insert server");
+        insert_typed_stdio_server(&pool, "server-a", "docs", "node").await;
         crate::config::server::tools::upsert_server_tool(&pool, "server-a", "docs", "read", None)
             .await
             .expect("insert tool");
@@ -3623,10 +3708,7 @@ mod tests {
         crate::config::client::init::initialize_client_table(&pool)
             .await
             .expect("initialize client table");
-        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'docs', 'stdio')")
-            .execute(&pool)
-            .await
-            .expect("insert server");
+        insert_typed_stdio_server(&pool, "server-a", "docs", "node").await;
         let now = Utc::now();
 
         store_dual_write(
@@ -3708,10 +3790,7 @@ mod tests {
         crate::config::client::init::initialize_client_table(&pool)
             .await
             .expect("initialize client table");
-        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'docs', 'stdio')")
-            .execute(&pool)
-            .await
-            .expect("insert server");
+        insert_typed_stdio_server(&pool, "server-a", "docs", "node").await;
         let now = Utc::now();
         store_dual_write(
             &pool,

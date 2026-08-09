@@ -1,33 +1,35 @@
 // MCPMate Proxy API handlers for MCP server CRUD operations
 // Contains handler functions for creating, updating, and importing servers
 
-use super::{common, shared::*};
+use super::{basic::load_server_transport_validity, common, shared::*};
 use crate::api::models::server::{
-    ServerCreateReq, ServerDeleteReq, ServerDetailsData, ServerDetailsResp, ServerMetaPayload,
-    ServerNamespaceRemediationReq, ServerOperationData, ServerOperationResp, ServerUpdateReq, ServersImportData,
-    ServersImportReq, ServersImportResp, SkippedServerData,
+    ServerCapabilityDiscoveryData, ServerCreateReq, ServerDeleteReq, ServerDetailsData, ServerDetailsResp,
+    ServerMetaPayload, ServerNamespaceRemediationReq, ServerOperationData, ServerOperationResp, ServerUpdateReq,
+    ServersImportData, ServersImportReq, ServersImportResp, SkippedServerData,
 };
 use crate::{
     api::handlers::{
         ApiError,
         common::{internal_error, map_anyhow_error, map_database_error},
     },
-    common::server::ServerType,
-    config::server::{ImportOptions, ImportOutcome, SkippedServer, import::server_meta_from_payload, import_batch},
     config::server::{
-        get_server_headers, headers::has_non_empty_authorization_header, merge_env_for_update, merge_headers_for_update,
+        ImportOptions, ImportOutcome, SkippedServer, headers::has_non_empty_authorization_header,
+        import::server_meta_from_payload, import_batch,
     },
-    config::server::{replace_server_headers, upsert_server_headers},
     config::{
         database::Database,
+        models::{
+            ConfigValue, ServerTransportDraft, ValidatedTransport, is_redacted_display_value,
+            restore_redacted_env_values, restore_redacted_http_header_values,
+        },
         server::{self},
     },
     core::secrets::{mcp_config_from_server, sync_server_secret_usages},
 };
 use axum::{Json, extract::State};
 use serde_json::{Map, Value};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
-use std::{collections::HashMap, str::FromStr};
 
 async fn discover_server_capabilities(
     state: &Arc<AppState>,
@@ -49,22 +51,62 @@ async fn discover_server_capabilities(
     Ok(())
 }
 
-/// Validate server configuration
-#[inline]
-fn validate_server_config(
-    kind: &str,
-    command: &Option<String>,
-    url: &Option<String>,
+fn validate_server_transport(draft: &ServerTransportDraft) -> Result<ValidatedTransport, ApiError> {
+    draft.validate().map_err(|diagnostics| {
+        let details = diagnostics
+            .into_iter()
+            .map(|diagnostic| format!("{} ({})", diagnostic.code, diagnostic.field))
+            .collect::<Vec<_>>()
+            .join(", ");
+        ApiError::BadRequest(format!("Invalid server transport: {details}"))
+    })
+}
+
+async fn restore_redacted_transport_values_for_update(
+    db: &Database,
+    server_id: &str,
+    draft: &mut ServerTransportDraft,
 ) -> Result<(), ApiError> {
-    match kind {
-        "stdio" if command.is_none() => Err(ApiError::BadRequest("Command is required for stdio servers".to_owned())),
-        "sse" | "streamable_http" if url.is_none() => {
-            Err(ApiError::BadRequest(format!("URL is required for {kind} servers")))
+    let contains_redacted_value = match draft {
+        ServerTransportDraft::Stdio { env, .. } => env
+            .values()
+            .any(|value| matches!(value, ConfigValue::Literal { value } if is_redacted_display_value(value))),
+        ServerTransportDraft::Http { headers, .. } => headers
+            .values()
+            .any(|value| matches!(value, ConfigValue::Literal { value } if is_redacted_display_value(value))),
+        ServerTransportDraft::Unrecognized { .. } => false,
+    };
+    if !contains_redacted_value {
+        return Ok(());
+    }
+
+    let existing = crate::config::server::get_server_transport_draft(&db.pool, server_id)
+        .await
+        .map_err(map_anyhow_error)?
+        .ok_or_else(|| {
+            ApiError::BadRequest(
+                "Cannot preserve redacted transport values because the persisted transport draft is missing"
+                    .to_string(),
+            )
+        })?;
+    match draft {
+        ServerTransportDraft::Stdio { env, .. } => {
+            let existing_env = match existing {
+                ServerTransportDraft::Stdio { env, .. } => env,
+                _ => BTreeMap::new(),
+            };
+            restore_redacted_env_values(env, &existing_env);
+            Ok(())
         }
-        "stdio" | "sse" | "streamable_http" => Ok(()),
-        _ => Err(ApiError::BadRequest(format!(
-            "Invalid server type: {kind}. Must be one of: stdio, sse, streamable_http"
-        ))),
+        ServerTransportDraft::Http { headers, .. } => {
+            let existing_headers = match existing {
+                ServerTransportDraft::Http { headers, .. } => headers,
+                _ => BTreeMap::new(),
+            };
+            restore_redacted_http_header_values(headers, &existing_headers);
+            Ok(())
+        }
+        ServerTransportDraft::Unrecognized { .. } => Ok(()),
     }
 }
 
@@ -203,21 +245,6 @@ async fn clear_oauth_auth_source_for_manual_authorization(
     Ok(())
 }
 
-/// Create server model from configuration using strict ServerType enum
-#[inline]
-fn create_server_from_config(
-    name: String,
-    kind: ServerType,
-    command: Option<String>,
-    url: Option<String>,
-) -> Server {
-    match kind {
-        ServerType::Stdio => Server::new_stdio(name, command),
-        ServerType::Sse => Server::new_sse(name, url),
-        ServerType::StreamableHttp => Server::new_streamable_http(name, url),
-    }
-}
-
 async fn upsert_meta_payload(
     db: &Database,
     server_id: &str,
@@ -313,35 +340,31 @@ async fn delete_oauth_secrets_for_server_best_effort(
 
 /// Create a new MCP server configuration
 ///
-/// This endpoint creates a new MCP server configuration. Server types must strictly use the following standard formats:
-/// - `"stdio"`: Standard input/output server, launched via command line
-/// - `"sse"`: Legacy SSE HTTP server (persisted; protocol uses Streamable HTTP via rmcp)
-/// - `"streamable_http"`: Streamable HTTP server, connected via HTTP streaming
-///
-/// **Important**: The system will reject any non-standard formats such as "http", "streamable-http", "streamableHttp", etc.
+/// This endpoint creates a new MCP server configuration from a required tagged
+/// transport definition. The definition determines the applicable fields for
+/// stdio, legacy SSE, and Streamable HTTP transports.
 ///
 /// **Endpoint**: `POST /mcp/servers/create`
 ///
 /// # Parameters
-/// - `payload`: Server creation request containing server name, type, command or URL, etc.
+/// - `payload`: Server creation request containing a name and tagged transport.
 ///
 /// # Returns
 /// - Success: Returns detailed information of the created server
 /// - Failure: Returns specific error information and correction suggestions
 ///
 /// # Error Handling
-/// - 400 Bad Request: Server type format is incorrect or configuration is invalid
+/// - 400 Bad Request: Transport definition is invalid
 /// - 409 Conflict: Server name already exists
 /// - 500 Internal Server Error: Database operation failed
 ///
-/// # Server Type Validation
-/// The system will strictly validate server type formats. Any input that does not conform to standards will be rejected with detailed error information.
 pub async fn create_server(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<ServerCreateReq>,
 ) -> Result<Json<ServerDetailsResp>, ApiError> {
     let started_at = std::time::Instant::now();
     let db = common::get_database_from_state(&state)?;
+    let validated_transport = validate_server_transport(&payload.transport)?;
     let is_pending_import = payload.pending_import.unwrap_or(false);
 
     crate::config::server::validate_server_namespace(&payload.name)
@@ -361,20 +384,6 @@ pub async fn create_server(
         )));
     }
 
-    // Strictly validate server type format
-    let server_type = ServerType::from_str(&payload.server_type).map_err(|_| {
-        ApiError::BadRequest(format!(
-            "Invalid server type '{}'.\n\nCorrect format requirements:\n\
-                - Use \"stdio\" (not \"Stdio\" or other variants)\n\
-                - Use \"sse\" or \"streamable_http\" (lowercase; not \"http\", \"streamable-http\", or \"streamableHttp\")\n\n\
-                Please check your input and use the correct standard format.",
-            payload.server_type
-        ))
-    })?;
-
-    // Validate server configuration
-    validate_server_config(&payload.server_type, &payload.command, &payload.url)?;
-
     if let Some(server_id) = reusable_pending_server_id.as_deref() {
         delete_oauth_secrets_for_server_best_effort(&state, &db, server_id).await?;
         crate::config::server::delete_server_oauth_config(&db.pool, server_id)
@@ -385,13 +394,7 @@ pub async fn create_server(
             .map_err(map_anyhow_error)?;
     }
 
-    // Create server model using validated ServerType
-    let mut server = create_server_from_config(
-        payload.name.clone(),
-        server_type,
-        payload.command.clone(),
-        payload.url.clone(),
-    );
+    let mut server = Server::new(payload.name.clone(), validated_transport.server_type());
     if let Some(existing) = reusable_pending_server {
         server.id = existing.id.clone();
     }
@@ -402,55 +405,27 @@ pub async fn create_server(
         server.enabled = crate::common::status::EnabledStatus::Disabled;
     }
 
-    // Insert server into database
-    let server_id = crate::config::server::upsert_server(&db.pool, &server)
+    let runtime_headers = validated_transport.runtime_headers();
+    let server_id = crate::config::server::upsert_server_definition(&db.pool, &server, &payload.transport)
         .await
         .map_err(map_anyhow_error)?;
     crate::core::capability::resolver::upsert(&server_id, &payload.name).await;
 
-    // Persist default headers if provided
-    if reusable_pending_server.is_some() {
-        let empty_headers = std::collections::HashMap::new();
-        let headers = payload.headers.as_ref().unwrap_or(&empty_headers);
-        replace_server_headers(&db.pool, &server_id, headers)
-            .await
-            .map_err(map_anyhow_error)?;
-        clear_oauth_auth_source_for_manual_authorization(&state, &db, &server_id, headers).await?;
-    } else if let Some(headers) = &payload.headers {
-        if !headers.is_empty() {
-            upsert_server_headers(&db.pool, &server_id, headers)
-                .await
-                .map_err(map_anyhow_error)?;
-            clear_oauth_auth_source_for_manual_authorization(&state, &db, &server_id, headers).await?;
-        }
-    }
+    clear_oauth_auth_source_for_manual_authorization(&state, &db, &server_id, &runtime_headers).await?;
 
-    // Insert server arguments if provided
-    if reusable_pending_server.is_some() || payload.args.is_some() {
-        let empty_args: Vec<String> = Vec::new();
-        let args = payload.args.as_ref().unwrap_or(&empty_args);
-        crate::config::server::upsert_server_args(&db.pool, &server_id, args)
-            .await
-            .map_err(map_anyhow_error)?;
-    }
+    let server_row = crate::config::server::get_server_by_id(&db.pool, &server_id)
+        .await
+        .map_err(map_anyhow_error)?
+        .ok_or_else(|| internal_error("Server record missing after creation"))?;
 
-    // Insert server environment variables if provided
-    if reusable_pending_server.is_some() || payload.env.is_some() {
-        let empty_env = std::collections::HashMap::new();
-        let env = payload.env.as_ref().unwrap_or(&empty_env);
-        crate::config::server::upsert_server_env(&db.pool, &server_id, env)
-            .await
-            .map_err(map_anyhow_error)?;
-    }
-
-    sync_secret_usages_for_server(&state, &db, &server_id, &server).await?;
+    sync_secret_usages_for_server(&state, &db, &server_id, &server_row).await?;
 
     // Apply optional metadata payload
     if let Some(meta_payload) = payload.meta.as_ref() {
         upsert_meta_payload(&db, &server_id, meta_payload).await?;
     }
 
-    if !server.pending_import {
+    if !server_row.pending_import {
         let mut pool = state.connection_pool.lock().await;
         pool.sync_servers_from_active_profile()
             .await
@@ -458,16 +433,17 @@ pub async fn create_server(
     }
 
     // Initial capability discovery persists the transactional SQLite catalog.
-    if !server.pending_import {
-        if let Err(error) = discover_server_capabilities(&state, db.clone(), &server_id).await {
-            tracing::warn!(server_id = %server_id, error = %error, "Initial capability sync failed after server creation");
+    let capability_discovery = if !server_row.pending_import {
+        match discover_server_capabilities(&state, db.clone(), &server_id).await {
+            Ok(()) => Some(ServerCapabilityDiscoveryData::succeeded()),
+            Err(error) => {
+                tracing::warn!(server_id = %server_id, error = %error, "Initial capability sync failed after server creation");
+                Some(ServerCapabilityDiscoveryData::failed())
+            }
         }
-    }
-
-    let server_row = crate::config::server::get_server_by_id(&db.pool, &server_id)
-        .await
-        .map_err(map_anyhow_error)?
-        .ok_or_else(|| internal_error("Server record missing after creation"))?;
+    } else {
+        None
+    };
 
     let server_name = server_row.name.clone();
     let source = server_row.source.clone();
@@ -486,6 +462,7 @@ pub async fn create_server(
         server_row.server_type.is_http_transport(),
     )
     .await?;
+    let transport_validity = load_server_transport_validity(&db.pool, &server_id).await;
 
     let audit_server_id = server_id.clone();
     let response = Json(ServerDetailsResp::success(ServerDetailsData {
@@ -497,6 +474,7 @@ pub async fn create_server(
         enabled_in_profile: details.enabled_in_profile,
         unify_direct_exposure_eligible: server_row.unify_direct_exposure_eligible,
         server_type,
+        transport_validity,
         command,
         url,
         args: details.args,
@@ -524,6 +502,7 @@ pub async fn create_server(
         .map_err(|error| ApiError::InternalError(error.to_string()))?
         .into_iter()
         .collect(),
+        capability_discovery,
     }));
 
     let mut data = Map::new();
@@ -549,24 +528,20 @@ pub async fn create_server(
 
 /// Update an existing MCP server configuration
 ///
-/// This endpoint updates an existing MCP server configuration. If updating the server type, it must strictly use standard formats:
-/// - `"stdio"`: Standard input/output server
-/// - `"sse"`: Legacy SSE HTTP server (persisted; protocol uses Streamable HTTP via rmcp)
-/// - `"streamable_http"`: Streamable HTTP server
-///
-/// **Important**: The system will reject any non-standard server type formats.
+/// This endpoint replaces an existing server's transport with a required tagged
+/// transport definition.
 ///
 /// **Endpoint**: `POST /mcp/servers/update`
 ///
 /// # Parameters
-/// - `payload`: Server update request containing fields to be updated
+/// - `payload`: Server update request containing the replacement transport.
 ///
 /// # Returns
 /// - Success: Returns detailed information of the updated server
 /// - Failure: Returns specific error information and correction suggestions
 ///
 /// # Error Handling
-/// - 400 Bad Request: Server type format is incorrect or configuration is invalid
+/// - 400 Bad Request: Transport definition is invalid
 /// - 404 Not Found: The specified server does not exist
 /// - 500 Internal Server Error: Database operation failed
 pub async fn update_server(
@@ -575,6 +550,8 @@ pub async fn update_server(
 ) -> Result<Json<ServerDetailsResp>, ApiError> {
     let started_at = std::time::Instant::now();
     validate_server_update_management_contract(&payload)?;
+    let mut transport = payload.transport;
+    validate_server_transport(&transport)?;
     let db = common::get_database_from_state(&state)?;
 
     let id = payload.id.clone();
@@ -587,46 +564,15 @@ pub async fn update_server(
         .id
         .clone()
         .ok_or_else(|| internal_error("Server ID not found"))?;
+    restore_redacted_transport_values_for_update(&db, &server_id, &mut transport).await?;
+    let validated_transport = validate_server_transport(&transport)?;
     let previous_config_fingerprint =
-        crate::config::server::capabilities::current_config_fingerprint(&db.pool, &server_id)
+        crate::config::server::capabilities::previous_valid_config_fingerprint(&db.pool, &server_id)
             .await
             .map_err(map_anyhow_error)?;
 
-    // Strictly validate server type format (if provided)
-    let validated_server_type = if let Some(ref kind) = payload.kind {
-        let server_type = ServerType::from_str(kind).map_err(|_| {
-            ApiError::BadRequest(format!(
-                "Invalid server type '{}'.\n\nCorrect format requirements:\n\
-                    - Use \"stdio\" (not \"Stdio\" or other variants)\n\
-                    - Use \"sse\" or \"streamable_http\" (lowercase; not \"http\", \"streamable-http\", or \"streamableHttp\")\n\n\
-                    Please check your input and use the correct standard format.",
-                kind
-            ))
-        })?;
-
-        let command = payload.command.as_ref().or(existing_server.command.as_ref());
-        let url = payload.url.as_ref().or(existing_server.url.as_ref());
-        validate_server_config(kind, &command.cloned(), &url.cloned())?;
-
-        Some(server_type)
-    } else {
-        None
-    };
-
     // Create updated server model
     let mut updated_server = existing_server.clone();
-
-    if let Some(server_type) = validated_server_type {
-        updated_server.server_type = server_type;
-    }
-
-    if let Some(command) = payload.command {
-        updated_server.command = Some(command);
-    }
-
-    if let Some(url) = payload.url {
-        updated_server.url = Some(url);
-    }
 
     if let Some(s) = payload.source {
         updated_server.source = Some(s);
@@ -639,40 +585,17 @@ pub async fn update_server(
         }
     }
 
-    // Update server in database
-    crate::config::server::upsert_server(&db.pool, &updated_server)
+    let runtime_headers = validated_transport.runtime_headers();
+    crate::config::server::upsert_server_definition(&db.pool, &updated_server, &transport)
         .await
         .map_err(map_anyhow_error)?;
 
-    // Replace default headers if provided
-    if let Some(headers) = &payload.headers {
-        let existing_headers = get_server_headers(&db.pool, &server_id)
-            .await
-            .map_err(map_anyhow_error)?;
-        let merged_headers = merge_headers_for_update(headers, &existing_headers);
-        replace_server_headers(&db.pool, &server_id, &merged_headers)
-            .await
-            .map_err(map_anyhow_error)?;
-        clear_oauth_auth_source_for_manual_authorization(&state, &db, &server_id, &merged_headers).await?;
-    }
+    clear_oauth_auth_source_for_manual_authorization(&state, &db, &server_id, &runtime_headers).await?;
 
-    // Update server arguments if provided
-    if let Some(args) = &payload.args {
-        crate::config::server::upsert_server_args(&db.pool, &server_id, args)
-            .await
-            .map_err(map_anyhow_error)?;
-    }
-
-    // Update server environment variables if provided
-    if let Some(env) = &payload.env {
-        let existing_env = crate::config::server::get_server_env(&db.pool, &server_id)
-            .await
-            .map_err(map_anyhow_error)?;
-        let merged_env = merge_env_for_update(env, &existing_env);
-        crate::config::server::upsert_server_env(&db.pool, &server_id, &merged_env)
-            .await
-            .map_err(map_anyhow_error)?;
-    }
+    let updated_server = crate::config::server::get_server_by_id(&db.pool, &server_id)
+        .await
+        .map_err(map_anyhow_error)?
+        .ok_or_else(|| internal_error("Server record missing after update"))?;
 
     sync_secret_usages_for_server(&state, &db, &server_id, &updated_server).await?;
 
@@ -684,7 +607,7 @@ pub async fn update_server(
         crate::config::server::capabilities::current_config_fingerprint(&db.pool, &server_id)
             .await
             .map_err(map_anyhow_error)?;
-    let configuration_changed = previous_config_fingerprint != current_config_fingerprint;
+    let configuration_changed = previous_config_fingerprint.as_deref() != Some(current_config_fingerprint.as_str());
 
     if !updated_server.pending_import && configuration_changed {
         let mut pool = state.connection_pool.lock().await;
@@ -695,11 +618,19 @@ pub async fn update_server(
         drop(pool);
     }
 
-    if !updated_server.pending_import && (configuration_changed || existing_server.pending_import) {
-        if let Err(error) = discover_server_capabilities(&state, db.clone(), &server_id).await {
-            tracing::warn!(server_id = %server_id, error = %error, "Capability sync failed after server configuration update");
+    let capability_discovery = if !updated_server.pending_import
+        && (configuration_changed || existing_server.pending_import)
+    {
+        match discover_server_capabilities(&state, db.clone(), &server_id).await {
+            Ok(()) => Some(ServerCapabilityDiscoveryData::succeeded()),
+            Err(error) => {
+                tracing::warn!(server_id = %server_id, error = %error, "Capability sync failed after server configuration update");
+                Some(ServerCapabilityDiscoveryData::failed())
+            }
         }
-    }
+    } else {
+        None
+    };
 
     // Get server details via shared helper
     let details = common::get_complete_server_details(&db.pool, &server_id, &updated_server.name, &state).await;
@@ -710,6 +641,7 @@ pub async fn update_server(
         updated_server.server_type.is_http_transport(),
     )
     .await?;
+    let transport_validity = load_server_transport_validity(&db.pool, &server_id).await;
 
     // Return success response
     let audit_server_id = server_id.clone();
@@ -723,6 +655,7 @@ pub async fn update_server(
         enabled_in_profile: details.enabled_in_profile,
         unify_direct_exposure_eligible: updated_server.unify_direct_exposure_eligible,
         server_type: updated_server.server_type,
+        transport_validity,
         command: updated_server.command.clone(),
         url: updated_server.url.clone(),
         args: details.args,
@@ -748,6 +681,7 @@ pub async fn update_server(
         .map_err(|error| ApiError::InternalError(error.to_string()))?
         .into_iter()
         .collect(),
+        capability_discovery,
     }));
 
     let mut data = Map::new();
@@ -1047,9 +981,21 @@ mod tests {
     #[test]
     fn server_update_rejects_surface_management_bypasses() {
         for payload in [
-            serde_json::json!({"id": "server-a", "enabled": true}),
-            serde_json::json!({"id": "server-a", "profile_ids": ["profile-a"]}),
-            serde_json::json!({"id": "server-a", "unify_direct_exposure_eligible": true}),
+            serde_json::json!({
+                "id": "server-a",
+                "transport": {"kind": "stdio", "command": "server-a", "args": [], "env": {}},
+                "enabled": true
+            }),
+            serde_json::json!({
+                "id": "server-a",
+                "transport": {"kind": "stdio", "command": "server-a", "args": [], "env": {}},
+                "profile_ids": ["profile-a"]
+            }),
+            serde_json::json!({
+                "id": "server-a",
+                "transport": {"kind": "stdio", "command": "server-a", "args": [], "env": {}},
+                "unify_direct_exposure_eligible": true
+            }),
         ] {
             let request: ServerUpdateReq = serde_json::from_value(payload).unwrap();
             assert!(matches!(
@@ -1061,7 +1007,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        config::models::{ServerOAuthConfig, ServerOAuthToken},
+        config::models::{ConfigValue, HttpTransportKind, ServerOAuthConfig, ServerOAuthToken, ServerTransportDraft},
         core::{
             models::Config, pool::UpstreamConnectionPool, profile::ConfigApplicationStateManager,
             secrets::store::LocalSecretStore,
@@ -1070,7 +1016,7 @@ mod tests {
         system::metrics::MetricsCollector,
     };
     use sqlx::sqlite::SqlitePoolOptions;
-    use std::{path::PathBuf, sync::Arc, time::Duration};
+    use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
     use tempfile::TempDir;
     use tokio::sync::{Mutex, RwLock};
 
@@ -1078,6 +1024,23 @@ mod tests {
         _temp_dir: TempDir,
         app_state: Arc<AppState>,
         database: Arc<Database>,
+    }
+
+    async fn upsert_typed_streamable_http_server(
+        pool: &sqlx::SqlitePool,
+        server: &Server,
+    ) {
+        server::upsert_server_definition(
+            pool,
+            server,
+            &ServerTransportDraft::Http {
+                protocol: HttpTransportKind::StreamableHttp,
+                endpoint: server.url.clone(),
+                headers: Default::default(),
+            },
+        )
+        .await
+        .expect("insert typed server definition");
     }
 
     #[tokio::test]
@@ -1088,9 +1051,7 @@ mod tests {
         let mut server =
             Server::new_streamable_http("oauth server".to_string(), Some("https://example.com/mcp".to_string()));
         server.id = Some(server_id.to_string());
-        server::upsert_server(&context.database.pool, &server)
-            .await
-            .expect("insert server");
+        upsert_typed_streamable_http_server(&context.database.pool, &server).await;
 
         server::upsert_server_oauth_config(
             &context.database.pool,
@@ -1169,9 +1130,7 @@ mod tests {
             Some("https://example.com/mcp".to_string()),
         );
         server.id = Some(server_id.to_string());
-        server::upsert_server(&context.database.pool, &server)
-            .await
-            .expect("insert server");
+        upsert_typed_streamable_http_server(&context.database.pool, &server).await;
 
         insert_plain_oauth_auth_source(&context.database.pool, server_id).await;
 
@@ -1180,9 +1139,14 @@ mod tests {
             Json(
                 serde_json::from_value(serde_json::json!({
                     "id": server_id,
-                    "headers": {
-                        "Authorization": "Bearer manual-token",
-                        "X-Trace": "trace-1",
+                    "transport": {
+                        "kind": "http",
+                        "protocol": "streamable_http",
+                        "endpoint": "https://example.com/mcp",
+                        "headers": {
+                            "Authorization": {"kind": "literal", "value": "Bearer manual-token"},
+                            "X-Trace": {"kind": "literal", "value": "trace-1"}
+                        }
                     }
                 }))
                 .expect("decode update request"),
@@ -1215,6 +1179,354 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_server_preserves_redacted_http_header_config_values() {
+        let context = create_test_context().await;
+
+        for (server_id, existing_authorization) in [
+            (
+                "serv_preserve_literal_header",
+                ConfigValue::Literal {
+                    value: "Bearer existing-token".to_string(),
+                },
+            ),
+            (
+                "serv_preserve_secret_header",
+                ConfigValue::SecretRef {
+                    alias: "server/header-token".to_string(),
+                },
+            ),
+        ] {
+            let mut server = Server::new_streamable_http(
+                format!("redacted header {server_id}"),
+                Some("https://example.com/mcp".to_string()),
+            );
+            server.id = Some(server_id.to_string());
+            let expected_authorization = existing_authorization.clone();
+            server::upsert_server_definition(
+                &context.database.pool,
+                &server,
+                &ServerTransportDraft::Http {
+                    protocol: HttpTransportKind::StreamableHttp,
+                    endpoint: Some("https://example.com/mcp".to_string()),
+                    headers: BTreeMap::from([
+                        ("Authorization".to_string(), existing_authorization),
+                        (
+                            "X-Removed".to_string(),
+                            ConfigValue::Literal {
+                                value: "removed-on-full-replacement".to_string(),
+                            },
+                        ),
+                    ]),
+                },
+            )
+            .await
+            .expect("seed structured HTTP server");
+
+            let _ = update_server(
+                State(context.app_state.clone()),
+                Json(
+                    serde_json::from_value(serde_json::json!({
+                        "id": server_id,
+                        "transport": {
+                            "kind": "http",
+                            "protocol": "streamable_http",
+                            "endpoint": "https://example.com/mcp",
+                            "headers": {
+                                "Authorization": {"kind": "literal", "value": "***REDACTED***"},
+                                "X-Trace": {"kind": "literal", "value": "trace-1"}
+                            }
+                        }
+                    }))
+                    .expect("decode update request"),
+                ),
+            )
+            .await
+            .expect("update redacted HTTP headers");
+
+            let headers = server::get_server_headers(&context.database.pool, server_id)
+                .await
+                .expect("load headers");
+            assert_eq!(
+                headers.get("authorization"),
+                Some(&expected_authorization.runtime_value())
+            );
+            assert_eq!(headers.get("x-trace").map(String::as_str), Some("trace-1"));
+            assert!(!headers.contains_key("x-removed"));
+            assert!(!headers.values().any(|value| value == "***REDACTED***"));
+
+            let Some(ServerTransportDraft::Http { headers, .. }) =
+                server::get_server_transport_draft(&context.database.pool, server_id)
+                    .await
+                    .expect("load transport draft")
+            else {
+                panic!("updated server must retain an HTTP transport draft");
+            };
+            assert_eq!(headers.get("Authorization"), Some(&expected_authorization));
+            assert_eq!(
+                headers.get("X-Trace").map(|value| value.runtime_value()),
+                Some("trace-1".to_string())
+            );
+            assert!(!headers.contains_key("X-Removed"));
+        }
+    }
+
+    #[tokio::test]
+    async fn update_server_preserves_redacted_stdio_env_config_values() {
+        let context = create_test_context().await;
+
+        for (server_id, existing_token) in [
+            (
+                "serv_preserve_literal_env",
+                ConfigValue::Literal {
+                    value: "existing-token".to_string(),
+                },
+            ),
+            (
+                "serv_preserve_secret_env",
+                ConfigValue::SecretRef {
+                    alias: "server/env-token".to_string(),
+                },
+            ),
+        ] {
+            let mut server = Server::new_stdio(format!("redacted env {server_id}"), Some("node".to_string()));
+            server.id = Some(server_id.to_string());
+            let expected_token = existing_token.clone();
+            server::upsert_server_definition(
+                &context.database.pool,
+                &server,
+                &ServerTransportDraft::Stdio {
+                    command: Some("node".to_string()),
+                    args: vec!["old.js".to_string()],
+                    env: BTreeMap::from([
+                        ("TOKEN".to_string(), existing_token),
+                        (
+                            "REMOVED".to_string(),
+                            ConfigValue::Literal {
+                                value: "removed-on-full-replacement".to_string(),
+                            },
+                        ),
+                    ]),
+                },
+            )
+            .await
+            .expect("seed structured stdio server");
+
+            let _ = update_server(
+                State(context.app_state.clone()),
+                Json(
+                    serde_json::from_value(serde_json::json!({
+                        "id": server_id,
+                        "transport": {
+                            "kind": "stdio",
+                            "command": "node",
+                            "args": ["new.js"],
+                            "env": {
+                                "TOKEN": {"kind": "literal", "value": "***REDACTED***"},
+                                "TRACE": {"kind": "literal", "value": "trace-1"}
+                            }
+                        }
+                    }))
+                    .expect("decode update request"),
+                ),
+            )
+            .await
+            .expect("update redacted stdio env");
+
+            let env = server::get_server_env(&context.database.pool, server_id)
+                .await
+                .expect("load environment");
+            assert_eq!(env.get("TOKEN"), Some(&expected_token.runtime_value()));
+            assert_eq!(env.get("TRACE").map(String::as_str), Some("trace-1"));
+            assert!(!env.contains_key("REMOVED"));
+            assert!(!env.values().any(|value| value == "***REDACTED***"));
+
+            let Some(ServerTransportDraft::Stdio { env, .. }) =
+                server::get_server_transport_draft(&context.database.pool, server_id)
+                    .await
+                    .expect("load transport draft")
+            else {
+                panic!("updated server must retain a stdio transport draft");
+            };
+            assert_eq!(env.get("TOKEN"), Some(&expected_token));
+            assert_eq!(
+                env.get("TRACE").map(|value| value.runtime_value()),
+                Some("trace-1".to_string())
+            );
+            assert!(!env.contains_key("REMOVED"));
+        }
+    }
+
+    #[tokio::test]
+    async fn update_server_repairs_invalid_transport_without_a_previous_fingerprint() {
+        let context = create_test_context().await;
+        let server_id = "serv_repair_invalid_transport";
+        let mut server = Server::new_streamable_http(
+            "repair invalid transport".to_string(),
+            Some("http://127.0.0.1:9/previous".to_string()),
+        );
+        server.id = Some(server_id.to_string());
+        upsert_typed_streamable_http_server(&context.database.pool, &server).await;
+        sqlx::query("UPDATE server_transport SET draft_json = ? WHERE server_id = ?")
+            .bind(r#"{"kind":"stdio","command":null,"args":[],"env":{}}"#)
+            .bind(server_id)
+            .execute(&context.database.pool)
+            .await
+            .expect("seed invalid historical transport");
+
+        let response = update_server(
+            State(context.app_state.clone()),
+            Json(
+                serde_json::from_value(serde_json::json!({
+                    "id": server_id,
+                    "transport": {
+                        "kind": "http",
+                        "protocol": "streamable_http",
+                        "endpoint": "http://127.0.0.1:9/repaired",
+                        "headers": {}
+                    }
+                }))
+                .expect("decode repair request"),
+            ),
+        )
+        .await
+        .expect("a valid definition repairs an invalid historical transport");
+
+        assert!(response.0.success);
+        let Some(ServerTransportDraft::Http { endpoint, .. }) =
+            server::get_server_transport_draft(&context.database.pool, server_id)
+                .await
+                .expect("load repaired draft")
+        else {
+            panic!("repair must persist an HTTP transport draft");
+        };
+        assert_eq!(endpoint.as_deref(), Some("http://127.0.0.1:9/repaired"));
+        assert!(
+            crate::config::server::capabilities::current_config_fingerprint(&context.database.pool, server_id)
+                .await
+                .is_ok(),
+            "the repaired transport must establish a valid capability baseline"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_server_reports_failed_capability_discovery_after_persisting_configuration() {
+        let context = create_test_context().await;
+        let server_id = "serv_discovery_failure";
+        let mut server = Server::new_streamable_http(
+            "discovery failure server".to_string(),
+            Some("http://127.0.0.1:9/previous".to_string()),
+        );
+        server.id = Some(server_id.to_string());
+        upsert_typed_streamable_http_server(&context.database.pool, &server).await;
+
+        let response = update_server(
+            State(context.app_state.clone()),
+            Json(
+                serde_json::from_value(serde_json::json!({
+                    "id": server_id,
+                    "transport": {
+                        "kind": "http",
+                        "protocol": "streamable_http",
+                        "endpoint": "http://127.0.0.1:9/updated",
+                        "headers": {}
+                    }
+                }))
+                .expect("decode update request"),
+            ),
+        )
+        .await
+        .expect("discovery failure must not fail a persisted update");
+
+        assert!(response.0.success, "persisted update must return success");
+        let persisted = server::get_server_by_id(&context.database.pool, server_id)
+            .await
+            .expect("load updated server")
+            .expect("updated server exists");
+        assert_eq!(persisted.url.as_deref(), Some("http://127.0.0.1:9/updated"));
+
+        let response_json = serde_json::to_value(response.0).expect("serialize update response");
+        let discovery = response_json
+            .pointer("/data/capability_discovery")
+            .expect("update response must report attempted discovery");
+        assert_eq!(discovery["attempted"], true);
+        assert_eq!(discovery["status"], "failed");
+        let error = discovery["error"].as_str().expect("safe failure message");
+        assert_eq!(
+            error,
+            "Capability discovery failed. Check the server configuration and upstream availability."
+        );
+        assert!(!error.contains("127.0.0.1"), "must not reveal transport configuration");
+    }
+
+    #[tokio::test]
+    async fn create_server_reports_failed_capability_discovery_after_persisting_configuration() {
+        let context = create_test_context().await;
+
+        let response = create_server(
+            State(context.app_state.clone()),
+            Json(
+                serde_json::from_value(serde_json::json!({
+                    "name": "discovery_failure_create",
+                    "transport": {
+                        "kind": "http",
+                        "protocol": "streamable_http",
+                        "endpoint": "http://127.0.0.1:9/mcp",
+                        "headers": {}
+                    }
+                }))
+                .expect("decode create request"),
+            ),
+        )
+        .await
+        .expect("discovery failure must not fail a persisted create");
+
+        assert!(response.0.success, "persisted create must return success");
+        let created = server::get_server(&context.database.pool, "discovery_failure_create")
+            .await
+            .expect("load created server")
+            .expect("created server exists");
+        assert_eq!(created.url.as_deref(), Some("http://127.0.0.1:9/mcp"));
+
+        let response_json = serde_json::to_value(response.0).expect("serialize create response");
+        let discovery = response_json
+            .pointer("/data/capability_discovery")
+            .expect("create response must report attempted discovery");
+        assert_eq!(discovery["attempted"], true);
+        assert_eq!(discovery["status"], "failed");
+        let error = discovery["error"].as_str().expect("safe failure message");
+        assert_eq!(
+            error,
+            "Capability discovery failed. Check the server configuration and upstream availability."
+        );
+        assert!(!error.contains("127.0.0.1"), "must not reveal transport configuration");
+    }
+
+    #[tokio::test]
+    async fn create_server_returns_transport_diagnostics_without_persisting() {
+        let context = create_test_context().await;
+        let request = serde_json::from_value(serde_json::json!({
+            "name": "invalid_transport",
+            "transport": {
+                "kind": "stdio",
+                "args": [],
+                "env": {}
+            }
+        }))
+        .expect("decode tagged create request");
+
+        let error = create_server(State(context.app_state.clone()), Json(request))
+            .await
+            .expect_err("invalid transport must fail before persistence");
+
+        assert!(matches!(error, ApiError::BadRequest(message) if message.contains("stdio_command_missing (command)")));
+        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM server_config")
+            .fetch_one(&context.database.pool)
+            .await
+            .expect("count servers");
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
     async fn create_server_rejects_non_canonical_namespace_with_suggestion() {
         let context = create_test_context().await;
 
@@ -1223,8 +1535,12 @@ mod tests {
             Json(
                 serde_json::from_value(serde_json::json!({
                     "name": "Sequential Thinking-v2",
-                    "server_type": "streamable_http",
-                    "url": "https://example.com/mcp"
+                    "transport": {
+                        "kind": "http",
+                        "protocol": "streamable_http",
+                        "endpoint": "https://example.com/mcp",
+                        "headers": {}
+                    }
                 }))
                 .expect("decode create request"),
             ),
@@ -1254,8 +1570,12 @@ mod tests {
             Json(
                 serde_json::from_value(serde_json::json!({
                     "name": "OAuth Pending Server",
-                    "server_type": "streamable_http",
-                    "url": "https://example.com/mcp",
+                    "transport": {
+                        "kind": "http",
+                        "protocol": "streamable_http",
+                        "endpoint": "https://example.com/mcp",
+                        "headers": {}
+                    },
                     "pending_import": true
                 }))
                 .expect("decode pending import request"),
@@ -1280,17 +1600,19 @@ mod tests {
             Some("https://example.com/existing".to_string()),
         );
         existing.id = Some("server-existing".to_string());
-        server::upsert_server(&context.database.pool, &existing)
-            .await
-            .expect("insert existing server");
+        upsert_typed_streamable_http_server(&context.database.pool, &existing).await;
 
         let error = create_server(
             State(context.app_state.clone()),
             Json(
                 serde_json::from_value(serde_json::json!({
                     "name": "stable_namespace",
-                    "server_type": "streamable_http",
-                    "url": "https://example.com/new"
+                    "transport": {
+                        "kind": "http",
+                        "protocol": "streamable_http",
+                        "endpoint": "https://example.com/new",
+                        "headers": {}
+                    }
                 }))
                 .expect("decode create request"),
             ),
@@ -1342,16 +1664,17 @@ for line in sys.stdin:
         .expect("write namespace remediation fixture");
         let mut legacy = Server::new_stdio("Sequential Thinking".to_string(), Some("python3".to_string()));
         legacy.id = Some("server-legacy".to_string());
-        server::upsert_server(&context.database.pool, &legacy)
-            .await
-            .expect("insert legacy server");
-        server::upsert_server_args(
+        server::upsert_server_definition(
             &context.database.pool,
-            "server-legacy",
-            &[fixture.to_string_lossy().to_string()],
+            &legacy,
+            &ServerTransportDraft::Stdio {
+                command: Some("python3".to_string()),
+                args: vec![fixture.to_string_lossy().to_string()],
+                env: Default::default(),
+            },
         )
         .await
-        .expect("store fixture argument");
+        .expect("insert typed legacy namespace fixture");
 
         let response = remediate_server_namespace(
             State(context.app_state.clone()),
@@ -1412,11 +1735,14 @@ for line in sys.stdin:
             Json(
                 serde_json::from_value(serde_json::json!({
                     "name": "manual_auth_create_server",
-                    "server_type": "streamable_http",
-                    "url": "https://example.com/mcp",
-                    "headers": {
-                        "Authorization": "Bearer manual-token",
-                        "X-Trace": "trace-1",
+                    "transport": {
+                        "kind": "http",
+                        "protocol": "streamable_http",
+                        "endpoint": "https://example.com/mcp",
+                        "headers": {
+                            "Authorization": {"kind": "literal", "value": "Bearer manual-token"},
+                            "X-Trace": {"kind": "literal", "value": "trace-1"}
+                        }
                     }
                 }))
                 .expect("decode create request"),
@@ -1447,9 +1773,7 @@ for line in sys.stdin:
             Some("https://example.com/mcp".to_string()),
         );
         server.id = Some(server_id.to_string());
-        server::upsert_server(&context.database.pool, &server)
-            .await
-            .expect("insert server");
+        upsert_typed_streamable_http_server(&context.database.pool, &server).await;
         insert_plain_oauth_auth_source(&context.database.pool, server_id).await;
 
         clear_oauth_auth_source_for_manual_authorization(

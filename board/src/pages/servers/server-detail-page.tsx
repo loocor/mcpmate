@@ -39,13 +39,19 @@ import {
 	CapsuleStripeListItem,
 } from "../../components/capsule-stripe-list";
 import InspectorDrawer from "../../components/inspector-drawer";
-import { ServerAuthBadge } from "../../components/server-auth-badge";
+import {
+	resolveElevatedServerWarningLabel,
+	resolveServerAuthWarningLabel,
+	ServerAuthBadge,
+	ServerWarningBadge,
+} from "../../components/server-auth-badge";
 import {
 	getOAuthReadinessActionTarget,
 	resolveOAuthReadiness,
 	resolveServerOAuthReadiness,
 	type OAuthReadiness,
 } from "../../lib/oauth-readiness";
+import { isRemoteHttpTransport } from "../../lib/server-transport";
 import { ServerEditDrawer } from "../../components/server-edit-drawer";
 import { StatusBadge } from "../../components/status-badge";
 import {
@@ -83,6 +89,10 @@ import {
 } from "../../lib/api";
 import { totalCapabilityCount } from "../../lib/capability-lifecycle";
 import {
+	notifyCapabilityDiscoveryFailure,
+	notifyCapabilityRefreshFailure,
+} from "../../lib/capability-discovery-notice";
+import {
 	useCapabilityKindFilters,
 } from "../../hooks/use-capability-kind-filters";
 import { useSecretStoreStatusQuery } from "../../lib/hooks/use-secret-store-status";
@@ -94,7 +104,11 @@ import { getServerDisplayName } from "../../lib/server-display";
 import { syncAuthenticatedServerCapabilities } from "../../lib/server-auth-sync";
 import { useAppStore } from "../../lib/store";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
-import type { ServerDetail } from "../../lib/types";
+import {
+	resolveTransportFocusField,
+	type ServerDetail,
+	type TransportFocusField,
+} from "../../lib/types";
 import type { CapabilityRecord } from "../../types/capabilities";
 
 const readLegacyString = (
@@ -238,6 +252,8 @@ export function ServerDetailPage() {
 	);
 
 	const [isEditOpen, setIsEditOpen] = useState(false);
+	const [editFocusTransportField, setEditFocusTransportField] =
+		useState<TransportFocusField | undefined>();
 	const [isDeleteOpen, setIsDeleteOpen] = useState(false);
 	const [inspector, setInspector] = useState<InspectorTarget | null>(null);
 
@@ -261,6 +277,15 @@ export function ServerDetailPage() {
 		);
 	}, [location.pathname, location.search, navigate]);
 
+	useEffect(() => {
+		const params = new URLSearchParams(location.search);
+		if (params.get("edit") !== "1") return;
+		setEditFocusTransportField(
+			resolveTransportFocusField(params.get("focus"), undefined),
+		);
+		setIsEditOpen(true);
+	}, [location.search]);
+
 	const {
 		data: server,
 		isLoading,
@@ -278,6 +303,23 @@ export function ServerDetailPage() {
 		},
 	});
 	const isOAuthServer = (server?.auth_mode ?? "").toLowerCase() === "oauth";
+	const transportValidity = server?.transport_validity;
+	const unrecognizedTransport =
+		transportValidity?.draft?.kind === "unrecognized"
+			? transportValidity.draft
+			: null;
+	const transportFocusField = unrecognizedTransport
+		? "type"
+		: resolveTransportFocusField(
+			transportValidity?.diagnostics[0]?.field,
+			server?.server_type,
+		);
+	const openTransportEditor = useCallback(() => {
+		setEditFocusTransportField(transportFocusField);
+		setIsEditOpen(true);
+	}, [transportFocusField]);
+	const requiresTransportRepair = unrecognizedTransport !== null;
+	const requiresRepair = Boolean(server?.namespace_issue || requiresTransportRepair);
 	const oauthStatusQuery = useQuery({
 		queryKey: ["server-oauth", serverId],
 		queryFn: () => serversApi.getOAuthStatus(serverId!),
@@ -379,15 +421,7 @@ export function ServerDetailPage() {
 					: t("detail.notifications.refreshFailed.defaultMessage", {
 						defaultValue: "Unknown error",
 					});
-			notifyError(
-				t("detail.notifications.refreshFailed.title", {
-					defaultValue: "Refresh failed",
-				}),
-				t("detail.notifications.refreshFailed.message", {
-					message,
-					defaultValue: "Unable to refresh server capabilities: {{message}}",
-				}),
-			);
+			notifyCapabilityRefreshFailure(t, message);
 		},
 	});
 	const handleOAuthConnected = useCallback(
@@ -548,7 +582,9 @@ export function ServerDetailPage() {
 		server?.server_version ??
 		readLegacyString(server, "serverVersion");
 	const defaultTab = "overview";
-	const validTabs = ["overview", "capabilities"];
+	const validTabs = requiresTransportRepair
+		? ["overview"]
+		: ["overview", "capabilities"];
 	const { activeTab: capabilityTab, setActiveTab: setCapabilityTab } =
 		useUrlTab({
 			paramName: "tab",
@@ -622,9 +658,18 @@ export function ServerDetailPage() {
 		isOAuthServer && liveOAuthStatus
 			? liveOAuthStatus.state
 			: server?.oauth_status;
-	const isRemoteHttpServer = ["streamable_http", "sse"].includes(
-		String(server?.server_type ?? "").toLowerCase(),
-	);
+	const authWarningLabel = resolveServerAuthWarningLabel({
+		authMode: server?.auth_mode,
+		oauthStatus: authBadgeOAuthStatus,
+		readiness: authReadiness,
+		t,
+	});
+	const headerWarningLabel = resolveElevatedServerWarningLabel({
+		requiresTransportRepair,
+		authWarningLabel,
+		t,
+	});
+	const isRemoteHttpServer = isRemoteHttpTransport(server?.server_type);
 	const handleAuthAction = useCallback(() => {
 		if (getOAuthReadinessActionTarget(authReadiness) === "security-settings") {
 			navigate("/settings?tab=security");
@@ -684,6 +729,8 @@ export function ServerDetailPage() {
 							statusLabel={namespaceIssueStatusLabel}
 							isServerEnabled={false}
 						/>
+					) : headerWarningLabel ? (
+						<ServerWarningBadge label={headerWarningLabel} />
 					) : server ? (
 						<StatusBadge
 							status={runtimeStatus}
@@ -699,7 +746,11 @@ export function ServerDetailPage() {
 					<ServerEditDrawer
 						server={server}
 						isOpen={isEditOpen}
-						onClose={() => setIsEditOpen(false)}
+						onClose={() => {
+							setIsEditOpen(false);
+							setEditFocusTransportField(undefined);
+						}}
+						focusTransportField={editFocusTransportField}
 						onOAuthConnected={handleOAuthConnected}
 						onSubmit={async (data) => {
 							const {
@@ -707,7 +758,13 @@ export function ServerDetailPage() {
 								requestedEligibility,
 								...crudConfig
 							} = data;
-							await serversApi.updateServer(serverId, crudConfig);
+							const updateResponse = await serversApi.updateServer(
+								serverId,
+								crudConfig,
+							);
+							const capabilityDiscovery =
+								updateResponse.data?.capability_discovery;
+							notifyCapabilityDiscoveryFailure(capabilityDiscovery, t);
 							if (
 								requestedEligibility !== undefined &&
 								requestedEligibility !==
@@ -774,7 +831,10 @@ export function ServerDetailPage() {
 						className="flex min-h-0 flex-1 flex-col gap-4"
 					>
 						<div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-							<ServerCapabilityTabsHeader server={server} />
+							<ServerCapabilityTabsHeader
+								server={server}
+								isCapabilitiesDisabled={requiresTransportRepair}
+							/>
 							<ButtonGroup className="ml-auto flex-shrink-0 flex-nowrap self-start">
 								<Button
 									size="sm"
@@ -782,7 +842,7 @@ export function ServerDetailPage() {
 									onClick={() => {
 										refreshCapabilitiesMutation.mutate();
 									}}
-									disabled={isOverviewRefreshing}
+									disabled={isOverviewRefreshing || requiresTransportRepair}
 									className={overviewActionButtonClass}
 								>
 									<RefreshCw
@@ -794,16 +854,20 @@ export function ServerDetailPage() {
 								</Button>
 								<Button
 									size="sm"
-									variant={server.namespace_issue ? "warning" : "outline"}
-									onClick={() => setIsEditOpen(true)}
+									variant={requiresRepair ? "warning" : "outline"}
+									onClick={
+										requiresTransportRepair
+											? openTransportEditor
+											: () => setIsEditOpen(true)
+									}
 									className={overviewActionButtonClass}
 								>
-									{server.namespace_issue ? (
+									{requiresRepair ? (
 										<Wrench className="h-4 w-4" />
 									) : (
 										<Edit3 className="h-4 w-4" />
 									)}
-									{server.namespace_issue
+									{requiresRepair
 										? t("detail.namespaceIssue.action")
 										: t("detail.actions.edit", {
 											defaultValue: "Edit",
@@ -848,7 +912,7 @@ export function ServerDetailPage() {
 																		type="button"
 																		variant="ghost"
 																		onClick={() => setIsEditOpen(true)}
-																		className="h-auto p-0 font-normal text-inherit hover:bg-transparent hover:text-inherit"
+																		className="h-auto p-0 font-normal text-destructive hover:bg-transparent hover:text-destructive"
 																	>
 																		{server.name}
 																		<AlertTriangle
@@ -865,7 +929,16 @@ export function ServerDetailPage() {
 																	defaultValue: "Type",
 																})}
 															>
-																{server.server_type}
+																{unrecognizedTransport ? (
+																	<ServerWarningBadge
+																		label={t("detail.transportValidity.unrecognizedType", {
+																			declaredType: unrecognizedTransport.declared_type,
+																		})}
+																		onAction={openTransportEditor}
+																	/>
+																) : (
+																	server.server_type
+																)}
 															</OverviewMetadataRow>
 															{server.auth_mode || isRemoteHttpServer ? (
 																<OverviewMetadataRow
@@ -1099,7 +1172,9 @@ export function ServerDetailPage() {
 								server={server}
 								oauthStatus={authBadgeOAuthStatus}
 								authReadiness={authReadiness}
-								enabled={capabilityTab === "capabilities"}
+								enabled={
+									capabilityTab === "capabilities" && !requiresTransportRepair
+								}
 								enableInspect={enableServerDebug}
 								onAuthenticationAction={handleAuthAction}
 								onViewLogs={() =>
@@ -1128,7 +1203,13 @@ export function ServerDetailPage() {
 	);
 }
 
-function ServerCapabilityTabsHeader({ server }: { server: ServerDetail }) {
+function ServerCapabilityTabsHeader({
+	server,
+	isCapabilitiesDisabled = false,
+}: {
+	server: ServerDetail;
+	isCapabilitiesDisabled?: boolean;
+}) {
 	const { t } = useTranslation("servers");
 	const totalCount = totalCapabilityCount(server.capability);
 	return (
@@ -1136,7 +1217,7 @@ function ServerCapabilityTabsHeader({ server }: { server: ServerDetail }) {
 			<TabsTrigger value="overview">
 				{t("detail.tabs.overview", { defaultValue: "Overview" })}
 			</TabsTrigger>
-			<TabsTrigger value="capabilities">
+			<TabsTrigger value="capabilities" disabled={isCapabilitiesDisabled}>
 				{t("detail.tabs.capabilities", {
 					count: totalCount,
 					defaultValue: "Capabilities ({{count}})",

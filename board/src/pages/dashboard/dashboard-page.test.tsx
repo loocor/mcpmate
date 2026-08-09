@@ -2,6 +2,7 @@ import { expect, mock, test } from "bun:test";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactNode } from "react";
+import type { ServerSummary } from "../../lib/types";
 
 import "../../lib/i18n/index";
 
@@ -27,7 +28,9 @@ mock.module("react-router-dom", () => ({
 	),
 }));
 
-async function renderDashboardMarkup(): Promise<string> {
+async function renderDashboardMarkup(
+	servers?: ServerSummary[],
+): Promise<string> {
 	const { DashboardPage } = await import("./dashboard-page");
 	const queryClient = new QueryClient({
 		defaultOptions: {
@@ -35,6 +38,13 @@ async function renderDashboardMarkup(): Promise<string> {
 				retry: false,
 			},
 		},
+	});
+	if (servers) {
+		queryClient.setQueryData(["servers"], { servers });
+	}
+	queryClient.setQueryData(["surfaceReviews", "pending"], []);
+	queryClient.setQueryData(["surfaceReviews", "summary"], {
+		failed_reconciliation_count: 0,
 	});
 	return renderToStaticMarkup(
 		<QueryClientProvider client={queryClient}>
@@ -62,5 +72,25 @@ test("lets review todos fill the remaining dashboard height", async () => {
 	);
 	expect(markup).toContain(
 		"transition-shadow duration-200 flex flex-1 flex-col",
+	);
+});
+
+test("adds an independent transport repair todo that links to the focused editor", async () => {
+	const markup = await renderDashboardMarkup([
+		{
+			id: "server-invalid",
+			name: "invalid-server",
+			transport_validity: {
+				state: "invalid",
+				diagnostics: [
+					{ code: "stdio_command_missing", field: "command" },
+				],
+			},
+		},
+	]);
+
+	expect(markup).toContain("invalid-server");
+	expect(markup).toContain(
+		'/servers/server-invalid?edit=1&amp;focus=command',
 	);
 });

@@ -1636,58 +1636,25 @@ impl UpstreamConnectionPool {
         Ok(lease)
     }
 
-    /// Convert database Server model to MCPServerConfig
-    ///
-    /// Reuses the conversion logic from core/foundation/loader.rs
+    /// Convert a persisted server definition to runtime configuration.
     async fn convert_server_to_config(
         &self,
         server: &crate::config::models::Server,
         pool: &sqlx::Pool<sqlx::Sqlite>,
     ) -> Result<crate::core::models::MCPServerConfig, anyhow::Error> {
-        // Get server arguments (reusing existing logic)
-        let args = if let Some(id) = &server.id {
-            let server_args = crate::config::server::get_server_args(pool, id).await?;
-            if server_args.is_empty() {
-                None
-            } else {
-                let mut sorted_args: Vec<_> = server_args.into_iter().collect();
-                sorted_args.sort_by_key(|arg| arg.arg_index);
-                Some(sorted_args.into_iter().map(|arg| arg.arg_value).collect())
-            }
-        } else {
-            None
-        };
-
-        // Get server environment variables (reusing existing logic)
-        let env = if let Some(id) = &server.id {
-            let env_map = crate::config::server::get_server_env(pool, id).await?;
-            if env_map.is_empty() { None } else { Some(env_map) }
-        } else {
-            None
-        };
-
-        // Load default HTTP headers if any (validation path previously missed headers)
-        let headers = if let Some(id) = &server.id {
-            let manual_headers = match crate::config::server::get_server_headers(pool, id).await {
-                Ok(map) if !map.is_empty() => Some(map),
-                _ => None,
-            };
-            let manager = crate::core::oauth::OAuthManager::new_optional_store(pool.clone(), self.secret_store.clone());
-            manager.get_effective_server_headers(id, manual_headers).await?
-        } else {
-            None
-        };
-
-        // Create MCPServerConfig (reusing existing structure)
-        Ok(crate::core::models::MCPServerConfig {
-            source_fingerprint: None,
-            kind: server.server_type,
-            command: server.command.clone(),
-            args,
-            url: server.url.clone(),
-            env,
-            headers,
-        })
+        let server_id = server
+            .id
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("Server '{}' has no persisted ID", server.name))?;
+        let transport = crate::config::server::load_validated_server_transport(pool, server_id).await?;
+        let manual_headers = transport.runtime_headers();
+        let manager = crate::core::oauth::OAuthManager::new_optional_store(pool.clone(), self.secret_store.clone());
+        let headers = manager
+            .get_effective_server_headers(server_id, (!manual_headers.is_empty()).then_some(manual_headers))
+            .await?;
+        let mut config = transport.to_mcp_config();
+        config.headers = headers;
+        Ok(config)
     }
 
     /// Destroy a validation instance after use
@@ -1931,7 +1898,15 @@ mod tests {
         FailureKind, PendingValidationConnection, UpstreamConnectionPool, ValidationReservationError,
         ValidationShutdownError, await_validation_shutdown, spawn_validation_shutdown,
     };
-    use crate::core::{models::Config, pool::UpstreamConnection, transport::client::UpstreamClientHandler};
+    use crate::{
+        common::{server::ServerType, status::EnabledStatus},
+        config::{
+            initialization::run_initialization,
+            models::{Server, ServerTransportDraft},
+            server::{upsert_server, upsert_server_transport_draft_tx},
+        },
+        core::{models::Config, pool::UpstreamConnection, transport::client::UpstreamClientHandler},
+    };
 
     #[derive(Clone, Default)]
     struct TestServer;
@@ -1962,6 +1937,85 @@ mod tests {
             }),
             None,
         )
+    }
+
+    async fn server_definition_pool() -> sqlx::SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory sqlite");
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&pool)
+            .await
+            .expect("enable foreign keys");
+        crate::test_helpers::prepare_config_database(&pool).await;
+        run_initialization(&pool).await.expect("initialize schema");
+        pool
+    }
+
+    fn legacy_stdio_server(server_id: &str) -> Server {
+        Server {
+            id: Some(server_id.to_string()),
+            name: format!("server-{server_id}"),
+            server_type: ServerType::Stdio,
+            command: Some("legacy-command".to_string()),
+            url: None,
+            source: None,
+            enabled: EnabledStatus::Enabled,
+            unify_direct_exposure_eligible: false,
+            pending_import: false,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn validation_config_rejects_legacy_server_without_transport_draft() {
+        let pool = server_definition_pool().await;
+        let server = legacy_stdio_server("server-missing-draft");
+        upsert_server(&pool, &server)
+            .await
+            .expect("insert legacy server without transport draft");
+
+        let error = empty_pool()
+            .convert_server_to_config(&server, &pool)
+            .await
+            .expect_err("validation config must reject a missing typed transport draft");
+
+        assert!(
+            format!("{error:#}").contains("persisted ServerTransportDraft is missing"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn validation_config_rejects_invalid_transport_draft_despite_legacy_projection() {
+        let pool = server_definition_pool().await;
+        let server = legacy_stdio_server("server-invalid-draft");
+        upsert_server(&pool, &server)
+            .await
+            .expect("insert legacy server with a valid legacy projection");
+        let invalid_draft = ServerTransportDraft::Stdio {
+            command: None,
+            args: Vec::new(),
+            env: Default::default(),
+        };
+        let mut transaction = pool.begin().await.expect("begin invalid draft transaction");
+        upsert_server_transport_draft_tx(&mut transaction, "server-invalid-draft", &invalid_draft)
+            .await
+            .expect("persist invalid transport draft");
+        transaction.commit().await.expect("commit invalid transport draft");
+
+        let error = empty_pool()
+            .convert_server_to_config(&server, &pool)
+            .await
+            .expect_err("validation config must reject an invalid typed transport draft");
+
+        assert!(
+            format!("{error:#}").contains("persisted ServerTransportDraft is invalid"),
+            "unexpected error: {error:#}"
+        );
     }
 
     #[tokio::test]

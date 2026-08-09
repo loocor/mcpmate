@@ -125,6 +125,8 @@ export const ServerInstallManualForm = forwardRef<
 			isRefreshingRegistry,
 			mode = "create",
 			initialDraft,
+			focusTransportField,
+			onTransportTypeInteraction,
 			allowJsonEditing,
 			namespaceIssue,
 			namespaceIssueFeedback,
@@ -630,6 +632,44 @@ export const ServerInstallManualForm = forwardRef<
 		const metaRepositorySubfolderId = useId();
 		const metaRepositoryId = useId();
 		const manualJsonId = useId();
+		const [highlightTransportType, setHighlightTransportType] = useState(false);
+
+		useEffect(() => {
+			setHighlightTransportType(isOpen && focusTransportField === "type");
+		}, [focusTransportField, isOpen]);
+
+		const handleTransportTypeInteraction = useCallback(
+			(nextKind: ManualServerFormValues["kind"]) => {
+				setHighlightTransportType(false);
+				onTransportTypeInteraction?.(nextKind);
+			},
+			[onTransportTypeInteraction],
+		);
+
+		useEffect(() => {
+			if (!isOpen || !focusTransportField || viewMode !== "form") return;
+			const frame = requestAnimationFrame(() => {
+				if (focusTransportField === "type") {
+					document
+						.getElementById(kindId)
+						?.querySelector<HTMLElement>('[role="tab"][data-state="active"]')
+						?.focus();
+					return;
+				}
+				document
+					.getElementById(focusTransportField === "command" ? commandId : urlId)
+					?.focus();
+			});
+			return () => cancelAnimationFrame(frame);
+		}, [
+			commandId,
+			focusTransportField,
+			isOpen,
+			kind,
+			kindId,
+			urlId,
+			viewMode,
+		]);
 
 		// Reset form when closed
 		useEffect(() => {
@@ -1303,33 +1343,46 @@ export const ServerInstallManualForm = forwardRef<
 															>
 																{typeLabel}
 															</Label>
-															<div className="flex-1">
-																<Segment
-																	options={serverTypeOptions}
-																	value={kind}
-																	onValueChange={(value) => {
-																		const newKind =
-																			value as ManualServerFormValues["kind"];
-																		if (newKind === kind) {
-																			return;
-																		}
-																		saveTypeSnapshot(kind);
-																		setValue("kind", newKind, {
-																			shouldDirty: true,
-																			shouldTouch: true,
-																		});
-																		restoreTypeSnapshot(newKind);
-																	}}
-																	showDots={true}
-																/>
-																{errors.kind && (
-																	<p className="text-xs text-red-500">
-																		{t(errors.kind.message ?? "", {
-																			defaultValue: errors.kind.message,
-																		})}
-																	</p>
-																)}
-															</div>
+														<div
+															className={cn(
+																"flex-1 rounded-md",
+															highlightTransportType &&
+																	"ring-2 ring-amber-500 ring-offset-2 dark:ring-amber-400 dark:ring-offset-slate-950",
+															)}
+														>
+															<Segment
+																id={kindId}
+																options={serverTypeOptions}
+																value={kind}
+																onOptionClick={(value) =>
+																	handleTransportTypeInteraction(
+																		value as ManualServerFormValues["kind"],
+																	)
+																}
+																onValueChange={(value) => {
+																	const newKind =
+																		value as ManualServerFormValues["kind"];
+																	handleTransportTypeInteraction(newKind);
+																	if (newKind === kind) {
+																		return;
+																	}
+																	saveTypeSnapshot(kind);
+																	setValue("kind", newKind, {
+																		shouldDirty: true,
+																		shouldTouch: true,
+																	});
+																	restoreTypeSnapshot(newKind);
+																}}
+																showDots={true}
+															/>
+															{errors.kind && (
+																<p className="text-xs text-red-500">
+																	{t(errors.kind.message ?? "", {
+																		defaultValue: errors.kind.message,
+																	})}
+																</p>
+															)}
+														</div>
 														</div>
 													</div>
 

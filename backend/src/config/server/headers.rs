@@ -1,34 +1,12 @@
 // Server HTTP headers persistence helpers
 // Provides CRUD utilities for default headers used by HTTP-based transports
 
+pub use crate::config::models::is_redacted_display_value;
 use anyhow::Result;
-use sqlx::{Pool, Sqlite};
+use sqlx::{Pool, Sqlite, Transaction};
 use std::collections::HashMap;
 
 const TABLE: &str = "server_headers";
-const REDACTED_FULL: &str = "***REDACTED***";
-
-/// Returns true when a value is an API redaction mask and must not be persisted.
-/// IMPORTANT: keep in sync with board/src/lib/secure-field.ts isRedactedMask.
-pub fn is_redacted_display_value(value: &str) -> bool {
-    let trimmed = value.trim();
-    if trimmed == REDACTED_FULL {
-        return true;
-    }
-
-    // Partial mask pattern: 6 ASCII chars + "***" + 2 ASCII chars (e.g. "Bearer***ue").
-    // Redaction masks are always ASCII, so byte-length checks are safe and faster
-    // than chars().count().
-    if let Some(idx) = trimmed.find("***") {
-        let head = &trimmed[..idx];
-        let tail = &trimmed[idx + 3..];
-        if head.is_ascii() && tail.is_ascii() && head.len() == 6 && tail.len() == 2 {
-            return true;
-        }
-    }
-
-    false
-}
 
 /// Merge incoming header updates with stored values, preserving secrets for redacted masks.
 pub fn merge_headers_for_update(
@@ -149,43 +127,56 @@ pub async fn replace_server_headers(
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
 
+    replace_server_headers_tx(&mut tx, server_id, headers).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+pub(crate) async fn replace_server_headers_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    server_id: &str,
+    headers: &HashMap<String, String>,
+) -> Result<()> {
+    let normalized_headers: HashMap<String, String> = headers
+        .iter()
+        .filter_map(|(key, value)| {
+            let key = key.trim().to_ascii_lowercase();
+            (!key.is_empty()).then(|| (key, value.clone()))
+        })
+        .collect();
+
     // Fetch existing keys
     let rows: Vec<(String,)> = sqlx::query_as(&format!("SELECT header_key FROM {TABLE} WHERE server_id = ?"))
         .bind(server_id)
-        .fetch_all(&mut *tx)
+        .fetch_all(&mut **tx)
         .await?;
     let existing: std::collections::HashSet<String> = rows.into_iter().map(|(k,)| k).collect();
 
     // Upsert provided
-    for (k, v) in headers.iter() {
-        let key = k.trim().to_ascii_lowercase();
-        if key.is_empty() {
-            continue;
-        }
+    for (key, value) in &normalized_headers {
         sqlx::query(&format!(
             r#"INSERT INTO {TABLE} (server_id, header_key, header_value)
                 VALUES (?, ?, ?)
                 ON CONFLICT(server_id, header_key) DO UPDATE SET header_value = excluded.header_value"#
         ))
         .bind(server_id)
-        .bind(&key)
-        .bind(v)
-        .execute(&mut *tx)
+        .bind(key)
+        .bind(value)
+        .execute(&mut **tx)
         .await?;
     }
 
     // Delete removed keys
     for key in existing {
-        if !headers.contains_key(&key) && !headers.contains_key(&key.to_ascii_uppercase()) {
+        if !normalized_headers.contains_key(&key) {
             sqlx::query(&format!("DELETE FROM {TABLE} WHERE server_id = ? AND header_key = ?"))
                 .bind(server_id)
                 .bind(&key)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await?;
         }
     }
 
-    tx.commit().await?;
     Ok(())
 }
 
@@ -215,6 +206,8 @@ mod tests {
     fn detects_redacted_display_values() {
         assert!(is_redacted_display_value("***REDACTED***"));
         assert!(is_redacted_display_value("Bearer***ue"));
+        assert!(is_redacted_display_value("***abc***xy"));
+        assert!(!is_redacted_display_value("安全密钥测试***后缀"));
         assert!(!is_redacted_display_value("Bearer [[secret:token]]"));
     }
 

@@ -6,8 +6,8 @@ use mcpmate::{
     common::constants::protocol,
     config::{
         database::Database,
-        models::Server,
-        server::{upsert_server, upsert_server_args},
+        models::{Server, ServerTransportDraft},
+        server::upsert_server_definition,
     },
     core::{
         foundation::{load_server_config_strict, types::ConnectionStatus},
@@ -168,23 +168,25 @@ impl SlowUpstreamFixture {
         let python = which::which("python3").expect("python3 is required for the stdio fixture");
         let mut server = Server::new_stdio(server_name.to_string(), Some(python.to_string_lossy().into_owned()));
         server.id = Some(server_id.to_string());
-        upsert_server(&database.pool, &server)
-            .await
-            .expect("insert stdio server");
-        upsert_server_args(
+        let stored_id = upsert_server_definition(
             &database.pool,
-            server_id,
-            &[
-                script.to_string_lossy().into_owned(),
-                marker.to_string_lossy().into_owned(),
-                counter.to_string_lossy().into_owned(),
-                protocol::CURRENT_VERSION.to_string(),
-                delay.as_secs_f64().to_string(),
-                behavior.as_arg().to_string(),
-            ],
+            &server,
+            &ServerTransportDraft::Stdio {
+                command: Some(python.to_string_lossy().into_owned()),
+                args: vec![
+                    script.to_string_lossy().into_owned(),
+                    marker.to_string_lossy().into_owned(),
+                    counter.to_string_lossy().into_owned(),
+                    protocol::CURRENT_VERSION.to_string(),
+                    delay.as_secs_f64().to_string(),
+                    behavior.as_arg().to_string(),
+                ],
+                env: Default::default(),
+            },
         )
         .await
-        .expect("insert stdio server arguments");
+        .expect("insert typed stdio server");
+        assert_eq!(stored_id, server_id);
         RuntimeServerFixture {
             server_id,
             marker,

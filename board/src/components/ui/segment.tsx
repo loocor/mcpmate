@@ -27,6 +27,7 @@ export interface SegmentProps
 	options: SegmentOption[];
 	value?: string;
 	onValueChange?: (value: string) => void;
+	onOptionClick?: (value: string) => void;
 	showDots?: boolean;
 	className?: string;
 	disabled?: boolean;
@@ -41,6 +42,7 @@ const Segment = React.forwardRef<
 			options,
 			value,
 			onValueChange,
+			onOptionClick,
 			showDots = true,
 			className,
 			disabled = false,
@@ -74,6 +76,7 @@ const Segment = React.forwardRef<
 								key={option.value}
 								value={option.value}
 								disabled={isOptionDisabled}
+								onClick={() => onOptionClick?.(option.value)}
 								aria-label={accessibleLabel}
 								className={cn(
 									"group inline-flex min-w-0 flex-1 basis-0 items-center justify-center overflow-hidden whitespace-nowrap rounded-sm px-2 py-1.5 text-sm font-medium ring-offset-white transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-white data-[state=active]:text-slate-950 data-[state=active]:shadow-sm dark:ring-offset-slate-950 dark:focus-visible:ring-slate-300 dark:data-[state=active]:bg-slate-950 dark:data-[state=active]:text-slate-50",

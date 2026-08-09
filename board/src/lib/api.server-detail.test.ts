@@ -145,6 +145,51 @@ describe("serversApi.getServer", () => {
 		expect(server.capability?.resources.declaration).toBe("unsupported");
 	});
 
+	test("normalizes transport validity drafts and diagnostics", async () => {
+		globalThis.fetch = async () =>
+			new Response(
+				JSON.stringify({
+					data: {
+						id: "server-invalid",
+						name: "invalid-server",
+						status: "idle",
+						transport_validity: {
+							state: "invalid",
+							diagnostics: [
+								{ code: "stdio_command_missing", field: "command" },
+							],
+							draft: {
+								kind: "stdio",
+								command: null,
+								args: ["--verbose"],
+								env: {
+									TOKEN: { kind: "secret_ref", alias: "server-token" },
+								},
+							},
+						},
+					},
+				}),
+				{ headers: { "content-type": "application/json" } },
+			);
+
+		const server = await serversApi.getServer("server-invalid");
+
+		expect(server.transport_validity).toEqual({
+			state: "invalid",
+			diagnostics: [
+				{ code: "stdio_command_missing", field: "command" },
+			],
+			draft: {
+				kind: "stdio",
+				command: null,
+				args: ["--verbose"],
+				env: {
+					TOKEN: { kind: "secret_ref", alias: "server-token" },
+				},
+			},
+		});
+	});
+
 	test("rejects the legacy boolean and count capability summary", async () => {
 		globalThis.fetch = async () =>
 			new Response(
@@ -199,6 +244,53 @@ describe("serversApi.refreshCapabilities", () => {
 			server_id: "server-everything",
 			catalog_revision: 17,
 			catalog_changed: false,
+		});
+	});
+});
+
+describe("serversApi.previewServers", () => {
+	test("posts only the tagged candidate transport preview contract", async () => {
+		let request: { url: string; init?: RequestInit } | undefined;
+		globalThis.fetch = async (input, init) => {
+			request = { url: String(input), init };
+			return Response.json({ success: true, data: { items: [] } });
+		};
+
+		await serversApi.previewServers({
+			include_details: true,
+			servers: [
+				{
+					name: "candidate",
+					server_id: "saved-server",
+					transport: {
+						kind: "http",
+						protocol: "streamable_http",
+						endpoint: "https://example.com/mcp",
+						headers: {
+							Authorization: { kind: "secret_ref", alias: "preview-token" },
+						},
+					},
+				},
+			],
+		});
+
+		expect(request?.url).toEndWith("/api/mcp/servers/preview");
+		expect(JSON.parse(String(request?.init?.body))).toEqual({
+			include_details: true,
+			servers: [
+				{
+					name: "candidate",
+					server_id: "saved-server",
+					transport: {
+						kind: "http",
+						protocol: "streamable_http",
+						endpoint: "https://example.com/mcp",
+						headers: {
+							Authorization: { kind: "secret_ref", alias: "preview-token" },
+						},
+					},
+				},
+			],
 		});
 	});
 });

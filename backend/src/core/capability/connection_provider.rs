@@ -582,7 +582,11 @@ mod tests {
         CapabilityAuthenticationFailureCode, CapabilityConnectionProvider, CapabilityOwnerCleanup,
         CapabilityOwnerError, DiscoveryRetryDisposition, OwnerSource, PoolCapabilityConnectionProvider,
     };
-    use crate::config::database::Database;
+    use crate::config::{
+        database::Database,
+        models::{HttpTransportKind, Server, ServerTransportDraft},
+        server::upsert_server_definition,
+    };
     use crate::core::{
         capability::{
             AffinityKey, CapabilityType, ConnectionSelection,
@@ -641,6 +645,48 @@ mod tests {
             path: PathBuf::new(),
             capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
         })
+    }
+
+    async fn insert_stdio_server(
+        database: &Database,
+        server_id: &str,
+        name: &str,
+        command: &str,
+    ) {
+        let mut server = Server::new_stdio(name.to_string(), Some(command.to_string()));
+        server.id = Some(server_id.to_string());
+        upsert_server_definition(
+            &database.pool,
+            &server,
+            &ServerTransportDraft::Stdio {
+                command: Some(command.to_string()),
+                args: Vec::new(),
+                env: Default::default(),
+            },
+        )
+        .await
+        .expect("insert typed stdio server fixture");
+    }
+
+    async fn insert_streamable_http_server(
+        database: &Database,
+        server_id: &str,
+        name: &str,
+        endpoint: String,
+    ) {
+        let mut server = Server::new_streamable_http(name.to_string(), Some(endpoint.clone()));
+        server.id = Some(server_id.to_string());
+        upsert_server_definition(
+            &database.pool,
+            &server,
+            &ServerTransportDraft::Http {
+                protocol: HttpTransportKind::StreamableHttp,
+                endpoint: Some(endpoint),
+                headers: Default::default(),
+            },
+        )
+        .await
+        .expect("insert typed HTTP server fixture");
     }
 
     async fn connected_instance() -> (UpstreamConnection, tokio::task::JoinHandle<anyhow::Result<()>>) {
@@ -762,14 +808,7 @@ mod tests {
         let database = test_database().await;
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind fixture");
         let address = listener.local_addr().expect("fixture address");
-        sqlx::query(
-            "INSERT INTO server_config (id, name, server_type, url) VALUES (?, 'slow_fixture', 'streamable_http', ?)",
-        )
-        .bind("server-1")
-        .bind(format!("http://{address}/mcp"))
-        .execute(&database.pool)
-        .await
-        .expect("insert HTTP server record");
+        insert_streamable_http_server(&database, "server-1", "slow_fixture", format!("http://{address}/mcp")).await;
         let request_seen = Arc::new(Notify::new());
         let server_seen = request_seen.clone();
         let fixture = tokio::spawn(async move {
@@ -833,14 +872,13 @@ mod tests {
         let database = test_database().await;
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind fixture");
         let address = listener.local_addr().expect("fixture address");
-        sqlx::query(
-            "INSERT INTO server_config (id, name, server_type, url) VALUES (?, 'slow_cancel_fixture', 'streamable_http', ?)",
+        insert_streamable_http_server(
+            &database,
+            "server-1",
+            "slow_cancel_fixture",
+            format!("http://{address}/mcp"),
         )
-        .bind("server-1")
-        .bind(format!("http://{address}/mcp"))
-        .execute(&database.pool)
-        .await
-        .expect("insert HTTP server record");
+        .await;
         let request_seen = Arc::new(Notify::new());
         let server_seen = request_seen.clone();
         let fixture = tokio::spawn(async move {
@@ -900,13 +938,7 @@ mod tests {
                 .mount(&upstream)
                 .await;
             let database = test_database().await;
-            sqlx::query(
-                "INSERT INTO server_config (id, name, server_type, url) VALUES ('server-1', 'auth_fixture', 'streamable_http', ?)",
-            )
-            .bind(upstream.uri())
-            .execute(&database.pool)
-            .await
-            .expect("insert HTTP auth fixture");
+            insert_streamable_http_server(&database, "server-1", "auth_fixture", upstream.uri()).await;
             let mut raw_pool = empty_pool();
             raw_pool.database = Some(database.clone());
             let provider = PoolCapabilityConnectionProvider::new(Arc::new(Mutex::new(raw_pool)), database);
@@ -927,12 +959,7 @@ mod tests {
     #[tokio::test]
     async fn production_backoff_remains_typed_for_management_discovery() {
         let database = test_database().await;
-        sqlx::query(
-            "INSERT INTO server_config (id, name, server_type, command) VALUES ('server-1', 'backoff_fixture', 'stdio', 'missing-command')",
-        )
-        .execute(&database.pool)
-        .await
-        .expect("insert backoff fixture");
+        insert_stdio_server(&database, "server-1", "backoff_fixture", "missing-command").await;
         let fingerprint = crate::config::server::capabilities::current_config_fingerprint(&database.pool, "server-1")
             .await
             .expect("load backoff fixture fingerprint");
@@ -986,10 +1013,7 @@ mod tests {
     #[tokio::test]
     async fn explicit_validation_owner_is_not_classified_as_existing_production() {
         let database = test_database().await;
-        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-1', 'docs', 'stdio')")
-            .execute(&database.pool)
-            .await
-            .expect("insert server record");
+        insert_stdio_server(&database, "server-1", "docs", "fixture-command").await;
         let pool = Arc::new(Mutex::new(empty_pool()));
         let lease =
             UpstreamConnectionPool::reserve_validation_session(&pool, "inspector-session", Duration::from_secs(60))
@@ -1028,10 +1052,7 @@ mod tests {
     #[tokio::test]
     async fn closed_validation_owner_is_detached_before_fresh_replacement() {
         let database = test_database().await;
-        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-1', 'docs', 'stdio')")
-            .execute(&database.pool)
-            .await
-            .expect("insert server record");
+        insert_stdio_server(&database, "server-1", "docs", "fixture-command").await;
         let pool = Arc::new(Mutex::new(empty_pool()));
         let lease =
             UpstreamConnectionPool::reserve_validation_session(&pool, "stale-session", Duration::from_secs(60)).await;
@@ -1107,10 +1128,7 @@ mod tests {
     #[tokio::test]
     async fn temporary_guard_keeps_cleanup_authority_after_fresh_joiner() {
         let database = test_database().await;
-        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-1', 'docs', 'stdio')")
-            .execute(&database.pool)
-            .await
-            .expect("insert server record");
+        insert_stdio_server(&database, "server-1", "docs", "fixture-command").await;
         let pool = Arc::new(Mutex::new(empty_pool()));
         let guard =
             UpstreamConnectionPool::reserve_validation_session(&pool, "temporary-stale", Duration::from_secs(60)).await;
@@ -1182,12 +1200,7 @@ mod tests {
     #[tokio::test]
     async fn existing_owner_respects_connection_selection() {
         let database = test_database().await;
-        sqlx::query(
-            "INSERT INTO server_config (id, name, server_type) VALUES ('server-1', 'selected_server', 'stdio')",
-        )
-        .execute(&database.pool)
-        .await
-        .expect("insert server record");
+        insert_stdio_server(&database, "server-1", "selected_server", "fixture-command").await;
         let (mut connection, server_handle) = connected_instance().await;
         connection.id = "selected-instance".to_string();
         connection.last_activity -= Duration::from_secs(30);
@@ -1245,12 +1258,7 @@ mod tests {
     #[tokio::test]
     async fn existing_owner_keeps_the_configuration_bound_to_its_connection() {
         let database = test_database().await;
-        sqlx::query(
-            "INSERT INTO server_config (id, name, server_type, command) VALUES ('server-1', 'selected_server', 'stdio', 'old-command')",
-        )
-        .execute(&database.pool)
-        .await
-        .expect("insert server record");
+        insert_stdio_server(&database, "server-1", "selected_server", "old-command").await;
         let old_fingerprint =
             crate::config::server::capabilities::current_config_fingerprint(&database.pool, "server-1")
                 .await
@@ -1265,10 +1273,7 @@ mod tests {
             .entry("server-1".to_string())
             .or_default()
             .insert(connection.id.clone(), connection);
-        sqlx::query("UPDATE server_config SET command = 'new-command' WHERE id = 'server-1'")
-            .execute(&database.pool)
-            .await
-            .expect("update server configuration");
+        insert_stdio_server(&database, "server-1", "selected_server", "new-command").await;
         let pool = Arc::new(Mutex::new(raw_pool));
         let provider = PoolCapabilityConnectionProvider::new(pool.clone(), database.clone());
 
@@ -1327,12 +1332,7 @@ mod tests {
     #[tokio::test]
     async fn existing_owner_uses_the_canonical_database_namespace() {
         let database = test_database().await;
-        sqlx::query(
-            "INSERT INTO server_config (id, name, server_type) VALUES ('server-1', 'inspector_fixture', 'stdio')",
-        )
-        .execute(&database.pool)
-        .await
-        .expect("insert server record");
+        insert_stdio_server(&database, "server-1", "inspector_fixture", "fixture-command").await;
         let (mut connection, server_handle) = connected_instance().await;
         connection.id = "selected-instance".to_string();
         connection.server_name = "SERVmixedCaseId".to_string();
@@ -1376,10 +1376,7 @@ mod tests {
     #[tokio::test]
     async fn closed_ready_owner_is_quarantined_before_the_next_selection() {
         let database = test_database().await;
-        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-1', 'docs', 'stdio')")
-            .execute(&database.pool)
-            .await
-            .expect("insert server record");
+        insert_stdio_server(&database, "server-1", "docs", "fixture-command").await;
         let (mut connection, server_handle) = connected_instance().await;
         connection.id = "closed-instance".to_string();
         let service = connection.service.as_ref().expect("service owner").clone();

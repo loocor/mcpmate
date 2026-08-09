@@ -1656,6 +1656,10 @@ fn apply_visibility_filter(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{
+        models::{Server, ServerTransportDraft},
+        server::upsert_server_definition,
+    };
     use crate::core::capability::index::{CachedResourceInfo, CachedResourceTemplateInfo};
     use crate::core::models::Config;
     use chrono::Utc;
@@ -1732,13 +1736,28 @@ mod tests {
         .expect("fixture must match RMCP 2.2")
     }
 
-    async fn insert_runtime_server(database: &Database) {
-        sqlx::query(
-            "INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'runtime_fixture', 'stdio')",
+    async fn insert_stdio_server(
+        pool: &sqlx::SqlitePool,
+        server_id: &str,
+        name: &str,
+    ) {
+        let mut server = Server::new_stdio(name.to_string(), Some("fixture-command".to_string()));
+        server.id = Some(server_id.to_string());
+        upsert_server_definition(
+            pool,
+            &server,
+            &ServerTransportDraft::Stdio {
+                command: Some("fixture-command".to_string()),
+                args: Vec::new(),
+                env: Default::default(),
+            },
         )
-        .execute(&database.pool)
         .await
-        .expect("insert server");
+        .expect("insert typed stdio server fixture");
+    }
+
+    async fn insert_runtime_server(database: &Database) {
+        insert_stdio_server(&database.pool, "server-a", "runtime_fixture").await;
     }
 
     async fn commit_runtime_catalog(
@@ -1936,12 +1955,7 @@ mod tests {
         crate::config::initialization::run_initialization(&first_pool)
             .await
             .expect("initialize first database instance");
-        sqlx::query(
-            "INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'runtime_fixture', 'stdio')",
-        )
-        .execute(&first_pool)
-        .await
-        .expect("insert server");
+        insert_stdio_server(&first_pool, "server-a", "runtime_fixture").await;
 
         let initialize: rmcp::model::InitializeResult = serde_json::from_value(serde_json::json!({
             "protocolVersion": "2025-11-25",
@@ -2219,10 +2233,19 @@ mod tests {
         let database = test_database().await;
         insert_runtime_server(&database).await;
         commit_runtime_catalog(&database, vec![runtime_tool("stale-tool")]).await;
-        sqlx::query("UPDATE server_config SET command = 'changed-command' WHERE id = 'server-a'")
-            .execute(&database.pool)
-            .await
-            .expect("change server configuration");
+        let mut changed_server = Server::new_stdio("runtime_fixture".to_string(), Some("changed-command".to_string()));
+        changed_server.id = Some("server-a".to_string());
+        upsert_server_definition(
+            &database.pool,
+            &changed_server,
+            &ServerTransportDraft::Stdio {
+                command: Some("changed-command".to_string()),
+                args: Vec::new(),
+                env: Default::default(),
+            },
+        )
+        .await
+        .expect("change typed server configuration");
         let pool = empty_runtime_pool(database.clone());
         let mut events = crate::core::events::EventBus::global().subscribe_async();
 
@@ -2332,10 +2355,7 @@ mod tests {
     #[tokio::test]
     async fn force_list_without_a_peer_returns_an_explicit_error() {
         let database = test_database().await;
-        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'searxng', 'stdio')")
-            .execute(&database.pool)
-            .await
-            .expect("insert server");
+        insert_stdio_server(&database.pool, "server-a", "searxng").await;
         let pool = Arc::new(Mutex::new(UpstreamConnectionPool::new(
             Arc::new(Config::default()),
             Some(database.clone()),

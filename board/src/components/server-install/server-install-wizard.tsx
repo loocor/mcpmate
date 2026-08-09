@@ -27,7 +27,6 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import {
 	assertCompleteCapabilityBatch,
-	addServersToProfile,
 	clientsApi,
 	serversApi,
 } from "../../lib/api";
@@ -38,7 +37,6 @@ import {
 import { startOAuthAccessFlow } from "../../lib/oauth-callback-access";
 import {
 	orchestratePendingPublish,
-	ProfileSyncClientError,
 } from "../../lib/profile-sync-error";
 import {
 	type InstallSource,
@@ -132,6 +130,7 @@ import {
 	ImportValidationSummary,
 } from "./import-validation-summary";
 import { draftToServerConfig } from "./draft-to-server-config";
+import { finalizePendingPublishImport } from "./pending-publish";
 import {
 	draftToFormState,
 	useFormState,
@@ -694,47 +693,16 @@ export const ServerInstallWizard = forwardRef(
 				draft: ServerInstallDraft,
 				publishedServerId: string,
 				targetProfileId: string | null,
-			) => {
-				await serversApi.updateServer(
+			) =>
+				finalizePendingPublishImport({
+					draft,
 					publishedServerId,
-					draftToServerConfig(draft, {
-						pending_import: false,
-					}),
-				);
-				const publishedServer = await serversApi.getServer(publishedServerId);
-				const sourceRevisionSet =
-					publishedServer.data?.source_revision_set;
-				if (!sourceRevisionSet) {
-					throw new ProfileSyncClientError("capability_snapshot_missing");
-				}
-				await serversApi.enableServer(
-					publishedServerId,
-					sourceRevisionSet,
-				);
-				if (targetProfileId) {
-					await addServersToProfile(targetProfileId, [publishedServerId]);
-				}
-				await queryClient.invalidateQueries({ queryKey: ["servers"] });
-				if (targetProfileId) {
-					await queryClient.invalidateQueries({
-						queryKey: ["configSuits"],
-					});
-				}
-				installPipeline.setImportResult({
-					success: true,
-					summary: {
-						imported_count: 1,
-						skipped_count: 0,
-					},
-					servers: {
-						[draft.name]: {
-							id: publishedServerId,
-							status: "success",
-						},
-					},
-				});
-			},
-			[queryClient, installPipeline],
+					targetProfileId,
+					queryClient,
+					installPipeline,
+					t,
+				}),
+			[queryClient, installPipeline, t],
 		);
 
 		const runImportPipeline = useCallback(

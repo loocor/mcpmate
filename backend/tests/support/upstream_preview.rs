@@ -5,8 +5,8 @@ use mcpmate::{
     api::{handlers::server, models::server::ServerCapabilityRefreshReq, routes::AppState},
     common::constants::protocol,
     config::{
-        models::Server,
-        server::{upsert_server, upsert_server_args},
+        models::{Server, ServerTransportDraft},
+        server::upsert_server_definition,
     },
     core::{models::Config, pool::UpstreamConnectionPool, profile::ConfigApplicationStateManager},
     inspector::{calls::InspectorCallRegistry, sessions::InspectorSessionManager},
@@ -160,12 +160,18 @@ impl PreviewUpstreamFixture {
     ) {
         let mut server = Server::new_stdio(namespace.to_string(), Some(self.command.clone()));
         server.id = Some(server_id.to_string());
-        upsert_server(&self.database.pool, &server)
-            .await
-            .expect("persist preview fixture server");
-        upsert_server_args(&self.database.pool, server_id, &self.server_args())
-            .await
-            .expect("persist preview fixture arguments");
+        let stored_id = upsert_server_definition(
+            &self.database.pool,
+            &server,
+            &ServerTransportDraft::Stdio {
+                command: Some(self.command.clone()),
+                args: self.server_args(),
+                env: Default::default(),
+            },
+        )
+        .await
+        .expect("persist typed preview fixture server");
+        assert_eq!(stored_id, server_id);
     }
 
     pub async fn enable_server(
@@ -236,9 +242,12 @@ impl PreviewUpstreamFixture {
                 serde_json::to_vec(&json!({
                     "servers": [{
                         "name": namespace,
-                        "kind": "stdio",
-                        "command": self.command,
-                        "args": args
+                        "transport": {
+                            "kind": "stdio",
+                            "command": self.command,
+                            "args": args,
+                            "env": {}
+                        }
                     }],
                     "timeout_ms": timeout_ms
                 }))

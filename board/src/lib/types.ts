@@ -109,6 +109,52 @@ export interface ServerNamespaceIssue {
   remediation_allowed?: boolean;
 }
 
+export type TransportValidityState = "valid" | "invalid" | "missing";
+
+export interface TransportValidityDiagnostic {
+  code: string;
+  field: string;
+}
+
+export type ApiConfigValue =
+  | { kind: "literal"; value: string }
+  | { kind: "secret_ref"; alias: string };
+
+export type ApiServerTransportDraft =
+  | {
+      kind: "stdio";
+      command?: string | null;
+      args: string[];
+      env: Record<string, ApiConfigValue>;
+    }
+  | {
+      kind: "http";
+      protocol: "sse" | "streamable_http";
+      endpoint?: string | null;
+      headers: Record<string, ApiConfigValue>;
+    }
+  | { kind: "unrecognized"; declared_type: string };
+
+export interface ServerTransportValidity {
+  state: TransportValidityState;
+  diagnostics: TransportValidityDiagnostic[];
+  draft?: ApiServerTransportDraft | null;
+}
+
+export type TransportFocusField = "type" | "command" | "url";
+
+export function resolveTransportFocusField(
+  diagnosticField: string | null | undefined,
+  serverType: string | null | undefined,
+): TransportFocusField {
+	if (diagnosticField === "transport") return "type";
+	if (diagnosticField === "command") return "command";
+  if (diagnosticField === "endpoint" || diagnosticField === "url") {
+    return "url";
+  }
+  return serverType?.toLowerCase() === "stdio" ? "command" : "url";
+}
+
 export interface ServerSummary {
   id: string;
   name: string;
@@ -137,6 +183,7 @@ export interface ServerSummary {
   oauth_requires_reconnect?: boolean | null;
   oauth_issue?: OAuthStatus["issue"] | null;
   namespace_issue?: ServerNamespaceIssue | null;
+  transport_validity?: ServerTransportValidity;
   source_revision_set?: CatalogRevisionSet;
 }
 
@@ -161,6 +208,13 @@ export interface ServerDetail extends ServerSummary {
   env?: Record<string, string>;
   headers?: Record<string, string> | null;
   instances: InstanceSummary[];
+  capability_discovery?: ServerCapabilityDiscovery;
+}
+
+export interface ServerCapabilityDiscovery {
+  attempted: boolean;
+  status: "succeeded" | "failed";
+  error?: string;
 }
 
 export interface RegistryInput {

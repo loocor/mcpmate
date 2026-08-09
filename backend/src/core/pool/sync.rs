@@ -231,6 +231,10 @@ mod tests {
     use super::*;
     use crate::{
         config::initialization::run_initialization,
+        config::{
+            models::{Server, ServerTransportDraft},
+            server::upsert_server_definition,
+        },
         core::{models::Config, pool::types::ProductionRouteKey},
     };
     use sqlx::sqlite::SqlitePoolOptions;
@@ -269,18 +273,20 @@ mod tests {
         name: &str,
         enabled: bool,
     ) {
-        sqlx::query(
-            r#"
-            INSERT INTO server_config (id, name, server_type, command, enabled)
-            VALUES (?, ?, 'stdio', 'demo-command', ?)
-            "#,
+        let mut server = Server::new_stdio(name.to_string(), Some("demo-command".to_string()));
+        server.id = Some(server_id.to_string());
+        server.enabled = crate::common::status::EnabledStatus::from_bool(enabled);
+        upsert_server_definition(
+            pool,
+            &server,
+            &ServerTransportDraft::Stdio {
+                command: Some("demo-command".to_string()),
+                args: Vec::new(),
+                env: Default::default(),
+            },
         )
-        .bind(server_id)
-        .bind(name)
-        .bind(enabled)
-        .execute(pool)
         .await
-        .expect("insert server");
+        .expect("insert typed stdio server fixture");
     }
 
     #[tokio::test]

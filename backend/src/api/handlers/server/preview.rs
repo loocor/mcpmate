@@ -52,72 +52,50 @@ async fn preview_one(
     secret_store: Option<Arc<LocalSecretStore>>,
     connection_pool: Arc<tokio::sync::Mutex<crate::core::pool::UpstreamConnectionPool>>,
 ) -> ServerPreviewItemData {
-    // Map kind -> ServerType
-    let kind = match crate::common::server::ServerType::from_client_format(item.kind.as_str()) {
-        Ok(k) => k,
-        Err(_) => {
-            return empty_with_error(item.name, format!("Invalid server kind: {}", item.kind));
-        }
-    };
-
-    let config_fingerprint = match canonical_preview_fingerprint(&item, kind) {
-        Ok(fingerprint) => fingerprint,
-        Err(error) => return empty_with_error(item.name, error.to_string()),
+    let ServerPreviewItemReq {
+        name,
+        server_id,
+        transport,
+    } = item;
+    let (mut raw_cfg, config_fingerprint, kind) = match preview_config_from_transport(&transport) {
+        Ok(preview) => preview,
+        Err(error) => return empty_with_error(name, error),
     };
 
     let effective_headers = match resolve_preview_headers(
-        item.headers.clone(),
-        item.server_id.as_deref(),
+        raw_cfg.headers.take(),
+        server_id.as_deref(),
         db_pool,
         secret_store.clone(),
     )
     .await
     {
         Ok(headers) => headers,
-        Err(e) => return empty_with_error(item.name, e.to_string()),
+        Err(e) => return empty_with_error(name, e.to_string()),
     };
-
-    let raw_cfg = MCPServerConfig {
-        source_fingerprint: None,
-        kind,
-        command: item.command.clone(),
-        url: item.url.clone(),
-        args: item.args.clone(),
-        env: item.env.clone(),
-        headers: effective_headers,
-    };
+    raw_cfg.headers = effective_headers;
 
     let secret_resolver = secret_store.as_deref().map(|store| store as &dyn SecretResolver);
     let cfg = match resolve_runtime_server_config_with_optional_resolver(&raw_cfg, secret_resolver) {
         Ok(resolved) => resolved,
-        Err(err) => return empty_with_error(item.name, err.to_string()),
+        Err(err) => return empty_with_error(name, err.to_string()),
     };
     let runtime_fingerprint = match runtime_config_fingerprint(&cfg) {
         Ok(fingerprint) => fingerprint,
-        Err(error) => return empty_with_error(item.name, error.to_string()),
+        Err(error) => return empty_with_error(name, error.to_string()),
     };
 
-    let mut client: Option<reqwest::Client> = None;
-    if kind.is_http_transport() {
-        if let Some(headers) = cfg.headers.as_ref() {
-            let mut header_map = reqwest::header::HeaderMap::new();
-            for (k, v) in headers.iter() {
-                if let Ok(name) = reqwest::header::HeaderName::from_bytes(k.as_bytes()) {
-                    if let Ok(value) = reqwest::header::HeaderValue::from_str(v) {
-                        header_map.insert(name, value);
-                    }
-                }
-            }
-            let builder = reqwest::Client::builder().default_headers(header_map);
-            if let Ok(built) = builder.build() {
-                client = Some(built);
-            }
+    let client = if kind.is_http_transport() {
+        match build_preview_http_client(cfg.headers.as_ref()) {
+            Ok(client) => client,
+            Err(error) => return empty_with_error(name, error),
         }
-    }
+    } else {
+        None
+    };
 
     // The shared Inspector timeout is a fresh deadline for each MCP operation.
-    let subject =
-        crate::core::pool::UpstreamSubject::preview(item.name.clone(), config_fingerprint, runtime_fingerprint);
+    let subject = crate::core::pool::UpstreamSubject::preview(name.clone(), config_fingerprint, runtime_fingerprint);
     let snap = crate::core::pool::UpstreamConnectionPool::preview_capabilities_coordinated(
         &connection_pool,
         subject,
@@ -130,64 +108,60 @@ async fn preview_one(
 
     match snap {
         Ok(s) => {
-            if let (Some(pool), Some(server_id)) = (db_pool, item.server_id.as_deref()) {
+            if let (Some(pool), Some(server_id)) = (db_pool, server_id.as_deref()) {
                 if let Err(error) =
                     crate::config::server::capabilities::persist_snapshot_server_info(pool, server_id, &s).await
                 {
-                    return empty_with_error(item.name, error.to_string());
+                    return empty_with_error(name, error.to_string());
                 }
             }
-            build_item(item.name.clone(), s, include_details)
-                .unwrap_or_else(|error| empty_with_error(item.name, error.to_string()))
+            build_item(name.clone(), s, include_details)
+                .unwrap_or_else(|error| empty_with_error(name, error.to_string()))
         }
-        Err(e) => empty_with_error(item.name, e.to_string()),
+        Err(e) => empty_with_error(name, e.to_string()),
     }
 }
 
-fn canonical_preview_fingerprint(
-    item: &ServerPreviewItemReq,
-    kind: crate::common::server::ServerType,
-) -> serde_json::Result<String> {
-    runtime_fingerprint_parts(
-        kind,
-        item.command.as_deref(),
-        item.url.as_deref(),
-        item.args.as_deref(),
-        item.env.as_ref(),
-        item.headers.as_ref(),
-    )
+fn build_preview_http_client(headers: Option<&HashMap<String, String>>) -> Result<Option<reqwest::Client>, String> {
+    let Some(headers) = headers else {
+        return Ok(None);
+    };
+
+    let mut header_map = reqwest::header::HeaderMap::new();
+    for (key, value) in headers {
+        let name = reqwest::header::HeaderName::from_bytes(key.as_bytes())
+            .map_err(|_| "Invalid preview HTTP header name".to_string())?;
+        let value = reqwest::header::HeaderValue::from_str(value)
+            .map_err(|_| "Invalid preview HTTP header value".to_string())?;
+        header_map.insert(name, value);
+    }
+
+    reqwest::Client::builder()
+        .default_headers(header_map)
+        .build()
+        .map(Some)
+        .map_err(|_| "Failed to build preview HTTP client".to_string())
+}
+
+fn preview_config_from_transport(
+    draft: &crate::config::models::ServerTransportDraft
+) -> Result<(MCPServerConfig, String, crate::common::server::ServerType), String> {
+    let transport = draft.validate().map_err(|diagnostics| {
+        let details = diagnostics
+            .into_iter()
+            .map(|diagnostic| format!("{} ({})", diagnostic.code, diagnostic.field))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("Invalid server transport: {details}")
+    })?;
+    let config_fingerprint = crate::config::server::fingerprint::validated_transport_fingerprint(&transport)
+        .map_err(|error| error.to_string())?;
+    let kind = transport.server_type();
+    Ok((transport.to_mcp_config(), config_fingerprint, kind))
 }
 
 fn runtime_config_fingerprint(config: &MCPServerConfig) -> serde_json::Result<String> {
     crate::config::server::fingerprint::materialized_runtime_fingerprint(config)
-}
-
-fn runtime_fingerprint_parts(
-    kind: crate::common::server::ServerType,
-    command: Option<&str>,
-    url: Option<&str>,
-    args: Option<&[String]>,
-    env: Option<&HashMap<String, String>>,
-    headers: Option<&HashMap<String, String>>,
-) -> serde_json::Result<String> {
-    let indexed_args = args
-        .unwrap_or_default()
-        .iter()
-        .enumerate()
-        .map(|(index, value)| (index as i64, value.clone()))
-        .collect::<Vec<_>>();
-    let empty = HashMap::new();
-    crate::config::server::fingerprint::runtime_config_fingerprint(
-        &crate::config::server::fingerprint::RuntimeConfigFingerprintInput {
-            server_type: kind.client_format(),
-            command,
-            url,
-            enabled: true,
-            args: &indexed_args,
-            env: env.unwrap_or(&empty),
-            headers: headers.unwrap_or(&empty),
-        },
-    )
 }
 
 async fn resolve_preview_headers(
@@ -392,7 +366,7 @@ fn empty_with_error(
 mod tests {
     use super::*;
     use crate::config::{
-        models::{ServerOAuthConfig, ServerOAuthToken},
+        models::{ConfigValue, HttpTransportKind, ServerOAuthConfig, ServerOAuthToken, ServerTransportDraft},
         server::{init::initialize_server_tables, upsert_server_oauth_config, upsert_server_oauth_token},
     };
     use crate::core::capability::index::{
@@ -531,6 +505,86 @@ mod tests {
         .execute(pool)
         .await
         .expect("insert http server");
+        let transport = ServerTransportDraft::Http {
+            protocol: HttpTransportKind::StreamableHttp,
+            endpoint: Some("https://example.com/mcp".to_string()),
+            headers: std::collections::BTreeMap::new(),
+        };
+        sqlx::query("INSERT INTO server_transport (server_id, draft_json) VALUES (?, ?)")
+            .bind(server_id)
+            .bind(serde_json::to_string(&transport).expect("serialize HTTP transport"))
+            .execute(pool)
+            .await
+            .expect("insert HTTP transport");
+    }
+
+    #[test]
+    fn preview_builds_runtime_config_from_the_candidate_transport() {
+        let transport = ServerTransportDraft::Http {
+            protocol: HttpTransportKind::StreamableHttp,
+            endpoint: Some("https://candidate.example.test/mcp".to_string()),
+            headers: std::collections::BTreeMap::from([(
+                "authorization".to_string(),
+                ConfigValue::SecretRef {
+                    alias: "candidate-token".to_string(),
+                },
+            )]),
+        };
+
+        let (config, _, kind) = preview_config_from_transport(&transport).expect("build candidate preview");
+
+        assert_eq!(kind, crate::common::server::ServerType::StreamableHttp);
+        assert_eq!(config.url.as_deref(), Some("https://candidate.example.test/mcp"));
+        assert_eq!(
+            config
+                .headers
+                .as_ref()
+                .and_then(|headers| headers.get("authorization"))
+                .map(String::as_str),
+            Some("[[secret:candidate-token]]")
+        );
+    }
+
+    #[test]
+    fn preview_rejects_invalid_http_headers_without_silently_dropping_them() {
+        let headers = HashMap::from([("bad header".to_string(), "value".to_string())]);
+
+        let error =
+            build_preview_http_client(Some(&headers)).expect_err("invalid HTTP header name must reject the preview");
+
+        assert_eq!(error, "Invalid preview HTTP header name");
+    }
+
+    #[tokio::test]
+    async fn preview_reports_invalid_candidate_transport_per_item() {
+        let preview = preview_one(
+            ServerPreviewItemReq {
+                name: "Invalid Candidate".to_string(),
+                server_id: None,
+                transport: ServerTransportDraft::Stdio {
+                    command: None,
+                    args: Vec::new(),
+                    env: std::collections::BTreeMap::new(),
+                },
+            },
+            None,
+            false,
+            None,
+            None,
+            Arc::new(tokio::sync::Mutex::new(crate::core::pool::UpstreamConnectionPool::new(
+                Arc::new(crate::core::models::Config::default()),
+                None,
+            ))),
+        )
+        .await;
+
+        assert!(!preview.ok);
+        assert!(
+            preview
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("Invalid server transport: stdio_command_missing (command)"))
+        );
     }
 
     #[tokio::test]
@@ -540,17 +594,15 @@ mod tests {
         let item = ServerPreviewItemReq {
             name: "server-serv_preview_identity".to_string(),
             server_id: Some("serv_preview_identity".to_string()),
-            kind: "streamable_http".to_string(),
-            command: None,
-            url: Some("https://example.com/mcp".to_string()),
-            args: None,
-            env: None,
-            headers: None,
+            transport: ServerTransportDraft::Http {
+                protocol: HttpTransportKind::StreamableHttp,
+                endpoint: Some("https://example.com/mcp".to_string()),
+                headers: std::collections::BTreeMap::new(),
+            },
         };
 
-        let preview_fingerprint =
-            canonical_preview_fingerprint(&item, crate::common::server::ServerType::StreamableHttp)
-                .expect("fingerprint preview identity");
+        let (_, preview_fingerprint, _) =
+            preview_config_from_transport(&item.transport).expect("build preview candidate");
         let persisted_fingerprint =
             crate::config::server::capabilities::current_config_fingerprint(&pool, "serv_preview_identity")
                 .await
@@ -737,12 +789,11 @@ mod tests {
         let item = ServerPreviewItemReq {
             name: "Preview Error".to_string(),
             server_id: Some("serv_preview_error".to_string()),
-            kind: "streamable_http".to_string(),
-            command: None,
-            url: Some("https://example.com/mcp".to_string()),
-            args: None,
-            env: None,
-            headers: None,
+            transport: ServerTransportDraft::Http {
+                protocol: HttpTransportKind::StreamableHttp,
+                endpoint: Some("https://example.com/mcp".to_string()),
+                headers: std::collections::BTreeMap::new(),
+            },
         };
 
         let preview = preview_one(

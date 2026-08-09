@@ -109,7 +109,7 @@ async fn upgrades_pre_generation_profile_storage() {
     .fetch_one(&pool)
     .await
     .expect("load latest config migration");
-    assert_eq!(version, 11);
+    assert_eq!(version, 13);
 
     let backup_pool = file_support::pool(&backup).await;
     let backup_columns: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('profile')")

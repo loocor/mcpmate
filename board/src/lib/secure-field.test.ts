@@ -18,6 +18,8 @@ describe("secure-field", () => {
 		expect(isRedactedMask("***REDACTED***")).toBe(true);
 		expect(isRedactedMask("Bearer***ue")).toBe(true);
 		expect(isRedactedMask("abcdef***xy")).toBe(true);
+		expect(isRedactedMask("***abc***xy")).toBe(true);
+		expect(isRedactedMask("安全密钥测试***后缀")).toBe(false);
 		expect(isRedactedMask("Bearer [[secret:token]]")).toBe(false);
 		expect(isRedactedMask("plain-value")).toBe(false);
 	});

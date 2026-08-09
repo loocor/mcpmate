@@ -21,6 +21,7 @@ import { MetricsTrendChart } from "../../components/metrics-trend-chart";
 import { TokenSavingsTrendCard } from "../../components/token-savings-trend-card";
 import { APP_VERSION_LABEL } from "../../lib/app-version";
 import { StatusBadge } from "../../components/status-badge";
+import { STATS_CARD_GRID_CLASS } from "../../components/page-layout";
 import {
 	Card,
 	CardContent,
@@ -35,9 +36,41 @@ import {
 	surfaceReviewsApi,
 	systemApi,
 } from "../../lib/api";
-import type { ClientCheckData } from "../../lib/types";
+import {
+	resolveTransportFocusField,
+	type ClientCheckData,
+	type ServerSummary,
+} from "../../lib/types";
 import { getSurfaceReviewDestination } from "../../lib/surface-reviews";
 import { cn, formatUptime } from "../../lib/utils";
+
+type ServerTransportTodo = {
+	serverId: string;
+	serverName: string;
+	focus: "command" | "url";
+	destination: string;
+};
+
+function getServerTransportTodos(
+	servers: ServerSummary[] | undefined,
+): ServerTransportTodo[] {
+	return (servers ?? []).flatMap((server) => {
+		const validity = server.transport_validity;
+		if (validity?.state !== "invalid" && validity?.state !== "missing") {
+			return [];
+		}
+		const focus = resolveTransportFocusField(
+			validity.diagnostics[0]?.field,
+			server.server_type,
+		);
+		return [{
+			serverId: server.id,
+			serverName: server.name,
+			focus,
+			destination: `/servers/${encodeURIComponent(server.id)}?edit=1&focus=${focus}`,
+		}];
+	});
+}
 
 export function DashboardPage() {
 	usePageTranslations("dashboard");
@@ -115,6 +148,8 @@ export function DashboardPage() {
 	const totalClients = clientsData?.total ?? clientsData?.client?.length ?? 0;
 	const approvedClients =
 		clientsData?.client?.filter((client) => client.approval_status === "approved").length ?? 0;
+	const serverTransportTodos = getServerTransportTodos(servers?.servers);
+	const todoCount = pendingReviewItems.length + serverTransportTodos.length;
 
 	const effectiveSystemStatus = React.useMemo(() => {
 		if (
@@ -142,20 +177,20 @@ export function DashboardPage() {
 	const localCoreServiceStatus = coreView?.localService.status;
 	const localCoreStatusLabel = localCoreServiceStatus
 		? t(`dashboard:core.localServiceStatus.${localCoreServiceStatus}`, {
-				defaultValue: localCoreServiceStatus,
-			})
+			defaultValue: localCoreServiceStatus,
+		})
 		: "";
 	const localCoreDetail =
 		localCoreRuntimeMode && localCoreServiceStatus
 			? t(
-					`dashboard:core.localServiceDetail.${localCoreRuntimeMode}.${localCoreServiceStatus}`,
-					{
-						defaultValue: t("dashboard:core.localServiceDetailFallback", {
-							defaultValue:
-								"The configured local core status will appear here.",
-						}),
-					},
-				)
+				`dashboard:core.localServiceDetail.${localCoreRuntimeMode}.${localCoreServiceStatus}`,
+				{
+					defaultValue: t("dashboard:core.localServiceDetailFallback", {
+						defaultValue:
+							"The configured local core status will appear here.",
+					}),
+				},
+			)
 			: "";
 
 	/**
@@ -228,7 +263,7 @@ export function DashboardPage() {
 				</div>
 			) : null}
 			<div className={cn("shrink-0 px-0.5", statsGridBleedClass)}>
-				<div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+				<div className={STATS_CARD_GRID_CLASS}>
 					<Link to="/runtime" className="block h-full">
 						<Card className="h-full min-h-[160px] cursor-pointer transition-all duration-200 hover:-translate-y-1 hover:border-primary/40 hover:shadow-xl">
 							<CardHeader className="flex flex-row items-center justify-between space-y-0">
@@ -466,7 +501,7 @@ export function DashboardPage() {
 						</div>
 						<span className="rounded-full border border-amber-300 bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
 							{t("surfaceReview:dashboard.pending", {
-								count: pendingReviewItems.length,
+								count: todoCount,
 								defaultValue: "{{count}} pending",
 							})}
 						</span>
@@ -491,7 +526,7 @@ export function DashboardPage() {
 							})}
 						</div>
 					) : null}
-					{isLoadingReviews ? (
+					{isLoadingReviews && serverTransportTodos.length === 0 ? (
 						<div className="space-y-2">
 							{Array.from({ length: 2 }, (_, index) => (
 								<div
@@ -500,50 +535,78 @@ export function DashboardPage() {
 								/>
 							))}
 						</div>
-					) : reviewItemsError ? (
+					) : null}
+					{reviewItemsError ? (
 						<div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
 							<AlertTriangle className="h-4 w-4" />
 							{t("surfaceReview:errors.load", {
 								defaultValue: "Unable to load pending capability reviews.",
 							})}
 						</div>
-					) : pendingReviewItems.length === 0 ? (
+					) : null}
+					{serverTransportTodos.length === 0 &&
+						!isLoadingReviews &&
+						!reviewItemsError &&
+						pendingReviewItems.length === 0 ? (
 						<p className="text-sm text-muted-foreground">
 							{t("surfaceReview:dashboard.empty", {
 								defaultValue: "No capability reviews are pending.",
 							})}
 						</p>
-					) : (
+					) : serverTransportTodos.length > 0 ||
+						(!isLoadingReviews &&
+							!reviewItemsError &&
+							pendingReviewItems.length > 0) ? (
 						<div className="divide-y rounded-md border">
-							{pendingReviewItems.slice(0, 6).map((item) => {
-								const owner = item.owners[0];
-								const destination = owner
-									? getSurfaceReviewDestination(
-											item,
-											owner,
-											clientsData?.client ?? [],
-										)
-									: `/clients?filter=needs_review`;
-								return (
-									<Link
-										key={item.review_item_id}
-										to={destination}
-										className="flex items-center justify-between gap-3 px-3 py-2.5 transition-colors hover:bg-muted/60"
-									>
-										<div className="min-w-0">
-											<div className="truncate text-sm font-medium">
-												{owner?.owner_id ?? item.consumer_id}
-											</div>
-											<div className="truncate font-mono text-xs text-muted-foreground">
-												{item.change_class} · {item.ref_id}
-											</div>
+							{serverTransportTodos.slice(0, 6).map((item) => (
+								<Link
+									key={`server-transport:${item.serverId}`}
+									to={item.destination}
+									className="flex items-center justify-between gap-3 px-3 py-2.5 transition-colors hover:bg-muted/60"
+								>
+									<div className="min-w-0">
+										<div className="truncate text-sm font-medium">
+											{item.serverName}
 										</div>
-										<ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-									</Link>
-								);
-							})}
+										<div className="truncate font-mono text-xs text-muted-foreground">
+											{t("dashboard:transportValidity.todo")}
+										</div>
+									</div>
+									<ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+								</Link>
+							))}
+							{!reviewItemsError &&
+								pendingReviewItems
+									.slice(0, Math.max(0, 6 - serverTransportTodos.length))
+									.map((item) => {
+										const owner = item.owners[0];
+										const destination = owner
+											? getSurfaceReviewDestination(
+												item,
+												owner,
+												clientsData?.client ?? [],
+											)
+											: `/clients?filter=needs_review`;
+										return (
+											<Link
+												key={item.review_item_id}
+												to={destination}
+												className="flex items-center justify-between gap-3 px-3 py-2.5 transition-colors hover:bg-muted/60"
+											>
+												<div className="min-w-0">
+													<div className="truncate text-sm font-medium">
+														{owner?.owner_id ?? item.consumer_id}
+													</div>
+													<div className="truncate font-mono text-xs text-muted-foreground">
+														{item.change_class} · {item.ref_id}
+													</div>
+												</div>
+												<ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+											</Link>
+										);
+									})}
 						</div>
-					)}
+					) : null}
 				</CardContent>
 			</Card>
 		</div>

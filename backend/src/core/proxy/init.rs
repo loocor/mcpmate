@@ -369,7 +369,10 @@ pub async fn setup_proxy_server(db: Database) -> Result<(Arc<ProxyServer>, Arc<P
 mod tests {
     use super::*;
     use crate::clients::discovery::ADMIN_DISCOVERY_BASE_URL_ENV;
+    use crate::common::status::EnabledStatus;
     use crate::config::initialization::run_initialization;
+    use crate::config::models::{Server, ServerTransportDraft};
+    use crate::config::server::upsert_server_definition;
     use sqlx::sqlite::SqlitePoolOptions;
     use tempfile::TempDir;
     use wiremock::{
@@ -435,18 +438,21 @@ mod tests {
         name: &str,
         enabled: bool,
     ) {
-        sqlx::query(
-            r#"
-            INSERT INTO server_config (id, name, server_type, command, enabled)
-            VALUES (?, ?, 'stdio', 'demo-command', ?)
-            "#,
+        let mut server = Server::new_stdio(name.to_string(), Some("demo-command".to_string()));
+        server.id = Some(server_id.to_string());
+        server.enabled = EnabledStatus::from_bool(enabled);
+
+        upsert_server_definition(
+            pool,
+            &server,
+            &ServerTransportDraft::Stdio {
+                command: Some("demo-command".to_string()),
+                args: Vec::new(),
+                env: Default::default(),
+            },
         )
-        .bind(server_id)
-        .bind(name)
-        .bind(enabled)
-        .execute(pool)
         .await
-        .expect("insert server");
+        .expect("insert typed stdio server fixture");
     }
 
     #[test]

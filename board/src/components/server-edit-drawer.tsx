@@ -4,15 +4,21 @@ import { serversApi } from "../lib/api";
 import { notifyError, notifySuccess, notifyWarning } from "../lib/notify";
 import { startOAuthAccessFlow } from "../lib/oauth-callback-access";
 import { isRegistrySource } from "../lib/source";
+import { inferServerInstallKind } from "../lib/server-transport";
 import type { ServerInstallDraft } from "../hooks/use-server-install-pipeline";
 import type {
 	MCPServerConfig,
 	ServerDetail,
 	ServerIcon,
 	ServerMetaInfo,
+	TransportFocusField,
 } from "../lib/types";
 import { ServerInstallManualForm, type ServerInstallManualFormHandle } from "./server-install";
-import { resolveRecordUpdatePayload } from "../lib/secure-field";
+import {
+	requireExplicitTransportSelection,
+	transportDraftToFormFields,
+	unrecognizedTransportRepairFormFields,
+} from "./server-install/types";
 import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
 
@@ -23,6 +29,7 @@ interface ServerEditDrawerProps {
 	onSubmit: (config: Partial<MCPServerConfig>) => Promise<void> | void;
 	onUpdated?: () => void;
 	onOAuthConnected?: (serverId: string) => void;
+	focusTransportField?: TransportFocusField;
 }
 
 type UpdateConfig = Partial<MCPServerConfig> & {
@@ -146,14 +153,6 @@ const buildMetaFromServer = (
 	return Object.keys(meta).length ? meta : undefined;
 };
 
-const inferKind = (serverType?: string | null): ServerInstallDraft["kind"] => {
-	const kind = serverType?.toLowerCase() ?? "";
-	if (kind.includes("streamable")) return "streamable_http";
-	if (kind === "sse") return "sse";
-	if (kind.includes("http")) return "streamable_http";
-	return "stdio";
-};
-
 const parseUrl = (
 	raw: string | undefined,
 ): { url?: string; urlParams?: Record<string, string> } => {
@@ -189,16 +188,34 @@ const buildUrlWithParams = (
 	return query ? `${trimmedUrl}?${query}` : trimmedUrl;
 };
 
-const convertServerDetailToDraft = (
-	server: ServerDetail,
-): ServerInstallDraft => {
-	const kind = inferKind(server.server_type);
+const convertServerDetailToDraft = (server: ServerDetail): ServerInstallDraft | null => {
+	const meta = buildMetaFromServer(server);
+	const source = server.source ?? undefined;
+	const transportDraft = server.transport_validity?.draft;
+	if (transportDraft?.kind === "unrecognized") {
+		return {
+			name: server.name,
+			...unrecognizedTransportRepairFormFields(),
+			meta,
+			source,
+		};
+	}
+	const transportFields = transportDraft
+		? transportDraftToFormFields(transportDraft, server.env ?? undefined)
+		: null;
+	if (transportFields) {
+		return {
+			name: server.name,
+			...transportFields,
+			meta,
+			source,
+		};
+	}
+
+	const kind = inferServerInstallKind(server.server_type);
 	const args = Array.isArray(server.args)
 		? server.args.filter((item): item is string => Boolean(item))
 		: undefined;
-	const meta = buildMetaFromServer(server);
-	const source = server.source ?? undefined;
-
 	const headersSource = server.headers ?? server.env ?? undefined;
 	const sanitizedHeaders = sanitizeRecord(headersSource ?? undefined);
 
@@ -254,7 +271,6 @@ const buildMetaPayload = (
 
 const draftToUpdateConfig = (
 	draft: ServerInstallDraft,
-	baseline?: ServerInstallDraft | null,
 ): UpdateConfig => {
 	const args = draft.args
 		?.map((value) => value.trim())
@@ -262,24 +278,19 @@ const draftToUpdateConfig = (
 	const meta = draft.meta ? buildMetaPayload(draft.meta) : undefined;
 
 	if (draft.kind === "stdio") {
-		const env = sanitizeRecord(draft.env);
-		const baselineEnv = sanitizeRecord(baseline?.env);
 		return {
 			kind: draft.kind,
 			command: trim(draft.command ?? undefined),
 			args,
-			env: resolveRecordUpdatePayload(env, baselineEnv),
+			env: sanitizeRecord(draft.env),
 			meta,
 		};
 	}
 
-	const headers = sanitizeRecord(draft.headers);
-	const baselineHeaders = sanitizeRecord(baseline?.headers);
-
 	return {
 		kind: draft.kind,
 		url: buildUrlWithParams(draft.url, draft.urlParams),
-		headers: resolveRecordUpdatePayload(headers, baselineHeaders),
+		headers: sanitizeRecord(draft.headers),
 		args,
 		meta,
 	};
@@ -292,20 +303,27 @@ export function ServerEditDrawer({
 	onSubmit,
 	onUpdated,
 	onOAuthConnected,
+	focusTransportField,
 }: ServerEditDrawerProps) {
 	const { t } = useTranslation("servers");
 	const formRef = useRef<ServerInstallManualFormHandle>(null);
 	const [isRefreshing, setIsRefreshing] = useState(false);
 	const [unifyEligible, setUnifyEligible] = useState(false);
+	const [selectedUnrecognizedTransport, setSelectedUnrecognizedTransport] =
+		useState<ServerInstallDraft["kind"]>();
 	const [namespaceRemediationFeedback, setNamespaceRemediationFeedback] =
 		useState<string | null>(null);
 	const namespaceRemediationAllowed =
 		server?.namespace_issue?.remediation_allowed === true;
-
+	const unrecognizedTransport =
+		server?.transport_validity?.draft?.kind === "unrecognized"
+			? server.transport_validity.draft
+			: null;
 	useEffect(() => {
 		if (isOpen && server) {
 			setUnifyEligible(server.unify_direct_exposure_eligible ?? false);
 			setNamespaceRemediationFeedback(null);
+			setSelectedUnrecognizedTransport(undefined);
 		}
 	}, [isOpen, server]);
 
@@ -318,6 +336,12 @@ export function ServerEditDrawer({
 	const handleSubmit = useCallback(
 		async (draft: ServerInstallDraft) => {
 			if (!server) return;
+			if (unrecognizedTransport) {
+				requireExplicitTransportSelection(
+					unrecognizedTransport,
+					selectedUnrecognizedTransport,
+				);
+			}
 			const namespace = draft.name.trim();
 			if (namespaceRemediationAllowed) {
 				if (namespace === server.name) {
@@ -344,7 +368,7 @@ export function ServerEditDrawer({
 					throw error;
 				}
 			}
-			const payload = draftToUpdateConfig(draft, initialDraft);
+			const payload = draftToUpdateConfig(draft);
 			await onSubmit({
 				...payload,
 				unify_direct_exposure_eligible: unifyEligible,
@@ -352,13 +376,14 @@ export function ServerEditDrawer({
 			onUpdated?.();
 		},
 		[
-			initialDraft,
 			namespaceRemediationAllowed,
 			onSubmit,
 			onUpdated,
 			server,
 			t,
+			unrecognizedTransport,
 			unifyEligible,
+			selectedUnrecognizedTransport,
 		],
 	);
 
@@ -494,6 +519,12 @@ export function ServerEditDrawer({
 			namespaceIssue={server?.namespace_issue}
 			namespaceIssueFeedback={namespaceRemediationFeedback}
 			initialDraft={initialDraft ?? undefined}
+			focusTransportField={focusTransportField}
+			onTransportTypeInteraction={
+				unrecognizedTransport
+					? setSelectedUnrecognizedTransport
+					: undefined
+			}
 			onRefreshFromRegistry={canRefreshFromRegistry ? handleRefreshFromRegistry : undefined}
 			isRefreshingRegistry={isRefreshing}
 			extraTab={{

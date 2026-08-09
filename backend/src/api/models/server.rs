@@ -2,6 +2,7 @@
 // Contains data models for MCP server endpoints
 
 use crate::common::{server::ServerType, types::ServerSource};
+use crate::config::models::{ConfigValue, HttpTransportKind, ServerTransportDraft};
 use crate::config::server::import::{SkipReason, SkippedServer};
 use crate::macros::resp::api_resp;
 use schemars::JsonSchema;
@@ -454,6 +455,149 @@ pub struct StandardServerInfo {
     pub version: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TransportValidityState {
+    Valid,
+    Invalid,
+    Missing,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TransportValidityDiagnostic {
+    pub code: String,
+    pub field: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ApiConfigValue {
+    Literal { value: String },
+    SecretRef { alias: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ApiServerTransportDraft {
+    Stdio {
+        command: Option<String>,
+        args: Vec<String>,
+        env: std::collections::BTreeMap<String, ApiConfigValue>,
+    },
+    Http {
+        protocol: HttpTransportKind,
+        endpoint: Option<String>,
+        headers: std::collections::BTreeMap<String, ApiConfigValue>,
+    },
+    Unrecognized {
+        declared_type: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ServerTransportValidity {
+    pub state: TransportValidityState,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diagnostics: Vec<TransportValidityDiagnostic>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub draft: Option<ApiServerTransportDraft>,
+}
+
+impl ServerTransportValidity {
+    pub fn from_draft(draft: ServerTransportDraft) -> Self {
+        let diagnostics = draft
+            .validate()
+            .err()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|diagnostic| TransportValidityDiagnostic {
+                code: diagnostic.code.to_string(),
+                field: diagnostic.field,
+            })
+            .collect::<Vec<_>>();
+        let state = if diagnostics.is_empty() {
+            TransportValidityState::Valid
+        } else {
+            TransportValidityState::Invalid
+        };
+
+        Self {
+            state,
+            diagnostics,
+            draft: Some(ApiServerTransportDraft::from(draft)),
+        }
+    }
+
+    pub fn missing() -> Self {
+        Self {
+            state: TransportValidityState::Missing,
+            diagnostics: Vec::new(),
+            draft: None,
+        }
+    }
+
+    pub fn draft_decode_failed() -> Self {
+        Self::invalid("transport_draft_decode_failed", "transport")
+    }
+
+    pub fn draft_load_failed() -> Self {
+        Self::invalid("transport_draft_load_failed", "transport")
+    }
+
+    fn invalid(
+        code: &str,
+        field: &str,
+    ) -> Self {
+        Self {
+            state: TransportValidityState::Invalid,
+            diagnostics: vec![TransportValidityDiagnostic {
+                code: code.to_string(),
+                field: field.to_string(),
+            }],
+            draft: None,
+        }
+    }
+}
+
+impl From<ServerTransportDraft> for ApiServerTransportDraft {
+    fn from(draft: ServerTransportDraft) -> Self {
+        match draft {
+            ServerTransportDraft::Stdio { command, args, env } => Self::Stdio {
+                command,
+                args,
+                env: redact_config_values(env),
+            },
+            ServerTransportDraft::Http {
+                protocol,
+                endpoint,
+                headers,
+            } => Self::Http {
+                protocol,
+                endpoint,
+                headers: redact_config_values(headers),
+            },
+            ServerTransportDraft::Unrecognized { declared_type } => Self::Unrecognized { declared_type },
+        }
+    }
+}
+
+fn redact_config_values(
+    values: std::collections::BTreeMap<String, ConfigValue>
+) -> std::collections::BTreeMap<String, ApiConfigValue> {
+    values
+        .into_iter()
+        .map(|(key, value)| {
+            let value = match value {
+                ConfigValue::Literal { .. } => ApiConfigValue::Literal {
+                    value: "***REDACTED***".to_string(),
+                },
+                ConfigValue::SecretRef { alias } => ApiConfigValue::SecretRef { alias },
+            };
+            (key, value)
+        })
+        .collect()
+}
+
 /// Server details response
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Server details response")]
@@ -475,6 +619,8 @@ pub struct ServerDetailsData {
     pub unify_direct_exposure_eligible: bool,
     /// Server type (stdio, streamable_http)
     pub server_type: ServerType,
+    /// Structured transport draft readiness and redacted editable values.
+    pub transport_validity: ServerTransportValidity,
     /// Command to execute (for stdio servers)
     pub command: Option<String>,
     /// URL (for streamable_http servers)
@@ -522,6 +668,49 @@ pub struct ServerDetailsData {
     pub namespace_issue: Option<ServerNamespaceIssue>,
     /// Exact capability catalog revision set represented by this response.
     pub source_revision_set: super::CatalogRevisionSet,
+    /// Discovery result from the create or update operation that produced this response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capability_discovery: Option<ServerCapabilityDiscoveryData>,
+}
+
+/// Outcome of a capability discovery attempt triggered by a server save.
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Clone, Copy, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ServerCapabilityDiscoveryStatus {
+    Succeeded,
+    Failed,
+}
+
+/// Safe, displayable result of a server-save capability discovery attempt.
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Clone, Eq, PartialEq)]
+pub struct ServerCapabilityDiscoveryData {
+    /// Whether capability discovery ran after the server was persisted.
+    pub attempted: bool,
+    /// Whether the attempted discovery completed successfully.
+    pub status: ServerCapabilityDiscoveryStatus,
+    /// Safe failure guidance, without upstream configuration or credentials.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl ServerCapabilityDiscoveryData {
+    pub fn succeeded() -> Self {
+        Self {
+            attempted: true,
+            status: ServerCapabilityDiscoveryStatus::Succeeded,
+            error: None,
+        }
+    }
+
+    pub fn failed() -> Self {
+        Self {
+            attempted: true,
+            status: ServerCapabilityDiscoveryStatus::Failed,
+            error: Some(
+                "Capability discovery failed. Check the server configuration and upstream availability.".to_string(),
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -946,39 +1135,8 @@ pub struct ServerCreateReq {
     #[schemars(description = "Immutable MCPMate server namespace")]
     pub name: String,
 
-    /// Server type
-    ///
-    /// **Strict format requirements**: Only accepts the following three standard formats
-    /// - `"stdio"`: Standard input/output server, started by command line
-    /// - `"streamable_http"`: Streamable HTTP server, connected by HTTP stream
-    ///
-    /// **Note**: The system will reject any variant formats, such as "http", "streamableHttp", etc.
-    #[schemars(description = "Server type, must be stdio or streamable_http")]
-    #[schemars(regex(pattern = r"^(stdio|streamable_http)$"))]
-    pub server_type: String,
-
-    /// Startup command (only used for stdio type)
-    ///
-    /// Required when the server type is "stdio", specify the command to start the server
-    #[schemars(description = "Server startup command (required for stdio type)")]
-    pub command: Option<String>,
-
-    /// Server URL (only used for streamable_http types)
-    ///
-    /// Required when the server type is "streamable_http"
-    #[schemars(description = "Server URL (required for streamable_http types)")]
-    pub url: Option<String>,
-
-    /// Command arguments (only used for stdio type)
-    #[schemars(description = "List of arguments passed to the command (optional for stdio type)")]
-    pub args: Option<Vec<String>>,
-
-    /// Environment variables (only used for stdio type)
-    #[schemars(description = "Environment variables to set (optional for stdio type)")]
-    pub env: Option<HashMap<String, String>>,
-    /// Default HTTP headers for HTTP
-    #[serde(default)]
-    pub headers: Option<HashMap<String, String>>,
+    #[schemars(description = "Tagged server transport definition")]
+    pub transport: ServerTransportDraft,
 
     #[serde(default)]
     #[schemars(description = "Whether this server is a hidden pre-import record")]
@@ -1001,7 +1159,7 @@ pub struct ServerCreateReq {
 
 /// MCP Server Update Request
 ///
-/// Request parameters for updating an existing MCP server configuration. If updating the server type, it must strictly use standard formats.
+/// Request parameters for updating an existing MCP server configuration with a complete tagged transport definition.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Request parameters for updating MCP server")]
 #[serde(deny_unknown_fields)]
@@ -1011,35 +1169,8 @@ pub struct ServerUpdateReq {
     #[schemars(description = "ID of the server to update")]
     pub id: String,
 
-    /// Server type (optional update)
-    ///
-    /// **Strict format requirements**: If provided, only accepts the following three standard formats
-    /// - `"stdio"`: Standard input/output server
-    /// - `"streamable_http"`: Streamable HTTP server
-    ///
-    /// **Important**: Any non-standard format will be rejected and return a 400 error
-    #[schemars(description = "Server type, if provided must be stdio or streamable_http")]
-    #[schemars(regex(pattern = r"^(stdio|streamable_http)$"))]
-    pub kind: Option<String>,
-
-    /// Launch command (optional update)
-    #[schemars(description = "Server launch command")]
-    pub command: Option<String>,
-
-    /// Server URL (optional update)
-    #[schemars(description = "Server URL")]
-    pub url: Option<String>,
-
-    /// Command arguments (optional update)
-    #[schemars(description = "List of arguments passed to the command")]
-    pub args: Option<Vec<String>>,
-
-    /// Environment variables (optional update)
-    #[schemars(description = "Environment variables to set")]
-    pub env: Option<HashMap<String, String>>,
-    /// Default HTTP headers for HTTP (replace semantics)
-    #[serde(default)]
-    pub headers: Option<HashMap<String, String>>,
+    #[schemars(description = "Tagged server transport definition")]
+    pub transport: ServerTransportDraft,
 
     /// Optional target profiles to associate or update
     #[serde(default)]
@@ -1071,12 +1202,116 @@ pub struct ServerUpdateReq {
 
 #[cfg(test)]
 mod server_update_request_tests {
-    use super::{ServerCreateReq, ServerUpdateReq, ServersImportReq};
+    use super::{ServerCreateReq, ServerPreviewReq, ServerUpdateReq, ServersImportReq};
+
+    #[test]
+    fn server_preview_requests_require_tagged_transport() {
+        let tagged = serde_json::json!({
+            "servers": [{
+                "name": "server_a",
+                "transport": {
+                    "kind": "http",
+                    "protocol": "streamable_http",
+                    "endpoint": "https://example.com/mcp",
+                    "headers": {}
+                }
+            }]
+        });
+
+        serde_json::from_value::<ServerPreviewReq>(tagged).expect("tagged preview transport must decode");
+
+        for field in ["kind", "command", "url", "args", "env", "headers"] {
+            let mut item = serde_json::json!({
+                "name": "server_a",
+                "transport": {
+                    "kind": "stdio",
+                    "command": "server-a",
+                    "args": [],
+                    "env": {}
+                }
+            });
+            item[field] = serde_json::json!("legacy");
+            let payload = serde_json::json!({ "servers": [item] });
+
+            let error = serde_json::from_value::<ServerPreviewReq>(payload)
+                .expect_err("flat preview transport fields must be rejected");
+            assert!(error.to_string().contains(&format!("unknown field `{field}`")));
+        }
+    }
+
+    #[test]
+    fn server_definition_requests_require_tagged_transport() {
+        let create = serde_json::json!({
+            "name": "server_a",
+            "transport": {
+                "kind": "stdio",
+                "command": "server-a",
+                "args": ["--serve"],
+                "env": {}
+            }
+        });
+        let update = serde_json::json!({
+            "id": "server-a",
+            "transport": {
+                "kind": "http",
+                "protocol": "streamable_http",
+                "endpoint": "https://example.com/mcp",
+                "headers": {}
+            }
+        });
+
+        serde_json::from_value::<ServerCreateReq>(create).expect("tagged create transport must decode");
+        serde_json::from_value::<ServerUpdateReq>(update).expect("tagged update transport must decode");
+
+        for payload in [
+            serde_json::json!({
+                "name": "server_a",
+                "server_type": "stdio",
+                "command": "server-a"
+            }),
+            serde_json::json!({
+                "name": "server_a",
+                "kind": "streamable_http",
+                "url": "https://example.com/mcp"
+            }),
+        ] {
+            assert!(
+                serde_json::from_value::<ServerCreateReq>(payload).is_err(),
+                "flat create transport payload must be rejected"
+            );
+        }
+
+        for payload in [
+            serde_json::json!({
+                "id": "server-a",
+                "server_type": "stdio",
+                "command": "server-a"
+            }),
+            serde_json::json!({
+                "id": "server-a",
+                "kind": "streamable_http",
+                "url": "https://example.com/mcp"
+            }),
+        ] {
+            assert!(
+                serde_json::from_value::<ServerUpdateReq>(payload).is_err(),
+                "flat update transport payload must be rejected"
+            );
+        }
+    }
 
     #[test]
     fn update_request_rejects_namespace_changes() {
         for field in ["name", "namespace"] {
-            let mut payload = serde_json::json!({ "id": "server-a" });
+            let mut payload = serde_json::json!({
+                "id": "server-a",
+                "transport": {
+                    "kind": "stdio",
+                    "command": "server-a",
+                    "args": [],
+                    "env": {}
+                }
+            });
             payload[field] = serde_json::json!("renamed_namespace");
             let error = serde_json::from_value::<ServerUpdateReq>(payload)
                 .expect_err("namespace is not part of the update contract");
@@ -1089,8 +1324,12 @@ mod server_update_request_tests {
     fn server_install_requests_reject_profile_association_fields() {
         let create_payload = serde_json::json!({
             "name": "server-a",
-            "server_type": "stdio",
-            "command": "server-a"
+            "transport": {
+                "kind": "stdio",
+                "command": "server-a",
+                "args": [],
+                "env": {}
+            }
         });
         for (field, value) in [
             ("profile_ids", serde_json::json!(["profile-a"])),
@@ -1309,23 +1548,15 @@ api_resp!(
 // ================= Preview Capabilities =================
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 #[schemars(description = "Single server preview item request")]
 pub struct ServerPreviewItemReq {
     pub name: String,
     #[serde(default)]
     pub server_id: Option<String>,
-    pub kind: String, // stdio|streamable_http
-    #[serde(default)]
-    pub command: Option<String>,
-    #[serde(default)]
-    pub url: Option<String>,
-    #[serde(default)]
-    pub args: Option<Vec<String>>,
-    #[serde(default)]
-    pub env: Option<std::collections::HashMap<String, String>>,
-    /// Optional HTTP headers for streamable_http preview
-    #[serde(default)]
-    pub headers: Option<std::collections::HashMap<String, String>>,
+
+    #[schemars(description = "Tagged candidate server transport definition")]
+    pub transport: ServerTransportDraft,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
