@@ -102,6 +102,14 @@ describe("release workflow contract", () => {
     );
   });
 
+  test("excludes Docker build records from release asset downloads", async () => {
+    const workflow = await Bun.file(releaseWorkflowUrl).text();
+    const releaseJob = workflow.slice(workflow.indexOf("  release:"));
+
+    expect(releaseJob).toContain("- name: Download all artifacts");
+    expect(releaseJob).toContain('pattern: "!*.dockerbuild"');
+  });
+
   test("pins Docker validation and publishing to immutable commits", async () => {
     const workflow = await Bun.file(dockerWorkflowUrl).text();
 
