@@ -1853,6 +1853,27 @@ mod tests {
 
     use super::*;
 
+    async fn insert_typed_stdio_server(
+        pool: &Pool<Sqlite>,
+        server_id: &str,
+        server_name: &str,
+        command: &str,
+    ) {
+        let mut server = crate::config::models::Server::new_stdio(server_name.to_string(), Some(command.to_string()));
+        server.id = Some(server_id.to_string());
+        crate::config::server::upsert_server_definition(
+            pool,
+            &server,
+            &crate::config::models::ServerTransportDraft::Stdio {
+                command: Some(command.to_string()),
+                args: Vec::new(),
+                env: BTreeMap::new(),
+            },
+        )
+        .await
+        .expect("insert typed server definition");
+    }
+
     async fn capability_store_pool() -> Pool<Sqlite> {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
@@ -1873,10 +1894,7 @@ mod tests {
             .ensure_schema()
             .await
             .expect("initialize capability catalog");
-        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'docs', 'stdio')")
-            .execute(&pool)
-            .await
-            .expect("insert server");
+        insert_typed_stdio_server(&pool, "server-a", "docs", "node").await;
         pool
     }
 
@@ -1967,6 +1985,11 @@ mod tests {
     async fn current_config_fingerprint_rejects_missing_typed_transport_draft() {
         let pool = capability_store_pool().await;
 
+        sqlx::query("DELETE FROM server_transport WHERE server_id = 'server-a'")
+            .execute(&pool)
+            .await
+            .expect("remove typed transport draft");
+
         let error = current_config_fingerprint(&pool, "server-a")
             .await
             .expect_err("missing typed transport draft must fail closed");
@@ -1977,9 +2000,9 @@ mod tests {
     #[tokio::test]
     async fn current_config_fingerprint_rejects_invalid_typed_transport_draft() {
         let pool = capability_store_pool().await;
-        sqlx::query("INSERT INTO server_transport (server_id, draft_json) VALUES (?, ?)")
-            .bind("server-a")
+        sqlx::query("UPDATE server_transport SET draft_json = ? WHERE server_id = ?")
             .bind(r#"{"kind":"stdio","command":null,"args":[],"env":{}}"#)
+            .bind("server-a")
             .execute(&pool)
             .await
             .expect("persist invalid typed transport draft");
@@ -2746,12 +2769,7 @@ mod tests {
         let pool = capability_store_pool().await;
         let server_id = "server-fresh-failure-event";
         let server_name = "fresh_failure_docs";
-        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES (?, ?, 'stdio')")
-            .bind(server_id)
-            .bind(server_name)
-            .execute(&pool)
-            .await
-            .expect("insert event-isolated server");
+        insert_typed_stdio_server(&pool, server_id, server_name, "node").await;
         let cache = DerivedCapabilityCache::default();
         let catalog = SqliteCapabilityCatalog::new(pool.clone());
         assert!(
@@ -3111,12 +3129,7 @@ mod tests {
         let pool = capability_store_pool().await;
         let server_id = "server-identical-noop";
         let server_name = "identical_noop_docs";
-        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES (?, ?, 'stdio')")
-            .bind(server_id)
-            .bind(server_name)
-            .execute(&pool)
-            .await
-            .expect("insert event-isolated server");
+        insert_typed_stdio_server(&pool, server_id, server_name, "node").await;
         let cache = DerivedCapabilityCache::default();
         let (initialize, tool, resource, prompt, template) = protocol_fixture();
         let observation = CapabilityProtocolObservation {
@@ -3219,20 +3232,11 @@ mod tests {
         let pool = capability_store_pool().await;
         let server_id = "server-config-race";
         let server_name = "config_race_docs";
-        sqlx::query("INSERT INTO server_config (id, name, server_type, command) VALUES (?, ?, 'stdio', 'old-command')")
-            .bind(server_id)
-            .bind(server_name)
-            .execute(&pool)
-            .await
-            .expect("insert server");
+        insert_typed_stdio_server(&pool, server_id, server_name, "old-command").await;
         let expected_fingerprint = current_config_fingerprint(&pool, server_id)
             .await
             .expect("capture owner fingerprint");
-        sqlx::query("UPDATE server_config SET command = 'new-command' WHERE id = ?")
-            .bind(server_id)
-            .execute(&pool)
-            .await
-            .expect("update server configuration");
+        insert_typed_stdio_server(&pool, server_id, server_name, "new-command").await;
 
         let cache = DerivedCapabilityCache::default();
         let (initialize, tool, resource, prompt, template) = protocol_fixture();
@@ -3313,10 +3317,7 @@ mod tests {
         crate::config::server::init::initialize_server_tables(&pool)
             .await
             .expect("initialize server tables");
-        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'everything', 'stdio')")
-            .execute(&pool)
-            .await
-            .expect("insert server");
+        insert_typed_stdio_server(&pool, "server-a", "everything", "node").await;
         let snapshot = CapabilitySnapshot {
             upstream_name: Some("io.modelcontextprotocol/everything".to_string()),
             upstream_title: Some("Everything Reference Server".to_string()),
@@ -3359,10 +3360,7 @@ mod tests {
         crate::config::client::init::initialize_client_table(&pool)
             .await
             .expect("initialize client table");
-        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'searxng', 'stdio')")
-            .execute(&pool)
-            .await
-            .expect("insert server");
+        insert_typed_stdio_server(&pool, "server-a", "searxng", "node").await;
 
         let now = Utc::now();
         store_dual_write(
@@ -3468,10 +3466,7 @@ mod tests {
         crate::config::client::init::initialize_client_table(&pool)
             .await
             .expect("initialize client table");
-        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'docs', 'stdio')")
-            .execute(&pool)
-            .await
-            .expect("insert server");
+        insert_typed_stdio_server(&pool, "server-a", "docs", "node").await;
         crate::config::server::tools::upsert_server_tool(&pool, "server-a", "docs", "read", None)
             .await
             .expect("insert tool");
@@ -3660,10 +3655,7 @@ mod tests {
         crate::config::client::init::initialize_client_table(&pool)
             .await
             .expect("initialize client table");
-        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'docs', 'stdio')")
-            .execute(&pool)
-            .await
-            .expect("insert server");
+        insert_typed_stdio_server(&pool, "server-a", "docs", "node").await;
         let now = Utc::now();
 
         store_dual_write(
@@ -3745,10 +3737,7 @@ mod tests {
         crate::config::client::init::initialize_client_table(&pool)
             .await
             .expect("initialize client table");
-        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'docs', 'stdio')")
-            .execute(&pool)
-            .await
-            .expect("insert server");
+        insert_typed_stdio_server(&pool, "server-a", "docs", "node").await;
         let now = Utc::now();
         store_dual_write(
             &pool,

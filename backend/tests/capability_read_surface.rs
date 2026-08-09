@@ -18,7 +18,7 @@ use mcpmate::{
     config::{
         database::Database,
         initialization::run_initialization,
-        models::{Profile, Server},
+        models::{Profile, Server, ServerTransportDraft},
         server as server_config,
     },
     core::{
@@ -344,23 +344,24 @@ async fn insert_stdio_server_with_mode(
     let python = which::which("python3").expect("python3 is required for the stdio fixture");
     let mut server = Server::new_stdio(server_name.to_string(), Some(python.to_string_lossy().into_owned()));
     server.id = Some(server_id.to_string());
-    let stored_id = server_config::upsert_server(&database.pool, &server)
-        .await
-        .expect("insert stdio server");
-    assert_eq!(stored_id, server_id);
-    server_config::upsert_server_args(
+    let stored_id = server_config::upsert_server_definition(
         &database.pool,
-        server_id,
-        &[
-            script.to_string_lossy().into_owned(),
-            counter.to_string_lossy().into_owned(),
-            server_name.to_string(),
-            protocol::CURRENT_VERSION.to_string(),
-            mode.to_string(),
-        ],
+        &server,
+        &ServerTransportDraft::Stdio {
+            command: Some(python.to_string_lossy().into_owned()),
+            args: vec![
+                script.to_string_lossy().into_owned(),
+                counter.to_string_lossy().into_owned(),
+                server_name.to_string(),
+                protocol::CURRENT_VERSION.to_string(),
+                mode.to_string(),
+            ],
+            env: Default::default(),
+        },
     )
     .await
-    .expect("insert stdio server arguments");
+    .expect("insert stdio server");
+    assert_eq!(stored_id, server_id);
 }
 
 #[derive(Debug, Default)]
@@ -492,9 +493,17 @@ async fn insert_inert_server(
 ) {
     let mut server = Server::new_stdio(server_name.to_string(), Some("must-not-start".to_string()));
     server.id = Some(server_id.to_string());
-    let stored_id = server_config::upsert_server(&database.pool, &server)
-        .await
-        .expect("insert inert server");
+    let stored_id = server_config::upsert_server_definition(
+        &database.pool,
+        &server,
+        &ServerTransportDraft::Stdio {
+            command: Some("must-not-start".to_string()),
+            args: Vec::new(),
+            env: Default::default(),
+        },
+    )
+    .await
+    .expect("insert inert server");
     assert_eq!(stored_id, server_id);
 }
 

@@ -275,8 +275,21 @@ mod tests {
             .await
             .expect("initialize database");
 
+        let mut server = crate::config::models::Server::new_stdio("docs".to_string(), Some("node".to_string()));
+        server.id = Some("server-a".to_string());
+        crate::config::server::upsert_server_definition(
+            &pool,
+            &server,
+            &crate::config::models::ServerTransportDraft::Stdio {
+                command: Some("node".to_string()),
+                args: Vec::new(),
+                env: Default::default(),
+            },
+        )
+        .await
+        .expect("insert typed server definition");
+
         for statement in [
-            "INSERT INTO server_config (id, name, server_type) VALUES ('server-a', 'docs', 'stdio')",
             "INSERT INTO profile (id, name, type) VALUES ('profile-a', 'Profile A', 'shared')",
             "INSERT INTO profile_server_relationships (profile_id, server_id, new_ref_policy) VALUES ('profile-a', 'server-a', 'follow')",
         ] {

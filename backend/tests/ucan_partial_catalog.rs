@@ -12,7 +12,7 @@ use mcpmate::{
     config::{
         database::Database,
         initialization::run_initialization,
-        models::{Profile, Server},
+        models::{Profile, Server, ServerTransportDraft},
         server,
     },
     core::{
@@ -150,21 +150,22 @@ async fn insert_stdio_server(
     let python = which::which("python3").expect("python3 is required for stdio fixture");
     let mut server_config = Server::new_stdio(server_name.to_string(), Some(python.to_string_lossy().into_owned()));
     server_config.id = Some(server_id.to_string());
-    server::upsert_server(&database.pool, &server_config)
-        .await
-        .expect("insert stdio server");
-    server::upsert_server_args(
+    server::upsert_server_definition(
         &database.pool,
-        server_id,
-        &[
-            script.to_string_lossy().into_owned(),
-            state_path.to_string_lossy().into_owned(),
-            server_name.to_string(),
-            protocol::CURRENT_VERSION.to_string(),
-        ],
+        &server_config,
+        &ServerTransportDraft::Stdio {
+            command: server_config.command.clone(),
+            args: vec![
+                script.to_string_lossy().into_owned(),
+                state_path.to_string_lossy().into_owned(),
+                server_name.to_string(),
+                protocol::CURRENT_VERSION.to_string(),
+            ],
+            env: Default::default(),
+        },
     )
     .await
-    .expect("insert stdio server arguments");
+    .expect("insert typed stdio server");
 }
 
 async fn insert_profiles_client(

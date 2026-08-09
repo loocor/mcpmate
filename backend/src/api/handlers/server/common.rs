@@ -860,12 +860,19 @@ mod tests {
         crate::config::server::init::initialize_server_tables(&pool)
             .await
             .expect("initialize server tables");
-        sqlx::query(
-            "INSERT INTO server_config (id, name, server_type, command) VALUES ('server-a', 'docs', 'stdio', 'node')",
+        let mut server = crate::config::models::Server::new_stdio("docs".to_string(), Some("node".to_string()));
+        server.id = Some("server-a".to_string());
+        crate::config::server::upsert_server_definition(
+            &pool,
+            &server,
+            &crate::config::models::ServerTransportDraft::Stdio {
+                command: Some("node".to_string()),
+                args: Vec::new(),
+                env: Default::default(),
+            },
         )
-        .execute(&pool)
         .await
-        .expect("insert server");
+        .expect("insert typed server definition");
         pool
     }
 
@@ -909,10 +916,19 @@ mod tests {
             .expect("compute fingerprint before the config change");
         let snapshot = snapshot_with_fingerprint(&stale_fingerprint);
 
-        sqlx::query("UPDATE server_config SET command = 'python' WHERE id = 'server-a'")
-            .execute(&pool)
-            .await
-            .expect("simulate a server configuration update");
+        let mut server = crate::config::models::Server::new_stdio("docs".to_string(), Some("python".to_string()));
+        server.id = Some("server-a".to_string());
+        crate::config::server::upsert_server_definition(
+            &pool,
+            &server,
+            &crate::config::models::ServerTransportDraft::Stdio {
+                command: Some("python".to_string()),
+                args: Vec::new(),
+                env: Default::default(),
+            },
+        )
+        .await
+        .expect("simulate a typed server configuration update");
 
         let projection = build_capability_management_projection_if_current(&pool, "server-a", &snapshot).await;
         assert!(

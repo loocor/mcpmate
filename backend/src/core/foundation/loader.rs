@@ -590,27 +590,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn startup_pool_base_config_omits_stdio_server_when_args_cannot_be_loaded() {
+    async fn typed_stdio_config_remains_available_when_legacy_args_projection_is_missing() {
         let (_temp_dir, db) = create_test_database().await;
-        insert_server(&db.pool, "server-stdio-args", "Stdio Args Server", true).await;
-        sqlx::query(
-            r#"
-            INSERT INTO server_args (id, server_id, server_name, arg_index, arg_value)
-            VALUES ('arg-1', 'server-stdio-args', 'Stdio Args Server', 0, 'server.js')
-            "#,
-        )
-        .execute(&db.pool)
-        .await
-        .expect("insert server args");
+        let server_id = "server-stdio-args";
+        let draft = ServerTransportDraft::Stdio {
+            command: Some("demo-command".to_string()),
+            args: vec!["server.js".to_string()],
+            env: Default::default(),
+        };
+        upsert_server_definition(&db.pool, &test_server(server_id, "Stdio Args Server", true), &draft)
+            .await
+            .expect("insert typed stdio server");
         sqlx::query("DROP TABLE server_args")
             .execute(&db.pool)
             .await
             .expect("drop server_args table");
 
-        let startup_config = load_pool_base_config_with_params(&db, &StartupMode::Default, None)
+        let config = load_pool_base_config(&db, None)
             .await
-            .expect("startup pool load should continue without the broken stdio server");
-        assert!(!startup_config.mcp_servers.contains_key("server-stdio-args"));
+            .expect("typed stdio config should not read the legacy args projection");
+        let server = config.mcp_servers.get(server_id).expect("typed stdio server");
+        assert_eq!(server.command.as_deref(), Some("demo-command"));
+        assert_eq!(server.args.as_deref(), Some(["server.js".to_string()].as_slice()));
     }
 
     #[tokio::test]
@@ -670,26 +671,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn manual_header_read_error_is_strict_outside_startup_and_omitted_at_startup() {
+    async fn typed_http_config_remains_available_when_legacy_headers_projection_is_missing() {
         let (_temp_dir, db) = create_test_database().await;
-        insert_server(&db.pool, "server-header-read", "Header Read Server", true).await;
+        let server_id = "server-header-read";
+        replace_http_server_headers(
+            &db.pool,
+            server_id,
+            "Header Read Server",
+            HashMap::from([("X-Test".to_string(), "typed-value".to_string())]),
+        )
+        .await;
         sqlx::query("DROP TABLE server_headers")
             .execute(&db.pool)
             .await
             .expect("drop server_headers table");
 
-        let strict_error = load_pool_base_config(&db, None)
+        let config = load_pool_base_config(&db, None)
             .await
-            .expect_err("strict pool load should fail when manual headers cannot be read");
+            .expect("typed HTTP config should not read the legacy headers projection");
+        let headers = config
+            .mcp_servers
+            .get(server_id)
+            .and_then(|server| server.headers.as_ref())
+            .expect("typed HTTP headers");
         assert!(
-            strict_error.to_string().contains("Failed to get server headers"),
-            "unexpected error: {strict_error}"
+            matches!(headers.get("X-Test"), Some(value) if value == "typed-value"),
+            "unexpected headers: {headers:?}"
         );
-
-        let startup_config = load_pool_base_config_with_params(&db, &StartupMode::Default, None)
-            .await
-            .expect("startup pool load should continue without the unsafe server");
-        assert!(!startup_config.mcp_servers.contains_key("server-header-read"));
     }
 
     #[tokio::test]

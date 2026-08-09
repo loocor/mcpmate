@@ -15,7 +15,12 @@ use tower::ServiceExt;
 use mcpmate::api::handlers::{inspector, server};
 use mcpmate::api::routes::AppState;
 use mcpmate::common::constants::protocol;
-use mcpmate::config::{database::Database, initialization::run_initialization};
+use mcpmate::config::{
+    database::Database,
+    initialization::run_initialization,
+    models::{Server, ServerTransportDraft},
+    server::upsert_server_definition,
+};
 use mcpmate::core::models::Config;
 use mcpmate::core::pool::UpstreamConnectionPool;
 use mcpmate::core::profile::ConfigApplicationStateManager;
@@ -427,16 +432,19 @@ async fn seed_enabled_tool_server(
         .execute(pool)
         .await
         .expect("insert active profile");
-    sqlx::query(
-        "INSERT INTO server_config (id, name, server_type, command, enabled) \
-         VALUES (?, ?, 'stdio', ?, 1)",
+    let mut server = Server::new_stdio(server_name.to_string(), Some(command.to_string()));
+    server.id = Some(server_id.to_string());
+    upsert_server_definition(
+        pool,
+        &server,
+        &ServerTransportDraft::Stdio {
+            command: Some(command.to_string()),
+            args: Vec::new(),
+            env: Default::default(),
+        },
     )
-    .bind(server_id)
-    .bind(server_name)
-    .bind(command)
-    .execute(pool)
     .await
-    .expect("insert enabled server");
+    .expect("insert typed enabled server");
     database_support::insert_profile_server_relationship(pool, &profile_id, server_id, true).await;
 }
 
@@ -534,15 +542,21 @@ async fn preview_timeout_is_applied_per_protocol_operation() {
                 "servers": [
                     {
                         "name": "per_operation_deadline",
-                        "kind": "stdio",
-                        "command": python.to_string_lossy(),
-                        "args": [fixture.to_string_lossy(), "0.10", "all"]
+                        "transport": {
+                            "kind": "stdio",
+                            "command": python.to_string_lossy(),
+                            "args": [fixture.to_string_lossy(), "0.10", "all"],
+                            "env": {}
+                        }
                     },
                     {
                         "name": "template_timeout",
-                        "kind": "stdio",
-                        "command": python.to_string_lossy(),
-                        "args": [fixture.to_string_lossy(), "0.60", "resources/templates/list"]
+                        "transport": {
+                            "kind": "stdio",
+                            "command": python.to_string_lossy(),
+                            "args": [fixture.to_string_lossy(), "0.60", "resources/templates/list"],
+                            "env": {}
+                        }
                     }
                 ]
             }),

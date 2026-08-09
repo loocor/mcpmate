@@ -773,12 +773,19 @@ mod tests {
             .await
             .expect("initialize capability catalog");
         for (server_id, namespace) in [("server-owner", "a"), ("server-challenger", "a_b")] {
-            sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES (?, ?, 'stdio')")
-                .bind(server_id)
-                .bind(namespace)
-                .execute(&pool)
-                .await
-                .expect("insert server");
+            let mut server = crate::config::models::Server::new_stdio(namespace.to_string(), Some("node".to_string()));
+            server.id = Some(server_id.to_string());
+            crate::config::server::upsert_server_definition(
+                &pool,
+                &server,
+                &crate::config::models::ServerTransportDraft::Stdio {
+                    command: Some("node".to_string()),
+                    args: Vec::new(),
+                    env: Default::default(),
+                },
+            )
+            .await
+            .expect("insert typed server definition");
         }
         crate::config::server::tools::upsert_server_tool(&pool, "server-owner", "a", "b_c", None)
             .await

@@ -848,7 +848,7 @@ mod tests {
         common::{profile::ProfileType, server::ServerType},
         config::{
             database::Database,
-            models::{Profile, Server, ServerOAuthConfig, ServerOAuthToken},
+            models::{HttpTransportKind, Profile, Server, ServerOAuthConfig, ServerOAuthToken, ServerTransportDraft},
             profile, server,
         },
         core::{
@@ -926,8 +926,7 @@ mod tests {
             .into_iter()
             .next()
             .expect("seed server");
-        sqlx::query("INSERT INTO server_transport (server_id, draft_json) VALUES (?, ?)")
-            .bind(&server_id)
+        sqlx::query("UPDATE server_transport SET draft_json = ? WHERE server_id = ?")
             .bind(
                 serde_json::json!({
                     "kind": "stdio",
@@ -940,9 +939,10 @@ mod tests {
                 })
                 .to_string(),
             )
+            .bind(&server_id)
             .execute(&context.db_pool)
             .await
-            .expect("store legacy invalid transport draft");
+            .expect("store invalid transport draft");
 
         let detail = server_details_core(
             &ServerDetailsReq { id: server_id.clone() },
@@ -997,9 +997,9 @@ mod tests {
             .into_iter()
             .next()
             .expect("seed server");
-        sqlx::query("INSERT INTO server_transport (server_id, draft_json) VALUES (?, ?)")
-            .bind(&server_id)
+        sqlx::query("UPDATE server_transport SET draft_json = ? WHERE server_id = ?")
             .bind(r#"{"kind":"stdio","command":42,"args":[],"env":{}}"#)
+            .bind(&server_id)
             .execute(&context.db_pool)
             .await
             .expect("store undecodable transport draft");
@@ -1589,7 +1589,17 @@ mod tests {
                 updated_at: None,
                 pending_import: false,
             };
-            let id = server::upsert_server(pool, &server).await.expect("insert server");
+            let id = server::upsert_server_definition(
+                pool,
+                &server,
+                &ServerTransportDraft::Stdio {
+                    command: Some("echo".to_string()),
+                    args: Vec::new(),
+                    env: Default::default(),
+                },
+            )
+            .await
+            .expect("insert typed server definition");
             ids.push(id);
         }
         ids
@@ -1613,9 +1623,17 @@ mod tests {
             pending_import: false,
         };
 
-        server::upsert_server(pool, &server)
-            .await
-            .expect("insert streamable http server")
+        server::upsert_server_definition(
+            pool,
+            &server,
+            &ServerTransportDraft::Http {
+                protocol: HttpTransportKind::StreamableHttp,
+                endpoint: server.url.clone(),
+                headers: Default::default(),
+            },
+        )
+        .await
+        .expect("insert typed streamable http server")
     }
 
     async fn seed_server_meta(

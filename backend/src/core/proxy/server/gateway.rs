@@ -2180,7 +2180,7 @@ mod tests {
         initialize_client_table, initialize_system_settings, set_default_client_config_mode,
     };
     use crate::config::database::Database;
-    use crate::config::models::{Profile, Server};
+    use crate::config::models::{Profile, Server, ServerTransportDraft};
     use crate::core::models::Config;
     use crate::core::proxy::server::common::{ClientIdentitySource, ClientTransport};
     use axum::http::Request;
@@ -2357,14 +2357,22 @@ mod tests {
             .expect("initialize database");
         crate::core::capability::naming::initialize(pool.clone());
 
-        let mut upstream = Server::new(
+        let mut upstream = Server::new_stdio(
             "subscription_docs".to_string(),
-            crate::common::server::ServerType::Stdio,
+            Some("subscription-resource".to_string()),
         );
         upstream.unify_direct_exposure_eligible = true;
-        let server_id = crate::config::server::upsert_server(&pool, &upstream)
-            .await
-            .expect("insert subscription server");
+        let server_id = crate::config::server::upsert_server_definition(
+            &pool,
+            &upstream,
+            &ServerTransportDraft::Stdio {
+                command: Some("subscription-resource".to_string()),
+                args: Vec::new(),
+                env: Default::default(),
+            },
+        )
+        .await
+        .expect("insert typed subscription server");
         crate::core::capability::resolver::upsert(&server_id, "subscription_docs").await;
 
         let mut profile = Profile::new(

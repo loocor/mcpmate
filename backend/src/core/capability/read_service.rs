@@ -2023,7 +2023,11 @@ mod tests {
         CapabilityReadError, CapabilityReadService, DiscoveryAttemptFailure, RuntimeCapabilityReadBackend,
         apply_owner_runtime_failure,
     };
-    use crate::config::database::Database;
+    use crate::config::{
+        database::Database,
+        models::{Server, ServerTransportDraft},
+        server::upsert_server_definition,
+    };
     use crate::core::capability::{
         CapabilityType,
         connection_provider::{
@@ -2663,10 +2667,19 @@ mod tests {
         crate::config::database::initialize_capability_catalog(&pool)
             .await
             .expect("initialize capability catalog");
-        sqlx::query("INSERT INTO server_config (id, name, server_type) VALUES ('server-1', 'docs', 'stdio')")
-            .execute(&pool)
-            .await
-            .expect("insert server fixture");
+        let mut server = Server::new_stdio("docs".to_string(), Some("fixture-command".to_string()));
+        server.id = Some("server-1".to_string());
+        upsert_server_definition(
+            &pool,
+            &server,
+            &ServerTransportDraft::Stdio {
+                command: Some("fixture-command".to_string()),
+                args: Vec::new(),
+                env: Default::default(),
+            },
+        )
+        .await
+        .expect("insert typed server fixture");
         Arc::new(Database {
             pool,
             path: PathBuf::new(),
