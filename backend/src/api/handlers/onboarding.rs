@@ -36,14 +36,7 @@ async fn set_onboarding_completed(
         .as_ref()
         .ok_or_else(|| ApiError::InternalError("Database not available".into()))?;
 
-    let mut settings = crate::system::settings::get_settings(&db.pool)
-        .await
-        .map_err(|err| ApiError::InternalError(err.to_string()))?;
-
-    let previous = settings.clone();
-    settings.onboarding_completed = completed;
-
-    crate::system::settings::apply_settings_with_effects(&db.pool, &previous, &settings, state.client_service.clone())
+    crate::system::settings::set_onboarding_completed(&db.pool, completed)
         .await
         .map_err(|err| ApiError::InternalError(err.to_string()))?;
 
