@@ -43,10 +43,17 @@ fn snapshot_clock_fields_are_backward_compatible_and_round_trip() {
         .expect("system settings serialize to an object");
     legacy_object.remove("client_discovery_snapshot_ttl_seconds");
     legacy_object.remove("client_discovery_snapshot_last_success_at");
+    legacy_object.remove("client_discovery_snapshot_failure_window_started_at");
+    legacy_object.remove("client_discovery_snapshot_consecutive_failures");
 
     let legacy_settings = serde_json::from_value::<SystemSettings>(legacy_settings).expect("parse legacy settings");
     assert_eq!(legacy_settings.client_discovery_snapshot_ttl_seconds, 21_600);
     assert_eq!(legacy_settings.client_discovery_snapshot_last_success_at, None);
+    assert_eq!(
+        legacy_settings.client_discovery_snapshot_failure_window_started_at,
+        None
+    );
+    assert_eq!(legacy_settings.client_discovery_snapshot_consecutive_failures, 0);
 
     let settings = SystemSettings {
         client_discovery_snapshot_ttl_seconds: 9_000,
@@ -93,6 +100,66 @@ async fn snapshot_success_update_preserves_other_system_settings() {
     assert_eq!(updated.first_contact_behavior, settings.first_contact_behavior);
     assert_eq!(updated.inspector_timeout_ms, settings.inspector_timeout_ms);
     assert_eq!(updated.onboarding_completed, settings.onboarding_completed);
+}
+
+#[tokio::test]
+async fn snapshot_metadata_update_preserves_settings_backups() {
+    let temp_dir = tempfile::tempdir().expect("create temporary settings directory");
+    let paths = MCPMatePaths::from_base_dir(temp_dir.path()).expect("create test paths");
+    set_settings_sync_for_paths(&paths, &SystemSettings::default()).expect("write initial settings");
+
+    let settings = SystemSettings {
+        inspector_timeout_ms: 9_500,
+        ..SystemSettings::default()
+    };
+    set_settings_sync_for_paths(&paths, &settings).expect("write settings backup");
+
+    let backup_dir = paths
+        .config_path()
+        .parent()
+        .expect("settings config parent")
+        .join("backups/client/system_settings_store");
+    let backups_before = std::fs::read_dir(&backup_dir)
+        .expect("read settings backups before metadata update")
+        .map(|entry| {
+            let entry = entry.expect("read backup entry");
+            (
+                entry.file_name(),
+                std::fs::read(entry.path()).expect("read settings backup content"),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        backups_before.len(),
+        1,
+        "test setup must create one user settings backup"
+    );
+
+    set_client_discovery_snapshot_last_success_at_for_paths(&paths, "2026-08-08T12:34:56Z".to_string())
+        .await
+        .expect("record snapshot success");
+
+    let backups_after = std::fs::read_dir(&backup_dir)
+        .expect("read settings backups after metadata update")
+        .map(|entry| {
+            let entry = entry.expect("read backup entry");
+            (
+                entry.file_name(),
+                std::fs::read(entry.path()).expect("read settings backup content"),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        backups_after, backups_before,
+        "snapshot metadata must not create or prune settings backups"
+    );
+    assert_eq!(
+        get_settings_sync_for_paths(&paths)
+            .expect("read updated settings")
+            .client_discovery_snapshot_last_success_at
+            .as_deref(),
+        Some("2026-08-08T12:34:56Z")
+    );
 }
 
 #[tokio::test]

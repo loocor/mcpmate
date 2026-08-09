@@ -40,6 +40,10 @@ pub struct SystemSettings {
     pub client_discovery_snapshot_ttl_seconds: i64,
     #[serde(default)]
     pub client_discovery_snapshot_last_success_at: Option<String>,
+    #[serde(default)]
+    pub client_discovery_snapshot_failure_window_started_at: Option<String>,
+    #[serde(default)]
+    pub client_discovery_snapshot_consecutive_failures: u8,
 }
 
 impl Default for SystemSettings {
@@ -53,6 +57,8 @@ impl Default for SystemSettings {
             onboarding_completed: false,
             client_discovery_snapshot_ttl_seconds: DEFAULT_CLIENT_DISCOVERY_SNAPSHOT_TTL_SECONDS,
             client_discovery_snapshot_last_success_at: None,
+            client_discovery_snapshot_failure_window_started_at: None,
+            client_discovery_snapshot_consecutive_failures: 0,
         }
     }
 }
@@ -637,8 +643,45 @@ async fn set_client_discovery_snapshot_last_success_at_at_path(
     path: &Path,
     last_success_at: String,
 ) -> ConfigResult<()> {
-    mutate_settings_at_path(path, move |settings| {
+    mutate_discovery_metadata_at_path(path, move |settings| {
         settings.client_discovery_snapshot_last_success_at = Some(last_success_at);
+        settings.client_discovery_snapshot_failure_window_started_at = None;
+        settings.client_discovery_snapshot_consecutive_failures = 0;
+        Ok(())
+    })
+    .await?;
+    Ok(())
+}
+
+pub async fn record_client_discovery_snapshot_failure(pool: &SqlitePool) -> ConfigResult<()> {
+    mutate_discovery_metadata_at_path(&settings_path(pool), |settings| {
+        let now = chrono::Utc::now();
+        let window_is_current = settings
+            .client_discovery_snapshot_failure_window_started_at
+            .as_deref()
+            .map(|started_at| {
+                chrono::DateTime::parse_from_rfc3339(started_at)
+                    .map(|started_at| {
+                        now.signed_duration_since(started_at.with_timezone(&chrono::Utc))
+                            < chrono::Duration::seconds(DEFAULT_CLIENT_DISCOVERY_SNAPSHOT_TTL_SECONDS)
+                    })
+                    .map_err(|err| {
+                        ConfigError::DataAccessError(format!(
+                            "Invalid client discovery snapshot failure window time: {err}"
+                        ))
+                    })
+            })
+            .transpose()?
+            .unwrap_or(false);
+
+        if window_is_current {
+            settings.client_discovery_snapshot_consecutive_failures = settings
+                .client_discovery_snapshot_consecutive_failures
+                .saturating_add(1);
+        } else {
+            settings.client_discovery_snapshot_failure_window_started_at = Some(now.to_rfc3339());
+            settings.client_discovery_snapshot_consecutive_failures = 1;
+        }
         Ok(())
     })
     .await?;
@@ -696,12 +739,17 @@ async fn write_settings(
     set_settings(pool, settings).await.map(|_| ())
 }
 
+fn serialize_settings(settings: &SystemSettings) -> ConfigResult<Vec<u8>> {
+    let mut content = serde_json::to_vec_pretty(settings)?;
+    content.push(b'\n');
+    Ok(content)
+}
+
 async fn write_settings_path_async(
     path: &Path,
     settings: &SystemSettings,
 ) -> ConfigResult<()> {
-    let mut content = serde_json::to_vec_pretty(settings)?;
-    content.push(b'\n');
+    let content = serialize_settings(settings)?;
 
     settings_path_service(path)?
         .atomic_write_with_backup(
@@ -714,6 +762,18 @@ async fn write_settings_path_async(
         .map_err(|err| ConfigError::FileOperationError(err.to_string()))?;
 
     Ok(())
+}
+
+async fn write_discovery_metadata_path_async(
+    path: &Path,
+    settings: &SystemSettings,
+) -> ConfigResult<()> {
+    let content = serialize_settings(settings)?;
+
+    settings_path_service(path)?
+        .atomic_write(path, &content)
+        .await
+        .map_err(|err| ConfigError::FileOperationError(err.to_string()))
 }
 
 fn settings_mutation_lock(path: &Path) -> Arc<tokio::sync::Mutex<()>> {
@@ -745,6 +805,22 @@ where
     let result = mutate(&mut settings)?;
     settings.validate()?;
     write_settings_path_async(path, &settings).await?;
+    Ok((settings, result))
+}
+
+async fn mutate_discovery_metadata_at_path<T, F>(
+    path: &Path,
+    mutate: F,
+) -> ConfigResult<(SystemSettings, T)>
+where
+    F: FnOnce(&mut SystemSettings) -> ConfigResult<T>,
+{
+    let lock = settings_mutation_lock(path);
+    let _guard = lock.lock().await;
+    let mut settings = read_settings_async(path).await?;
+    let result = mutate(&mut settings)?;
+    settings.validate()?;
+    write_discovery_metadata_path_async(path, &settings).await?;
     Ok((settings, result))
 }
 

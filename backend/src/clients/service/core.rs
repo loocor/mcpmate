@@ -15,7 +15,10 @@ use crate::clients::mutate::remove_managed_entries;
 use crate::clients::source::FileTemplateSource;
 use crate::clients::source::{ClientConfigSource, DbTemplateSource};
 use crate::system::paths::{PathService, get_path_service};
-use crate::system::settings::{get_settings, set_client_discovery_snapshot_last_success_at};
+use crate::system::settings::{
+    DEFAULT_CLIENT_DISCOVERY_SNAPSHOT_TTL_SECONDS, get_settings, record_client_discovery_snapshot_failure,
+    set_client_discovery_snapshot_last_success_at,
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
@@ -722,7 +725,18 @@ impl ClientConfigService {
         let _attempt = RuntimeTemplateSnapshotRefreshAttempt { completion };
 
         let base_url = admin_discovery_base_url();
-        Self::refresh_runtime_templates_from_admin_discovery(self.db_pool.as_ref(), &base_url).await
+        match Self::refresh_runtime_templates_from_admin_discovery(self.db_pool.as_ref(), &base_url).await {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                if let Err(record_err) = record_client_discovery_snapshot_failure(self.db_pool.as_ref()).await {
+                    tracing::warn!(
+                        error = %record_err,
+                        "Failed to persist Admin discovery refresh failure state"
+                    );
+                }
+                Err(err)
+            }
+        }
     }
 
     async fn runtime_template_snapshot_needs_refresh(
@@ -736,18 +750,30 @@ impl ClientConfigService {
         if runtime_template_count == 0 {
             return Ok(true);
         }
-        if settings.client_discovery_snapshot_ttl_seconds <= 0 {
-            return Ok(true);
+        let refresh_needed = match settings.client_discovery_snapshot_last_success_at.as_deref() {
+            Some(last_success_at) if settings.client_discovery_snapshot_ttl_seconds > 0 => {
+                let last_success_at = DateTime::parse_from_rfc3339(last_success_at).map_err(|err| {
+                    ConfigError::DataAccessError(format!("Invalid client discovery snapshot success time: {err}"))
+                })?;
+                Utc::now().signed_duration_since(last_success_at.with_timezone(&Utc))
+                    >= chrono::Duration::seconds(settings.client_discovery_snapshot_ttl_seconds)
+            }
+            _ => true,
+        };
+        if !refresh_needed || settings.client_discovery_snapshot_consecutive_failures < 3 {
+            return Ok(refresh_needed);
         }
 
-        let Some(last_success_at) = settings.client_discovery_snapshot_last_success_at else {
+        let Some(failure_window_started_at) = settings.client_discovery_snapshot_failure_window_started_at else {
             return Ok(true);
         };
-        let last_success_at = DateTime::parse_from_rfc3339(&last_success_at).map_err(|err| {
-            ConfigError::DataAccessError(format!("Invalid client discovery snapshot success time: {err}"))
+        let failure_window_started_at = DateTime::parse_from_rfc3339(&failure_window_started_at).map_err(|err| {
+            ConfigError::DataAccessError(format!("Invalid client discovery snapshot failure window time: {err}"))
         })?;
-        let elapsed = Utc::now().signed_duration_since(last_success_at.with_timezone(&Utc));
-        Ok(elapsed >= chrono::Duration::seconds(settings.client_discovery_snapshot_ttl_seconds))
+        Ok(
+            Utc::now().signed_duration_since(failure_window_started_at.with_timezone(&Utc))
+                >= chrono::Duration::seconds(DEFAULT_CLIENT_DISCOVERY_SNAPSHOT_TTL_SECONDS),
+        )
     }
 
     /// Get template for client identifier on current platform
@@ -2049,7 +2075,7 @@ mod runtime_template_snapshot_tests {
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn timestamp_write_failure_keeps_replaced_runtime_snapshot_and_retries_discovery() {
+    async fn snapshot_metadata_write_bypasses_settings_backup_directory() {
         let temp_dir = tempfile::TempDir::new().expect("create isolated temp root");
         let _tmpdir = TempDirOverride::set(temp_dir.path());
         let server = wiremock::MockServer::start().await;
@@ -2100,12 +2126,10 @@ mod runtime_template_snapshot_tests {
                 .await
                 .expect("create runtime service");
 
-        let first_refresh = service.ensure_runtime_template_snapshot().await;
-
-        assert!(
-            matches!(first_refresh, Err(ConfigError::FileOperationError(_))),
-            "timestamp write must surface its JSON error"
-        );
+        service
+            .ensure_runtime_template_snapshot()
+            .await
+            .expect("metadata update must not require the settings backup directory");
         let recovered: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM client_template_runtime WHERE identifier = 'recovered-client'")
                 .fetch_one(&pool)
@@ -2118,12 +2142,13 @@ mod runtime_template_snapshot_tests {
                 .expect("cached runtime template count");
         assert_eq!(recovered, 1, "successful discovery must replace the SQLite snapshot");
         assert_eq!(cached, 0, "previous SQLite snapshot entries must be replaced");
-        assert_eq!(
+        assert!(
             crate::system::settings::get_settings(&pool)
                 .await
-                .expect("read settings after timestamp write failure")
-                .client_discovery_snapshot_last_success_at,
-            Some(old_success_at.clone())
+                .expect("read settings after metadata write")
+                .client_discovery_snapshot_last_success_at
+                .is_some(),
+            "successful refresh must persist its timestamp without backups"
         );
 
         service
@@ -2133,8 +2158,8 @@ mod runtime_template_snapshot_tests {
 
         assert_eq!(
             server.received_requests().await.expect("read captured requests").len(),
-            2,
-            "stale timestamp must retry Admin discovery during the next list"
+            1,
+            "fresh timestamp must avoid another Admin discovery request during the next list"
         );
         assert_eq!(
             service
@@ -2144,12 +2169,13 @@ mod runtime_template_snapshot_tests {
                 .identifier,
             "recovered-client"
         );
-        assert_eq!(
+        assert!(
             crate::system::settings::get_settings(&pool)
                 .await
-                .expect("read settings after retry")
-                .client_discovery_snapshot_last_success_at,
-            Some(old_success_at)
+                .expect("read settings after metadata update")
+                .client_discovery_snapshot_last_success_at
+                .is_some(),
+            "the successful metadata update must remain readable"
         );
     }
 
@@ -2249,6 +2275,126 @@ mod runtime_template_snapshot_tests {
             server.received_requests().await.expect("read captured requests").len(),
             1,
             "concurrent lists must share the in-flight failed discovery attempt"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn stale_snapshot_stops_refreshing_after_three_failures() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/discovery/clients"))
+            .respond_with(wiremock::ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        crate::test_helpers::prepare_config_database(&pool).await;
+        crate::config::client::init::initialize_client_table(&pool)
+            .await
+            .expect("init client table");
+        ClientConfigService::seed_runtime_template_snapshots_from_templates(
+            &pool,
+            &[runtime_template("cached-client")],
+        )
+        .await
+        .expect("seed cached runtime template");
+        ClientConfigService::seed_client_runtime_rows_from_templates(&pool, &[runtime_template("cached-client")])
+            .await
+            .expect("seed cached client row");
+        configure_runtime_snapshot(&pool, 60, Some((Utc::now() - chrono::Duration::hours(2)).to_rfc3339())).await;
+        let _base_url = AdminDiscoveryBaseUrlOverride::set(server.uri());
+        let source: Arc<dyn ClientConfigSource> =
+            Arc::new(DbTemplateSource::new(Arc::new(pool.clone())).expect("create runtime source"));
+        let service = ClientConfigService::with_source_and_admin_discovery_refresh(Arc::new(pool), source, true)
+            .await
+            .expect("create runtime service");
+
+        for attempt in 1..=3 {
+            let descriptors = service
+                .list_clients(false, false)
+                .await
+                .expect("list must retain the local snapshot after discovery failure");
+            assert!(
+                descriptors
+                    .iter()
+                    .any(|descriptor| descriptor.state.identifier() == "cached-client"),
+                "attempt {attempt} must retain the cached template"
+            );
+        }
+        assert_eq!(
+            server.received_requests().await.expect("read captured requests").len(),
+            3,
+            "each of the first three stale refreshes must request Admin discovery"
+        );
+
+        let descriptors = service
+            .list_clients(false, false)
+            .await
+            .expect("list must retain the cached snapshot after the retry cap");
+        assert!(
+            descriptors
+                .iter()
+                .any(|descriptor| descriptor.state.identifier() == "cached-client")
+        );
+        assert_eq!(
+            server.received_requests().await.expect("read captured requests").len(),
+            3,
+            "the fourth stale refresh must wait for the next failure window"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn retry_cap_uses_a_fixed_six_hour_window_without_a_success_timestamp() {
+        let temp_dir = tempfile::tempdir().expect("create temporary settings directory");
+        let _temp_dir = TempDirOverride::set(temp_dir.path());
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("sqlite pool");
+        crate::test_helpers::prepare_config_database(&pool).await;
+        crate::config::client::init::initialize_client_table(&pool)
+            .await
+            .expect("init client table");
+        ClientConfigService::seed_runtime_template_snapshots_from_templates(
+            &pool,
+            &[runtime_template("cached-client")],
+        )
+        .await
+        .expect("seed cached runtime template");
+        configure_runtime_snapshot(&pool, 60, None).await;
+
+        let mut settings = get_settings(&pool).await.expect("read settings");
+        settings.client_discovery_snapshot_failure_window_started_at =
+            Some((Utc::now() - chrono::Duration::minutes(5)).to_rfc3339());
+        settings.client_discovery_snapshot_consecutive_failures = 3;
+        crate::system::settings::set_settings(&pool, &settings)
+            .await
+            .expect("write retry cap settings");
+
+        assert!(
+            !ClientConfigService::runtime_template_snapshot_needs_refresh(&pool)
+                .await
+                .expect("evaluate capped retry window"),
+            "a missing success timestamp must still honor the retry cap for the fixed six-hour window"
+        );
+
+        settings.client_discovery_snapshot_failure_window_started_at =
+            Some((Utc::now() - chrono::Duration::hours(7)).to_rfc3339());
+        crate::system::settings::set_settings(&pool, &settings)
+            .await
+            .expect("write expired retry window");
+
+        assert!(
+            ClientConfigService::runtime_template_snapshot_needs_refresh(&pool)
+                .await
+                .expect("evaluate expired retry window"),
+            "the retry cap must reset after the fixed six-hour window"
         );
     }
 
