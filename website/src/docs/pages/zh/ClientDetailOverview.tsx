@@ -22,6 +22,11 @@ export default function ClientDetailOverviewZH() {
 			</Ul>
 			<H3>高价值动作</H3>
 			<P>安装、移动或修复客户端后，先点刷新；准备把配置生命周期交给 MCPMate 时，再切换托管状态。</P>
+			<H2>选择配置写入方式</H2>
+			<P>
+				客户端配置写入方式默认使用<strong>“设置 → 客户端”</strong>中的<strong>“配置写入默认行为”</strong>，除非该客户端单独设置。<strong>自动</strong>会采用各客户端建议的写入行为，客户端单独设置优先。选择<strong>“合并”</strong>会保留客户端文件中无关的 MCP 条目；选择<strong>“替换”</strong>则让 MCPMate 托管的服务器列表成为权威。
+			</P>
+			<P>当已批准的客户端具有经过验证的可写配置目标时，保存该客户端的单独设置会立即重新应用其有效配置。修改设置中的默认值则会在后续应用或重新应用客户端配置时生效，不会立即重写已有客户端文件。</P>
 			<Callout type="info" title="这里的 Docs / Homepage 链接来自客户端元数据">
 				它们补充的是客户端产品自身的资料，适合和 MCPMate 文档搭配阅读，尤其在做兼容性排查时很有价值。
 			</Callout>
