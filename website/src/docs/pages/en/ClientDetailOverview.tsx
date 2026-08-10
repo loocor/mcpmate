@@ -38,6 +38,20 @@ export default function ClientDetailOverview() {
 				to own the client configuration lifecycle.
 			</P>
 
+			<H2>Choose how configuration is written</H2>
+			<P>
+				Client writeback uses the default set in <strong>Settings → Client Defaults</strong>,
+				unless this client has its own override. Choose <strong>Merge</strong> to preserve
+				unrelated MCP entries in the client file, or <strong>Replace</strong> when the
+				MCPMate-managed server list should be authoritative.
+			</P>
+			<P>
+				When a client has a verified writable configuration target, saving a client-specific
+				override immediately re-applies its effective configuration. Changes to the default
+				in Settings apply on a later client configuration apply, re-apply, or detach instead
+				and do not immediately rewrite existing client files.
+			</P>
+
 			<Callout type="info" title="Docs links on the overview are product specific">
 				The Docs and Homepage links shown here come from the client metadata itself.
 				They are useful when you need vendor-specific setup notes alongside MCPMate&apos;s

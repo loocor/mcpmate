@@ -33,7 +33,7 @@ export default function Settings() {
 					<strong>サーバー コントロール</strong> &mdash; 有効/無効のアクションを管理対象のクライアントに伝播するかどうか、および新しいインストールがデフォルトのプロファイルに自動参加するかどうかを決定します。
 				</Li>
 				<Li>
-					<strong>クライアント のデフォルト</strong> &mdash; Unify、Hosted、トランスペアレントモード、デフォルトの表示フィルター、バックアップ戦略、およびエディタ構成のバックアップ制限を構成します。
+					<strong>クライアント のデフォルト</strong> &mdash; Unify、Hosted、トランスペアレントモード、writeback policy、デフォルトの表示フィルター、バックアップ戦略、およびエディタ構成のバックアップ制限を構成します。
 				</Li>
 				<Li>
 					<strong>MCP マーケット</strong> &mdash; デフォルトのポータルを選択し、ブラックリストを切り替え、非表示のサーバーを検索し、アイテムをマーケットに復元します。
@@ -57,7 +57,7 @@ export default function Settings() {
 
 			<H3>クライアントのロールアウトの調整</H3>
 			<P>
-				「クライアント のデフォルト」で、新しいエディタの動作（Unify / Hosted / トランスペアレントモード）、読み込み時にクライアントページが使用するフィルター、保持する構成バックアップの数を設定します。これらの値は、クライアントページのツールバーが利用するストアに反映されます。
+				「クライアント のデフォルト」で、新しいエディタの動作（Unify / Hosted / トランスペアレントモード）、default writeback policy、読み込み時にクライアントページが使用するフィルター、保持する構成バックアップの数を設定します。<strong>Merge</strong> は関連しない MCP entry を保持し、<strong>Replace</strong> は MCPMate-managed list を authoritative にします。個々の Client は default を override できます。これらの値は後の apply または re-apply で使われ、既存の client file を直ちに書き換えることはありません。
 			</P>
 
 			<H3>マーケットプレイスのキュレーションの管理</H3>

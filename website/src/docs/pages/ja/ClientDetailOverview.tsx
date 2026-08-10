@@ -33,6 +33,14 @@ export default function ClientDetailOverview() {
 				クライアントをインストールまたは移動した後は、<strong>更新</strong>を使用して、MCPMateが検出状態を再スキャンできるようにします。MCPMateがクライアント設定のライフサイクルを所有する準備ができたら、管理トグルを使用します。
 			</P>
 
+			<H2>設定の書き込み方法を選ぶ</H2>
+			<P>
+				Client writeback は、このクライアントに override がない限り <strong>Settings → Client Defaults</strong> の default を使います。<strong>Merge</strong> は client file の関連しない MCP entry を保持し、<strong>Replace</strong> は MCPMate-managed server list を authoritative にします。
+			</P>
+			<P>
+				Client に検証済みの書き込み可能な configuration target がある場合、個別 override を保存すると effective configuration が直ちに re-apply されます。Settings の default を変更した場合は、その後の client configuration apply、re-apply、または detach で使われ、既存の client file を直ちに書き換えることはありません。
+			</P>
+
 			<Callout type="info" title="概要のドキュメントリンクは製品固有です">
 				ここに表示されるドキュメントおよびホームページのリンクは、クライアントのメタデータ自体から取得されます。これらは、MCPMate独自のガイダンスに加えて、ベンダー固有のセットアップの注意事項が必要な場合に役立ちます。
 			</Callout>

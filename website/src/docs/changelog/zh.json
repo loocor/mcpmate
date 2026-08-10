@@ -3,32 +3,32 @@
 		"version": "0.3.6",
 		"date": "2026-08-09",
 		"highlights": [
-			"MCPMate v0.3.6-beta 让托管 Server 的配置与恢复更可靠。Server 定义现在保留结构化的传输数据，Discovery 可以从不完整的本地元数据恢复，Profile、Capability 与客户端配置流程也继续保持清晰的运行时边界。"
+			"MCPMate v0.3.6-beta 是一次面向长期演进的基础版本：它以 rmcp 3.0.1 与 MCP 2025-11-25 为运行时基线，把配置、Capability 归属、生命周期处理、持久化与客户端写入策略收束为明确契约，让托管 MCP 运行更系统、可靠，并为后续协议和产品能力演进做好准备。"
 		],
 		"changes": [
 			{
-				"type": "feat",
-				"text": "托管 Server 定义现在会持久化结构化的 transport 详情，让受支持的 stdio 与 HTTP 配置保持明确、可编辑，并在进入运行时连接前安全校验。"
-			},
-			{
-				"type": "fix",
-				"text": "本地客户端 Discovery 可以从不完整的缓存元数据恢复：它会刷新已验证的客户端信息，而不会让 onboarding 与 writeback 流程停留在无可用检测数据的状态。"
-			},
-			{
-				"type": "fix",
-				"text": "Capability 重构后，Profile 的 capability 状态会继续与 catalog 对齐，让 Profile 管理准确反映操作者实际配置的 Server 与能力。"
-			},
-			{
-				"type": "fix",
-				"text": "上游 UCAN 的部分失败会被保留用于诊断；Authoring 流程会呈现更清晰的修复信息，而不会掩盖原始连接错误。"
+				"type": "chore",
+				"text": "运行时兼容性升级至 rmcp 3.0.1 和 MCP 2025-11-25 基线；较新的 MCP 2026-07-28 生命周期、Discovery、Task 与 subscription 语义仍有意保持在 MCPMate 的公开兼容边界之外。"
 			},
 			{
 				"type": "ref",
-				"text": "Capability catalog、identity 与 runtime pool 现在采用更清晰的 SQLite 托管边界，提升 API、Profile、客户端与管理界面之间的一致性。"
+				"text": "Capability 与 identity 状态现在使用 SQLite-backed catalog；embedded migration 为 config、secret 与 catalog 的 schema 演进提供单一、可审计且版本化的管理权威。"
 			},
 			{
-				"type": "chore",
-				"text": "桌面端交付现在发布完整的 macOS、Windows 与 Linux 资产集，包含 updater metadata、可追踪的下载重定向，以及对应的 Homebrew 更新交接。"
+				"type": "feat",
+				"text": "托管 Server 定义现在持久化结构化的 stdio 或 HTTP transport，并且必须在进入 connection、OAuth、Capability、client export 或 Inspector 路径前通过校验；无效的历史记录仍可见且可修复。"
+			},
+			{
+				"type": "ref",
+				"text": "Capability catalog、Profile authoring 与 runtime startup 现在采用明确的生命周期归属。一个依赖无法完成 Discovery 时，健康上游结果仍可用，而不确定性会以结构化、可诊断的方式保留。"
+			},
+			{
+				"type": "feat",
+				"text": "Client writeback policy 现在可由操作者编辑：Merge 保留无关 MCP 条目，Replace 让 MCPMate 托管列表成为权威，并且新建且符合条件的 writable client 会自动 attach。"
+			},
+			{
+				"type": "fix",
+				"text": "Discovery 会在临时故障期间保留最后一次可用的本地 metadata；OAuth、catalog 刷新、分页与 authoring 交互也让配置状态、冲突和修复操作更清晰易用。"
 			}
 		]
 	},

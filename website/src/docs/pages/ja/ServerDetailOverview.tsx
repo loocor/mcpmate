@@ -33,6 +33,14 @@ export default function ServerDetailOverview() {
 				サーバー自体が健全でない場合、能力のリストは二次的な症状です。最初にライフサイクルを安定させ、その後能力のレビューやデバッグモードに移行します。
 			</P>
 
+			<H3>runtime 使用前に transport を検証する</H3>
+			<P>
+				Server definition は明示的な <strong>stdio</strong> または <strong>HTTP</strong> transport として永続化されます。MCPMate は connection、OAuth、Capability、client export、Inspector path に到達する前にこの definition を検証します。
+			</P>
+			<P>
+				無効または認識できない legacy transport も修復できるようここに表示されますが、definition が有効になるまで runtime では使用できません。<strong>Edit</strong> を開き、有効な stdio または HTTP definition を保存してから、connection または Capability Discovery を再試行してください。
+			</P>
+
 			<Callout type="warning" title="更新は有効化と同じではありません">
 				能力を更新するとメタデータが再取得されます。サーバーを有効または無効にすると、ランタイムの可用性が変わります。実際に解決しようとしている問題に対して適切なアクションを使用してください。
 			</Callout>

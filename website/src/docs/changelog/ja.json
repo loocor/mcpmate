@@ -3,32 +3,32 @@
 		"version": "0.3.6",
 		"date": "2026-08-09",
 		"highlights": [
-			"MCPMate v0.3.6-beta は、管理対象 Server の設定と復旧をより信頼できるものにします。Server definition は構造化された transport data を保持し、Discovery は不完全なローカル metadata から復旧でき、Profile、Capability、client configuration の runtime boundary も明確に保たれます。"
+			"MCPMate v0.3.6-beta は、管理対象 MCP 運用をより体系的かつ信頼できるものにする基盤リリースです。rmcp 3.0.1 と MCP 2025-11-25 を runtime baseline とし、configuration、Capability ownership、lifecycle handling、persistence、client writeback を明示的な contract にまとめ、今後の protocol と product surface の進化に備えます。"
 		],
 		"changes": [
 			{
-				"type": "feat",
-				"text": "管理対象 Server definition は構造化された transport detail を永続化し、対応する stdio と HTTP configuration を明示的かつ編集可能に保ち、runtime connection に渡す前に安全に検証できます。"
-			},
-			{
-				"type": "fix",
-				"text": "ローカル client Discovery は不完全な cached metadata から復旧し、検証済みの client information を更新することで onboarding と writeback flow が検出データ不足のまま止まることを防ぎます。"
-			},
-			{
-				"type": "fix",
-				"text": "Capability refactor 後も Profile の capability state が catalog と同期され、Profile management は実際に設定された Server と capability を正確に表示します。"
-			},
-			{
-				"type": "fix",
-				"text": "upstream UCAN の部分的な failure は診断のため保持され、Authoring flow は元の connection error を隠さず、より明確な repair information を表示します。"
+				"type": "chore",
+				"text": "runtime compatibility は rmcp 3.0.1 と MCP 2025-11-25 baseline に移行しました。より新しい MCP 2026-07-28 の lifecycle、Discovery、Task、subscription semantics は、MCPMate の public compatibility boundary の外に意図的に維持されます。"
 			},
 			{
 				"type": "ref",
-				"text": "Capability catalog、identity、runtime pool はより明確な SQLite-backed ownership boundary を使うようになり、API、Profile、client、management surface の一貫性を高めます。"
+				"text": "Capability と identity state は SQLite-backed catalog を使用するようになり、embedded migration は config、secret、catalog schema の進化に対する単一で監査可能な versioned authority を提供します。"
 			},
 			{
-				"type": "chore",
-				"text": "Desktop delivery は macOS、Windows、Linux の完全な asset set を updater metadata、tracked download redirect、対応する Homebrew update handoff とともに公開します。"
+				"type": "feat",
+				"text": "管理対象 Server definition は構造化された stdio または HTTP transport を永続化し、connection、OAuth、Capability、client export、Inspector path に到達する前に検証されます。無効な legacy record も可視かつ修復可能なままです。"
+			},
+			{
+				"type": "ref",
+				"text": "Capability catalog、Profile authoring、runtime startup は明示的な lifecycle ownership を使うようになりました。ある dependency が Discovery を完了できなくても healthy upstream result は利用でき、不確実性は structured かつ diagnosable な形で保持されます。"
+			},
+			{
+				"type": "feat",
+				"text": "Client writeback policy は operator が編集できる選択肢になりました。Merge は関連しない MCP entry を保持し、Replace は MCPMate-managed list を authoritative にし、新しく作成された eligible writable client は自動で attach されます。"
+			},
+			{
+				"type": "fix",
+				"text": "Discovery は一時的な outage 中も last-known-good local metadata を保持します。OAuth、catalog refresh、pagination、authoring interaction も、configuration state、conflict、repair action をより明確に操作できるようにしました。"
 			}
 		]
 	},

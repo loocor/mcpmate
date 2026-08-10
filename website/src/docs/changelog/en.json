@@ -3,32 +3,32 @@
 		"version": "0.3.6",
 		"date": "2026-08-09",
 		"highlights": [
-			"MCPMate v0.3.6-beta makes managed server setup and recovery more dependable. Server definitions now retain structured transport data, discovery can recover from incomplete local metadata, and profile, capability, and client configuration flows keep their runtime boundaries explicit."
+			"MCPMate v0.3.6-beta is a foundation release for more systematic, reliable managed MCP operations. It aligns the runtime with rmcp 3.0.1 and MCP 2025-11-25 while consolidating configuration, capability ownership, lifecycle handling, persistence, and client writeback into explicit contracts for future protocol and product evolution."
 		],
 		"changes": [
 			{
-				"type": "feat",
-				"text": "Managed server definitions now persist structured transport details, so supported stdio and HTTP configurations remain explicit, editable, and safe to validate before they reach runtime connections."
-			},
-			{
-				"type": "fix",
-				"text": "Local client discovery can recover from incomplete cached metadata by refreshing verified client information instead of leaving onboarding and writeback flows without usable detection data."
-			},
-			{
-				"type": "fix",
-				"text": "Profile capability state now stays aligned with the catalog after capability refactors, so profile management reflects the servers and capabilities operators actually configured."
-			},
-			{
-				"type": "fix",
-				"text": "Partial upstream UCAN failures are preserved for diagnosis, while the authoring flow presents clearer repair information instead of hiding the original connection error."
+				"type": "chore",
+				"text": "Runtime compatibility now moves to rmcp 3.0.1 and the MCP 2025-11-25 baseline, while newer MCP 2026-07-28 lifecycle, discovery, task, and subscription semantics remain intentionally outside MCPMate's public boundary."
 			},
 			{
 				"type": "ref",
-				"text": "Capability catalog, identity, and runtime-pool work now use clearer SQLite-backed ownership boundaries, improving consistency across APIs, profiles, clients, and the management surface."
+				"text": "Capability and identity state now use an SQLite-backed catalog, and embedded migrations provide one auditable, versioned authority for config, secrets, and catalog schema evolution."
 			},
 			{
-				"type": "chore",
-				"text": "Desktop delivery publishes the complete macOS, Windows, and Linux asset set with updater metadata, tracked download redirects, and a matching Homebrew update handoff."
+				"type": "feat",
+				"text": "Managed server definitions now persist structured stdio or HTTP transports and must validate before reaching connection, OAuth, capability, client-export, or Inspector paths; invalid legacy records remain visible and repairable."
+			},
+			{
+				"type": "ref",
+				"text": "Capability catalog, Profile authoring, and runtime startup now use explicit lifecycle ownership. Healthy upstream results remain usable when another dependency cannot complete discovery, while uncertainty stays structured and diagnosable."
+			},
+			{
+				"type": "feat",
+				"text": "Client writeback policy is now an editable operator choice: Merge preserves unrelated MCP entries, Replace makes MCPMate's managed list authoritative, and newly created eligible writable clients are attached automatically."
+			},
+			{
+				"type": "fix",
+				"text": "Discovery retains last-known-good local metadata during temporary outages, while OAuth, catalog refresh, pagination, and authoring interactions make configuration state, conflicts, and repair actions clearer to operate."
 			}
 		]
 	},

@@ -43,8 +43,8 @@ export default function Settings() {
 				</Li>
 				<Li>
 					<strong>Client Defaults</strong> &mdash; configure Unify, Hosted, and
-					Transparent modes, default visibility filters, backup strategies, and
-					backup limits for editor configs.
+					Transparent modes, writeback policy, default visibility filters, backup
+					strategies, and backup limits for editor configs.
 				</Li>
 				<Li>
 					<strong>MCP Market</strong> &mdash; choose the default portal, toggle
@@ -76,9 +76,12 @@ export default function Settings() {
 			<H3>Coordinate client rollouts</H3>
 			<P>
 				Under Client Defaults, set how new editors should behave (Unify, Hosted,
-				or Transparent), what filter the Clients page should use on load, and how
-				many configuration backups to keep. These values feed the store consumed
-				by the Clients page toolbar.
+				or Transparent), the default writeback policy, what filter the Clients page
+				should use on load, and how many configuration backups to keep. Choose
+				<strong>Merge</strong> to preserve unrelated MCP entries or <strong>Replace</strong>
+				to make MCPMate&apos;s managed list authoritative; an individual client can override
+				the default. These values apply on a later apply or re-apply and do not
+				immediately rewrite existing client files.
 			</P>
 
 			<H3>Manage marketplace curation</H3>

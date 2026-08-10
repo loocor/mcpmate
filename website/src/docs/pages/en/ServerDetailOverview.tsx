@@ -37,6 +37,19 @@ export default function ServerDetailOverview() {
 				Stabilize the lifecycle first, then move into capability review or debug mode.
 			</P>
 
+			<H3>Validate transport before runtime use</H3>
+			<P>
+				Server definitions persist an explicit <strong>stdio</strong> or <strong>HTTP</strong>
+				transport. MCPMate validates that definition before it reaches connection,
+				OAuth, capability, client-export, or Inspector paths.
+			</P>
+			<P>
+				An invalid or unrecognized legacy transport remains visible here so you can
+				repair it, but it cannot be used by the runtime until the definition is valid.
+				Open <strong>Edit</strong> and save a valid stdio or HTTP definition before
+				retrying connection or capability discovery.
+			</P>
+
 			<Callout type="warning" title="Refresh is not the same as enable">
 				Refreshing capabilities re-pulls metadata. Enabling or disabling the server
 				changes runtime availability. Use the right action for the problem you are
