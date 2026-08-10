@@ -7,20 +7,8 @@
 		],
 		"changes": [
 			{
-				"type": "chore",
-				"text": "运行时兼容性升级至 rmcp 3.0.1 和 MCP 2025-11-25 基线；较新的 MCP 2026-07-28 生命周期、Discovery、Task 与 subscription 语义仍有意保持在 MCPMate 的公开兼容边界之外。"
-			},
-			{
-				"type": "ref",
-				"text": "Capability 与 identity 状态现在使用 SQLite-backed catalog；embedded migration 为 config、secret 与 catalog 的 schema 演进提供单一、可审计且版本化的管理权威。"
-			},
-			{
 				"type": "feat",
 				"text": "托管 Server 定义现在持久化结构化的 stdio 或 HTTP transport，并且必须在进入 connection、OAuth、Capability、client export 或 Inspector 路径前通过校验；无效的历史记录仍可见且可修复。"
-			},
-			{
-				"type": "ref",
-				"text": "Capability catalog、Profile authoring 与 runtime startup 现在采用明确的生命周期归属。一个依赖无法完成 Discovery 时，健康上游结果仍可用，而不确定性会以结构化、可诊断的方式保留。"
 			},
 			{
 				"type": "feat",
@@ -29,6 +17,18 @@
 			{
 				"type": "fix",
 				"text": "Discovery 会在临时故障期间保留最后一次可用的本地 metadata；OAuth、catalog 刷新、分页与 authoring 交互也让配置状态、冲突和修复操作更清晰易用。"
+			},
+			{
+				"type": "ref",
+				"text": "Capability 与 identity 状态现在使用 SQLite-backed catalog；embedded migration 为 config、secret 与 catalog 的 schema 演进提供单一、可审计且版本化的管理权威。"
+			},
+			{
+				"type": "ref",
+				"text": "Capability catalog、Profile authoring 与 runtime startup 现在采用明确的生命周期归属。一个依赖无法完成 Discovery 时，健康上游结果仍可用，而不确定性会以结构化、可诊断的方式保留。"
+			},
+			{
+				"type": "chore",
+				"text": "运行时兼容性升级至 rmcp 3.0.1 和 MCP 2025-11-25 基线；较新的 MCP 2026-07-28 生命周期、Discovery、Task 与 subscription 语义仍有意保持在 MCPMate 的公开兼容边界之外。"
 			}
 		]
 	},

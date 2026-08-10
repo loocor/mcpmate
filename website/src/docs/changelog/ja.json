@@ -7,20 +7,8 @@
 		],
 		"changes": [
 			{
-				"type": "chore",
-				"text": "runtime compatibility は rmcp 3.0.1 と MCP 2025-11-25 baseline に移行しました。より新しい MCP 2026-07-28 の lifecycle、Discovery、Task、subscription semantics は、MCPMate の public compatibility boundary の外に意図的に維持されます。"
-			},
-			{
-				"type": "ref",
-				"text": "Capability と identity state は SQLite-backed catalog を使用するようになり、embedded migration は config、secret、catalog schema の進化に対する単一で監査可能な versioned authority を提供します。"
-			},
-			{
 				"type": "feat",
 				"text": "管理対象 Server definition は構造化された stdio または HTTP transport を永続化し、connection、OAuth、Capability、client export、Inspector path に到達する前に検証されます。無効な legacy record も可視かつ修復可能なままです。"
-			},
-			{
-				"type": "ref",
-				"text": "Capability catalog、Profile authoring、runtime startup は明示的な lifecycle ownership を使うようになりました。ある dependency が Discovery を完了できなくても healthy upstream result は利用でき、不確実性は structured かつ diagnosable な形で保持されます。"
 			},
 			{
 				"type": "feat",
@@ -29,6 +17,18 @@
 			{
 				"type": "fix",
 				"text": "Discovery は一時的な outage 中も last-known-good local metadata を保持します。OAuth、catalog refresh、pagination、authoring interaction も、configuration state、conflict、repair action をより明確に操作できるようにしました。"
+			},
+			{
+				"type": "ref",
+				"text": "Capability と identity state は SQLite-backed catalog を使用するようになり、embedded migration は config、secret、catalog schema の進化に対する単一で監査可能な versioned authority を提供します。"
+			},
+			{
+				"type": "ref",
+				"text": "Capability catalog、Profile authoring、runtime startup は明示的な lifecycle ownership を使うようになりました。ある dependency が Discovery を完了できなくても healthy upstream result は利用でき、不確実性は structured かつ diagnosable な形で保持されます。"
+			},
+			{
+				"type": "chore",
+				"text": "runtime compatibility は rmcp 3.0.1 と MCP 2025-11-25 baseline に移行しました。より新しい MCP 2026-07-28 の lifecycle、Discovery、Task、subscription semantics は、MCPMate の public compatibility boundary の外に意図的に維持されます。"
 			}
 		]
 	},

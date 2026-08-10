@@ -7,20 +7,8 @@
 		],
 		"changes": [
 			{
-				"type": "chore",
-				"text": "Runtime compatibility now moves to rmcp 3.0.1 and the MCP 2025-11-25 baseline, while newer MCP 2026-07-28 lifecycle, discovery, task, and subscription semantics remain intentionally outside MCPMate's public boundary."
-			},
-			{
-				"type": "ref",
-				"text": "Capability and identity state now use an SQLite-backed catalog, and embedded migrations provide one auditable, versioned authority for config, secrets, and catalog schema evolution."
-			},
-			{
 				"type": "feat",
 				"text": "Managed server definitions now persist structured stdio or HTTP transports and must validate before reaching connection, OAuth, capability, client-export, or Inspector paths; invalid legacy records remain visible and repairable."
-			},
-			{
-				"type": "ref",
-				"text": "Capability catalog, Profile authoring, and runtime startup now use explicit lifecycle ownership. Healthy upstream results remain usable when another dependency cannot complete discovery, while uncertainty stays structured and diagnosable."
 			},
 			{
 				"type": "feat",
@@ -29,6 +17,18 @@
 			{
 				"type": "fix",
 				"text": "Discovery retains last-known-good local metadata during temporary outages, while OAuth, catalog refresh, pagination, and authoring interactions make configuration state, conflicts, and repair actions clearer to operate."
+			},
+			{
+				"type": "ref",
+				"text": "Capability and identity state now use an SQLite-backed catalog, and embedded migrations provide one auditable, versioned authority for config, secrets, and catalog schema evolution."
+			},
+			{
+				"type": "ref",
+				"text": "Capability catalog, Profile authoring, and runtime startup now use explicit lifecycle ownership. Healthy upstream results remain usable when another dependency cannot complete discovery, while uncertainty stays structured and diagnosable."
+			},
+			{
+				"type": "chore",
+				"text": "Runtime compatibility now moves to rmcp 3.0.1 and the MCP 2025-11-25 baseline, while newer MCP 2026-07-28 lifecycle, discovery, task, and subscription semantics remain intentionally outside MCPMate's public boundary."
 			}
 		]
 	},
