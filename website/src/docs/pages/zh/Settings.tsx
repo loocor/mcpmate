@@ -23,7 +23,7 @@ export default function SettingsZH() {
 				</Li>
 				<Li><strong>外观</strong>：切换亮暗主题、是否跟随系统；在 Tauri 桌面端时可配置菜单栏与 Dock 图标策略。</Li>
 				<Li><strong>服务器控制</strong>：确定启停是否同步到托管客户端，以及新服务器是否自动加入默认配置集。</Li>
-				<Li><strong>客户端默认值</strong>：设置统一模式、托管模式、透明模式、writeback policy、默认过滤器、备份策略与备份上限，影响客户端页面的工具栏与行为。</Li>
+				<Li><strong>客户端</strong>：设置统一模式、托管模式、透明模式、配置写入默认行为、默认过滤器、备份策略与备份上限，影响客户端页面的工具栏与行为。</Li>
 				<Li><strong>MCP 市场</strong>：指定默认门户、开关黑名单、搜索与恢复隐藏条目。</Li>
 				<Li><strong>开发者</strong>：打开服务器调试按钮、选择 Inspect 是否新开窗口、显示 API 文档快捷键、展示原始 JSON 或默认 Header。</Li>
 				<Li><strong>系统</strong>：修改 API/MCP 端口、复制启动命令、停止当前运行的后端实例。</Li>
@@ -36,7 +36,7 @@ export default function SettingsZH() {
 
 			<H3>控制客户端策略</H3>
 			<P>
-				“客户端默认值”允许设定统一模式、托管模式、透明模式、默认 writeback policy、默认过滤器与备份策略。<strong>Merge</strong> 会保留无关的 MCP 条目，<strong>Replace</strong> 会让 MCPMate 托管列表成为权威；单个 Client 可以覆盖默认值。这些值会在后续 Apply 或重新 Apply 时生效，不会立即重写已有客户端文件。
+				“客户端”允许设定统一模式、托管模式、透明模式、配置写入默认行为、默认过滤器与备份策略。<strong>自动</strong>会采用各客户端建议的写入行为，客户端单独设置优先。<strong>合并</strong>会保留无关的 MCP 条目，<strong>替换</strong>会让 MCPMate 托管列表成为权威。修改配置写入默认行为会在后续应用或重新应用时生效，不会立即重写已有客户端文件。
 			</P>
 
 			<H3>整理市场内容</H3>

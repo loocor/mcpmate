@@ -35,10 +35,10 @@ export default function ClientDetailOverview() {
 
 			<H2>設定の書き込み方法を選ぶ</H2>
 			<P>
-				Client writeback は、このクライアントに override がない限り <strong>Settings → Client Defaults</strong> の default を使います。<strong>Merge</strong> は client file の関連しない MCP entry を保持し、<strong>Replace</strong> は MCPMate-managed server list を authoritative にします。
+				クライアントの設定書き戻し方法は、クライアントごとの個別設定がない限り、<strong>設定 → クライアント管理</strong>の<strong>設定書き戻しの既定値</strong>を使います。<strong>自動</strong>は各クライアントが推奨する書き戻し動作を使用し、クライアントごとの設定が優先されます。<strong>マージ</strong>はクライアント設定内の関連しない MCP エントリを保持し、<strong>置換</strong>は MCPMate 管理のサーバー一覧を正とします。
 			</P>
 			<P>
-				Client に検証済みの書き込み可能な configuration target がある場合、個別 override を保存すると effective configuration が直ちに re-apply されます。Settings の default を変更した場合は、その後の client configuration apply、re-apply、または detach で使われ、既存の client file を直ちに書き換えることはありません。
+				承認済みのクライアントに検証済みの書き込み可能な設定先がある場合、個別設定を保存すると有効な設定が直ちに再適用されます。設定の既定値を変更した場合は、その後のクライアント設定の適用または再適用で使われ、既存のクライアント設定ファイルを直ちに書き換えることはありません。
 			</P>
 
 			<Callout type="info" title="概要のドキュメントリンクは製品固有です">
