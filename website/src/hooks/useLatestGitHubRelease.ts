@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
-import type { GitHubLatestRelease, PublicDownloadManifest } from "../utils/githubRelease";
-import { DOWNLOADS_MANIFEST_API_URL, releaseFromDownloadManifest } from "../utils/githubRelease";
+import type {
+	GitHubLatestRelease,
+	PublicDownloadManifest,
+	PublicDownloadManifestV2,
+} from "../utils/githubRelease";
+import {
+	DOWNLOADS_MANIFEST_API_URL,
+	exactDownloadsReleaseAssetUrl,
+	exactDownloadsManifestApiUrl,
+	releaseFromDownloadManifest,
+} from "../utils/githubRelease";
 
 export type ReleaseFetchState =
 	| { status: "loading" }
@@ -46,15 +55,54 @@ export function useLatestGitHubRelease(): ReleaseFetchState & { refetch: () => v
 					return;
 				}
 
-				const manifest = (await latestRes.json()) as PublicDownloadManifest;
+				const latestManifest = (await latestRes.json()) as PublicDownloadManifest;
 				if (
-					manifest?.schemaVersion !== 1 ||
-					!manifest.tag ||
-					!manifest.releaseUrl ||
-					!manifest.assets ||
-					typeof manifest.assets !== "object"
+					latestManifest?.schemaVersion !== 1 ||
+					!latestManifest.tag ||
+					!latestManifest.releaseUrl ||
+					!latestManifest.assets ||
+					typeof latestManifest.assets !== "object" ||
+					Array.isArray(latestManifest.assets)
 				) {
 					setState({ status: "error", message: "Invalid download manifest payload" });
+					return;
+				}
+
+				const exactRes = await fetch(exactDownloadsManifestApiUrl(latestManifest.tag), {
+					cache: "no-store",
+					signal: ac.signal,
+				});
+				if (ac.signal.aborted) {
+					return;
+				}
+				if (!exactRes.ok) {
+					setState({ status: "error", message: `exact HTTP ${exactRes.status}` });
+					return;
+				}
+
+				const manifest = (await exactRes.json()) as PublicDownloadManifestV2;
+				if (
+					manifest?.schemaVersion !== 2 ||
+					manifest.tag !== latestManifest.tag ||
+					!manifest.releaseUrl ||
+					!manifest.assets ||
+					typeof manifest.assets !== "object" ||
+					Array.isArray(manifest.assets) ||
+					Object.entries(manifest.assets).length === 0 ||
+					Object.entries(manifest.assets).some(
+						([assetKey, asset]) =>
+							!asset ||
+							typeof asset !== "object" ||
+							Array.isArray(asset) ||
+							typeof asset.name !== "string" ||
+							typeof asset.githubReleaseUrl !== "string" ||
+							asset.githubReleaseUrl !== exactDownloadsReleaseAssetUrl(manifest.tag, assetKey) ||
+							typeof asset.githubDownloadCount !== "number" ||
+							!Number.isSafeInteger(asset.githubDownloadCount) ||
+							asset.githubDownloadCount < 0,
+					)
+				) {
+					setState({ status: "error", message: "Invalid exact download manifest payload" });
 					return;
 				}
 
