@@ -39,7 +39,7 @@ describe("release workflow contract", () => {
 
     expect(workflow).toContain("RELEASE_CHANNEL: ${{ needs.validate-tag.outputs.release-channel }}");
     expect(workflow).toContain("APP_VERSION: ${{ needs.validate-tag.outputs.app-version }}");
-    expect(workflow).toContain("prerelease: ${{ env.RELEASE_CHANNEL == 'beta' }}");
+    expect(workflow).toContain("prerelease: false");
     expect(workflow).not.toContain("contains(env.RELEASE_TAG, '-')");
   });
 
