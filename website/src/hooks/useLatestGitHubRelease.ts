@@ -6,7 +6,6 @@ import type {
 } from "../utils/githubRelease";
 import {
 	DOWNLOADS_MANIFEST_API_URL,
-	exactDownloadsReleaseAssetUrl,
 	exactDownloadsManifestApiUrl,
 	releaseFromDownloadManifest,
 } from "../utils/githubRelease";
@@ -58,8 +57,8 @@ export function useLatestGitHubRelease(): ReleaseFetchState & { refetch: () => v
 				const latestManifest = (await latestRes.json()) as PublicDownloadManifest;
 				if (
 					latestManifest?.schemaVersion !== 1 ||
-					!latestManifest.tag ||
-					!latestManifest.releaseUrl ||
+					typeof latestManifest.tag !== "string" ||
+					typeof latestManifest.releaseUrl !== "string" ||
 					!latestManifest.assets ||
 					typeof latestManifest.assets !== "object" ||
 					Array.isArray(latestManifest.assets)
@@ -84,24 +83,16 @@ export function useLatestGitHubRelease(): ReleaseFetchState & { refetch: () => v
 				if (
 					manifest?.schemaVersion !== 2 ||
 					manifest.tag !== latestManifest.tag ||
-					!manifest.releaseUrl ||
+					typeof manifest.releaseUrl !== "string" ||
 					!manifest.assets ||
 					typeof manifest.assets !== "object" ||
-					Array.isArray(manifest.assets) ||
-					Object.entries(manifest.assets).length === 0 ||
-					Object.entries(manifest.assets).some(
-						([assetKey, asset]) =>
-							!asset ||
-							typeof asset !== "object" ||
-							Array.isArray(asset) ||
-							typeof asset.name !== "string" ||
-							typeof asset.githubReleaseUrl !== "string" ||
-							asset.githubReleaseUrl !== exactDownloadsReleaseAssetUrl(manifest.tag, assetKey) ||
-							typeof asset.githubDownloadCount !== "number" ||
-							!Number.isSafeInteger(asset.githubDownloadCount) ||
-							asset.githubDownloadCount < 0,
-					)
+					Array.isArray(manifest.assets)
 				) {
+					setState({ status: "error", message: "Invalid exact download manifest payload" });
+					return;
+				}
+				const latest = releaseFromDownloadManifest(manifest);
+				if (!latest) {
 					setState({ status: "error", message: "Invalid exact download manifest payload" });
 					return;
 				}
@@ -111,7 +102,7 @@ export function useLatestGitHubRelease(): ReleaseFetchState & { refetch: () => v
 					return;
 				}
 
-				setState({ status: "ok", latest: releaseFromDownloadManifest(manifest) });
+				setState({ status: "ok", latest });
 			} catch (e) {
 				if (ac.signal.aborted) {
 					return;
