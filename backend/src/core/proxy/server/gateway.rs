@@ -1098,7 +1098,7 @@ impl ProxyServer {
         };
         let server = super::common::UnifiedHttpServer::with_config(config);
         let client_context_resolver = self.client_context_resolver.clone();
-        let server_handle = tokio::spawn(async move { server.start(factory, client_context_resolver).await });
+        let server_handle = server.start(factory, client_context_resolver).await?;
         crate::core::events::EventBus::global().publish(crate::core::events::Event::ServerTransportReady {
             transport_type: TransportType::StreamableHttp,
             ready: true,
@@ -2203,6 +2203,21 @@ mod tests {
 
         assert_eq!(result, None);
         assert!(!lookup_attempted.get(), "missing IDs must not reach route lookup");
+    }
+
+    #[tokio::test]
+    async fn unified_proxy_start_reports_an_occupied_listener_before_ready() {
+        let occupied = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("occupy a loopback port");
+        let server = ProxyServer::new(Arc::new(Config::default()));
+
+        let error = server
+            .start_unified(occupied.local_addr().expect("read occupied port"))
+            .await
+            .expect_err("an occupied MCP port must stop startup before API can begin");
+
+        assert!(error.to_string().contains("Failed to bind"));
     }
 
     #[test]

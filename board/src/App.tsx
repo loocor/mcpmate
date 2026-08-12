@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Download } from "lucide-react";
+import { Download, RotateCcw } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import {
 	BrowserRouter,
@@ -418,6 +418,7 @@ function BackendReadinessGate({ children }: { children: ReactNode }) {
 		reportedAtMs: number;
 		statusKey: string;
 	} | null>(null);
+	const desktopCoreEventVersionRef = useRef(0);
 
 	useEffect(() => {
 		if (!isTauriEnvironmentSync()) {
@@ -452,6 +453,7 @@ function BackendReadinessGate({ children }: { children: ReactNode }) {
 					if (cancelled) {
 						return;
 					}
+					desktopCoreEventVersionRef.current += 1;
 					applyDesktopCoreSource(event.payload as CoreStartupSnapshot);
 					setCoreSourceReady(true);
 					setAttempt((value) => value + 1);
@@ -464,8 +466,9 @@ function BackendReadinessGate({ children }: { children: ReactNode }) {
 
 			try {
 				const { invoke } = await import("@tauri-apps/api/core");
+				const eventVersion = desktopCoreEventVersionRef.current;
 				const source = (await invoke("mcp_shell_read_core_source")) as CoreStartupSnapshot;
-				if (!cancelled) {
+				if (!cancelled && desktopCoreEventVersionRef.current === eventVersion) {
 					applyDesktopCoreSource(source);
 				}
 			} catch (error) {
@@ -499,7 +502,7 @@ function BackendReadinessGate({ children }: { children: ReactNode }) {
 	}, []);
 
 	useEffect(() => {
-		if (!coreSourceReady || backendReady) {
+		if (!coreSourceReady || backendReady || readinessIssue?.terminal) {
 			return;
 		}
 
@@ -567,12 +570,14 @@ function BackendReadinessGate({ children }: { children: ReactNode }) {
 				readinessError = error;
 				// Keep retrying until the backend API is reachable.
 			}
-			setReadinessIssue(
-				describeBackendReadinessIssue(
-					isReadinessPayload(payload) ? payload : null,
-					readinessError,
-					API_BASE_URL,
-				),
+			setReadinessIssue((current) =>
+				current?.statusKey.startsWith("core:")
+					? current
+					: describeBackendReadinessIssue(
+							isReadinessPayload(payload) ? payload : null,
+							readinessError,
+							API_BASE_URL,
+						),
 			);
 			reportReadinessWait(payload, readinessError);
 			scheduleRetry();
@@ -590,8 +595,21 @@ function BackendReadinessGate({ children }: { children: ReactNode }) {
 		attempt,
 		backendReady,
 		coreSourceReady,
+		readinessIssue?.terminal,
 		readinessStartedAtMs,
 	]);
+
+	async function handleRetryCoreStartup(): Promise<void> {
+		const { invoke } = await import("@tauri-apps/api/core");
+		await invoke("mcp_shell_manage_local_core_service", {
+			action: readinessIssue?.action === "restart" ? "restart" : "start",
+		});
+		setReadinessIssue(null);
+		setDiagnosticsExportError(null);
+		setDiagnosticsExportPath(null);
+		setMessageKey("starting");
+		setAttempt((value) => value + 1);
+	}
 
 	async function handleExportDiagnostics(): Promise<void> {
 		setDiagnosticsExporting(true);
@@ -617,6 +635,7 @@ function BackendReadinessGate({ children }: { children: ReactNode }) {
 			diagnosticsExportPath,
 			issue: readinessIssue,
 			onExportDiagnostics: handleExportDiagnostics,
+			onRetryCoreStartup: handleRetryCoreStartup,
 		};
 		if (isOperatorSurfacePath()) {
 			return <OperatorBackendWaitingPage messageKey={messageKey} {...waitingProps} />;
@@ -690,6 +709,7 @@ function BackendWaitingPage({
 	issue,
 	message,
 	onExportDiagnostics,
+	onRetryCoreStartup,
 }: {
 	diagnosticsAvailable: boolean;
 	diagnosticsExportError: string | null;
@@ -698,8 +718,14 @@ function BackendWaitingPage({
 	issue: BackendReadinessIssue | null;
 	message: string;
 	onExportDiagnostics: () => Promise<void>;
+	onRetryCoreStartup: () => Promise<void>;
 }) {
 	const { t } = useTranslation();
+	const terminalMessage = issue
+		? translateBackendReadinessIssue(t, issue)
+		: t("backendReadiness.startupFailed", {
+				defaultValue: "MCPMate Core did not finish starting.",
+			});
 
 	return (
 		<div className="relative flex min-h-screen items-center justify-center bg-slate-50 px-6 text-slate-900 dark:bg-slate-950 dark:text-white">
@@ -709,11 +735,19 @@ function BackendWaitingPage({
 					alt="MCPMate"
 					className="mb-6 h-12 w-12 object-contain dark:invert dark:brightness-0"
 				/>
-				<div className="mb-4 h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-emerald-500" />
+				<div
+					className={`mb-4 h-8 w-8 rounded-full border-2 border-slate-300 border-t-emerald-500 ${
+						issue?.terminal ? "" : "animate-spin"
+					}`}
+				/>
 				<h1 className="text-xl font-semibold">
-					{t("backendReadiness.title", { defaultValue: "MCPMate is starting" })}
+					{issue?.terminal
+						? t("backendReadiness.failedTitle", { defaultValue: "MCPMate Core failed to start" })
+						: t("backendReadiness.title", { defaultValue: "MCPMate is starting" })}
 				</h1>
-				<p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{message}</p>
+				<p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+					{issue?.terminal ? terminalMessage : message}
+				</p>
 			</div>
 			<StartupAttentionFooter
 				diagnosticsAvailable={diagnosticsAvailable}
@@ -722,6 +756,7 @@ function BackendWaitingPage({
 				diagnosticsExportPath={diagnosticsExportPath}
 				issue={issue}
 				onExportDiagnostics={onExportDiagnostics}
+				onRetryCoreStartup={onRetryCoreStartup}
 			/>
 		</div>
 	);
@@ -734,6 +769,7 @@ function StartupAttentionFooter({
 	diagnosticsExportPath,
 	issue,
 	onExportDiagnostics,
+	onRetryCoreStartup,
 }: {
 	diagnosticsAvailable: boolean;
 	diagnosticsExportError: string | null;
@@ -741,6 +777,7 @@ function StartupAttentionFooter({
 	diagnosticsExportPath: string | null;
 	issue: BackendReadinessIssue | null;
 	onExportDiagnostics: () => Promise<void>;
+	onRetryCoreStartup: () => Promise<void>;
 }) {
 	const { t } = useTranslation();
 	if (!issue && !diagnosticsExportError && !diagnosticsExportPath) {
@@ -772,6 +809,20 @@ function StartupAttentionFooter({
 					<span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
 				</span>
 				<span className="min-w-0 truncate">{detail}</span>
+				{issue?.action ? (
+					<button
+						type="button"
+						onClick={() => void onRetryCoreStartup()}
+						className="ml-1 inline-flex h-7 flex-none items-center gap-1 rounded-full border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+					>
+						<RotateCcw className="h-3 w-3" aria-hidden="true" />
+						<span className="hidden sm:inline">
+							{issue.action === "restart"
+								? t("backendReadiness.restartCore", { defaultValue: "Restart Core" })
+								: t("backendReadiness.retryCoreStartup", { defaultValue: "Retry startup" })}
+						</span>
+					</button>
+				) : null}
 				{diagnosticsAvailable ? (
 					<button
 						type="button"

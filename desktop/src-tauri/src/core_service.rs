@@ -303,11 +303,15 @@ pub async fn probe_localhost_core_detail(api_port: u16) -> LocalhostCoreProbe {
     match client.get(url).send().await {
         Ok(response) => {
             let status = response.status();
+            let body = response.json::<serde_json::Value>().await;
+            let ready = body
+                .as_ref()
+                .is_ok_and(|body| is_localhost_core_status_response(status, body));
             LocalhostCoreProbe {
-                ready: status.is_success(),
-                failure: (!status.is_success()).then_some(LocalhostCoreProbeFailure {
+                ready,
+                failure: (!ready).then_some(LocalhostCoreProbeFailure {
                     status_code: Some(status.as_u16()),
-                    error: None,
+                    error: body.err().map(|err| format!("invalid core status response: {err}")),
                 }),
             }
         }
@@ -319,6 +323,12 @@ pub async fn probe_localhost_core_detail(api_port: u16) -> LocalhostCoreProbe {
             }),
         },
     }
+}
+
+fn is_localhost_core_status_response(status: reqwest::StatusCode, body: &serde_json::Value) -> bool {
+    status.is_success()
+        && body.get("product").and_then(serde_json::Value::as_str) == Some("mcpmate")
+        && body.get("status").and_then(serde_json::Value::as_str) == Some("running")
 }
 
 pub async fn wait_for_localhost_core(api_port: u16) -> Result<()> {
@@ -544,7 +554,9 @@ pub async fn sync_local_service_definition(
 
 #[cfg(test)]
 mod tests {
-    use super::LocalhostCoreProbeFailure;
+    use super::{LocalhostCoreProbeFailure, is_localhost_core_status_response};
+    use reqwest::StatusCode;
+    use serde_json::json;
 
     #[test]
     fn probe_failure_summary_prefers_status_code() {
@@ -564,5 +576,25 @@ mod tests {
         };
 
         assert_eq!(failure.summary(), "error=connection refused");
+    }
+
+    #[test]
+    fn localhost_core_probe_rejects_an_unrelated_success_response() {
+        assert!(!is_localhost_core_status_response(
+            StatusCode::OK,
+            &json!({ "message": "another service" }),
+        ));
+        assert!(is_localhost_core_status_response(
+            StatusCode::OK,
+            &json!({ "product": "mcpmate", "status": "running" }),
+        ));
+    }
+
+    #[test]
+    fn localhost_core_probe_rejects_a_running_response_without_the_mcpmate_marker() {
+        assert!(!is_localhost_core_status_response(
+            StatusCode::OK,
+            &json!({ "status": "running" }),
+        ));
     }
 }
