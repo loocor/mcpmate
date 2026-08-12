@@ -89,7 +89,9 @@ export const commonTranslations = {
 				"Ports were in use; switched to MCP {{mcpPort}} and confirming API {{apiPort}}.",
 			startupPortsSelected:
 				"Starting MCP {{mcpPort}} and confirming API {{apiPort}}.",
+			startupSlow: "MCPMate Core is still starting on MCP {{mcpPort}} and API {{apiPort}}.",
 			retryCoreStartup: "Retry startup",
+			restartCore: "Restart Core",
 			starting: "Starting MCPMate Core...",
 			waitingForBackend: "Waiting for MCPMate backend",
 			confirmingReadiness: "Confirming backend readiness",
@@ -240,7 +242,9 @@ export const commonTranslations = {
 				"端口已被占用，已切换至 MCP {{mcpPort}}，正在确认 API {{apiPort}}。",
 			startupPortsSelected:
 				"正在以 MCP {{mcpPort}} 启动服务，并确认 API {{apiPort}}。",
+			startupSlow: "MCPMate Core 仍在 MCP {{mcpPort}} 和 API {{apiPort}} 上启动。",
 			retryCoreStartup: "重试启动",
+			restartCore: "重启 Core",
 			starting: "正在启动 MCPMate Core...",
 			waitingForBackend: "正在等待 MCPMate 后端",
 			confirmingReadiness: "正在确认后端就绪状态...",
@@ -392,7 +396,9 @@ export const commonTranslations = {
 				"ポートが使用中のため、MCP {{mcpPort}} に切り替え、API {{apiPort}} を確認しています。",
 			startupPortsSelected:
 				"MCP {{mcpPort}} を起動し、API {{apiPort}} を確認しています。",
+			startupSlow: "MCPMate Core は MCP {{mcpPort}} と API {{apiPort}} でまだ起動中です。",
 			retryCoreStartup: "起動を再試行",
+			restartCore: "Core を再起動",
 			starting: "MCPMate Core を起動しています...",
 			waitingForBackend: "MCPMate backend を待機中",
 			confirmingReadiness: "backend readiness を確認中...",

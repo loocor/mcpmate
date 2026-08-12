@@ -15,7 +15,7 @@ use std::{
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-use anyhow::{Context, Error, Result, bail};
+use anyhow::{Context, Error, Result};
 use mcpmate::common::{MCPMatePaths, global_paths, set_global_paths};
 use serde_json::json;
 use tauri::{
@@ -119,6 +119,7 @@ struct DesktopCoreStartupProgressView {
     api_port: u16,
     mcp_port: u16,
     ports_changed: bool,
+    slow: bool,
 }
 
 #[derive(Default)]
@@ -132,27 +133,49 @@ struct DesktopManagedCoreInner {
 #[derive(Clone, Default)]
 struct DesktopManagedCoreState {
     inner: Arc<AsyncMutex<DesktopManagedCoreInner>>,
+    operation: Arc<AsyncMutex<()>>,
 }
 
 impl DesktopManagedCoreState {
     async fn replace(&self, child: Child, startup_id: String) {
         let mut guard = self.inner.lock().await;
+        debug_assert!(
+            guard.child.is_none(),
+            "desktop-managed core child was replaced while active"
+        );
         guard.child = Some(child);
         guard.startup_id = Some(startup_id);
         guard.startup_failure = None;
         guard.startup_progress = None;
     }
 
-    async fn take(&self) -> Option<Child> {
+    async fn take_for_stop(&self) -> Option<(Child, Option<String>)> {
         let mut guard = self.inner.lock().await;
+        let startup_id = guard.startup_id.take();
         guard.startup_id = None;
         guard.startup_failure = None;
         guard.startup_progress = None;
-        guard.child.take()
+        guard.child.take().map(|child| (child, startup_id))
     }
 
-    async fn take_exit_status(&self) -> Result<Option<std::process::ExitStatus>> {
+    async fn restore_after_failed_stop(&self, child: Child, startup_id: Option<String>) {
         let mut guard = self.inner.lock().await;
+        debug_assert!(
+            guard.child.is_none(),
+            "desktop-managed core child restore replaced an active child"
+        );
+        guard.child = Some(child);
+        guard.startup_id = startup_id;
+    }
+
+    async fn take_exit_status_for(
+        &self,
+        startup_id: &str,
+    ) -> Result<Option<std::process::ExitStatus>> {
+        let mut guard = self.inner.lock().await;
+        if guard.startup_id.as_deref() != Some(startup_id) {
+            return Ok(None);
+        }
         let Some(child) = guard.child.as_mut() else {
             return Ok(None);
         };
@@ -166,25 +189,74 @@ impl DesktopManagedCoreState {
         Ok(Some(status))
     }
 
-    async fn record_startup_failure(&self, failure: DesktopCoreStartupFailureView) {
+    async fn active_startup_id(&self) -> Option<String> {
+        let guard = self.inner.lock().await;
+        guard.child.as_ref()?;
+        guard.startup_id.clone()
+    }
+
+    async fn is_active_startup(&self, startup_id: &str) -> bool {
+        let guard = self.inner.lock().await;
+        guard.child.is_some() && guard.startup_id.as_deref() == Some(startup_id)
+    }
+
+    async fn record_terminal_startup_failure(
+        &self,
+        startup_id: &str,
+        failure: DesktopCoreStartupFailureView,
+    ) -> bool {
         let mut guard = self.inner.lock().await;
+        if guard.startup_id.as_deref() != Some(startup_id) || guard.child.is_some() {
+            return false;
+        }
+        guard.startup_id = None;
+        guard.startup_progress = None;
         guard.startup_failure = Some(failure);
+        true
     }
 
     async fn startup_failure(&self) -> Option<DesktopCoreStartupFailureView> {
         self.inner.lock().await.startup_failure.clone()
     }
 
-    async fn is_current_startup(&self, startup_id: &str) -> bool {
-        self.inner.lock().await.startup_id.as_deref() == Some(startup_id)
-    }
-
     async fn record_startup_progress(&self, progress: DesktopCoreStartupProgressView) {
         self.inner.lock().await.startup_progress = Some(progress);
     }
 
-    async fn clear_startup_progress(&self) {
-        self.inner.lock().await.startup_progress = None;
+    async fn mark_startup_slow(&self, startup_id: &str) -> bool {
+        let mut guard = self.inner.lock().await;
+        if guard.startup_id.as_deref() != Some(startup_id) {
+            return false;
+        }
+        let Some(progress) = guard.startup_progress.as_mut() else {
+            return false;
+        };
+        if progress.slow {
+            return false;
+        }
+        progress.slow = true;
+        true
+    }
+
+    async fn mark_startup_ready(&self, startup_id: &str) -> bool {
+        let mut guard = self.inner.lock().await;
+        if guard.startup_id.as_deref() != Some(startup_id) {
+            return false;
+        }
+        guard.startup_failure = None;
+        guard.startup_progress = None;
+        true
+    }
+
+    async fn record_ready_exit(&self, startup_id: &str) -> bool {
+        let mut guard = self.inner.lock().await;
+        if guard.startup_id.as_deref() != Some(startup_id) || guard.child.is_some() {
+            return false;
+        }
+        guard.startup_id = None;
+        guard.startup_failure = None;
+        guard.startup_progress = None;
+        true
     }
 
     async fn startup_progress(&self) -> Option<DesktopCoreStartupProgressView> {
@@ -201,11 +273,7 @@ impl DesktopManagedCoreState {
     }
 
     async fn is_spawned(&self) -> bool {
-        match self.take_exit_status().await {
-            Ok(Some(_)) => false,
-            Ok(None) => self.inner.lock().await.child.is_some(),
-            Err(_) => true,
-        }
+        self.inner.lock().await.child.is_some()
     }
 }
 
@@ -294,9 +362,7 @@ async fn read_core_state_view(
 ) -> Result<DesktopCoreSourceView> {
     let local_service = match config.localhost_runtime_mode {
         LocalCoreRuntimeMode::Service => read_local_service_status(config).await?,
-        LocalCoreRuntimeMode::DesktopManaged => {
-            read_desktop_managed_status(managed_state, config).await?
-        }
+        LocalCoreRuntimeMode::DesktopManaged => read_desktop_managed_status(managed_state).await?,
     };
     let mut view = DesktopCoreSourceView::from_config(config, local_service);
     if config.localhost_runtime_mode == LocalCoreRuntimeMode::DesktopManaged {
@@ -589,7 +655,7 @@ async fn stop_localhost_runtime(
     config: &DesktopCoreSourceConfig,
 ) -> Result<(), String> {
     match config.localhost_runtime_mode {
-        LocalCoreRuntimeMode::DesktopManaged => stop_desktop_managed_core(managed_state, config)
+        LocalCoreRuntimeMode::DesktopManaged => stop_desktop_managed_core(managed_state)
             .await
             .map(|_| ())
             .map_err(|err| err.to_string()),
@@ -621,7 +687,7 @@ async fn handle_localhost_source_transition(
         && (previous.localhost.api_port != config.localhost.api_port
             || previous.localhost.mcp_port != config.localhost.mcp_port)
     {
-        stop_desktop_managed_core(managed_state, previous)
+        stop_desktop_managed_core(managed_state)
             .await
             .map_err(|err| err.to_string())?;
         return Ok(());
@@ -632,7 +698,7 @@ async fn handle_localhost_source_transition(
         && previous.localhost_runtime_mode == LocalCoreRuntimeMode::DesktopManaged
         && config.selected_source != DesktopCoreSourceKind::Localhost
     {
-        stop_desktop_managed_core(managed_state, previous)
+        stop_desktop_managed_core(managed_state)
             .await
             .map_err(|err| err.to_string())?;
     }
@@ -1086,12 +1152,7 @@ pub fn run() -> Result<()> {
 										LocalCoreRuntimeMode::Service => restart_local_service(&handle, &config)
                                             .await
                                             .map(|status| (config.clone(), status)),
-										LocalCoreRuntimeMode::DesktopManaged => {
-											match stop_desktop_managed_core(&managed_state, &config).await {
-												Ok(_) => start_desktop_managed_core(&handle, &managed_state, &config).await,
-												Err(err) => Err(err),
-											}
-										}
+										LocalCoreRuntimeMode::DesktopManaged => restart_desktop_managed_core(&handle, &managed_state, &config).await,
 									};
 									match result {
                                             Ok((effective_config, status)) => {
@@ -1138,7 +1199,7 @@ pub fn run() -> Result<()> {
                                     DesktopCoreSourceKind::Localhost => {
 									let result = match config.localhost_runtime_mode {
 										LocalCoreRuntimeMode::Service => stop_local_service(&config).await,
-										LocalCoreRuntimeMode::DesktopManaged => stop_desktop_managed_core(&managed_state, &config).await,
+										LocalCoreRuntimeMode::DesktopManaged => stop_desktop_managed_core(&managed_state).await,
 									};
 									match result {
                                             Ok(status) => {
@@ -1290,10 +1351,8 @@ pub fn run() -> Result<()> {
                 if let Some(state) = app_handle.try_state::<DesktopManagedCoreState>()
                     && let Ok(config) = DesktopCoreSourceConfig::load(global_paths())
                     && config.localhost_runtime_mode == LocalCoreRuntimeMode::DesktopManaged
-                    && let Err(err) = tauri::async_runtime::block_on(stop_desktop_managed_core(
-                        state.inner(),
-                        &config,
-                    ))
+                    && let Err(err) =
+                        tauri::async_runtime::block_on(stop_desktop_managed_core(state.inner()))
                 {
                     warn!(error = %err, "Failed to stop desktop-managed core on exit");
                 }
@@ -1635,11 +1694,8 @@ async fn mcp_shell_manage_local_core_service(
             view
         }
         (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Restart) => {
-            stop_desktop_managed_core(managed_state.inner(), &config)
-                .await
-                .map_err(|err| err.to_string())?;
             let (effective_config, status) =
-                start_desktop_managed_core(&app, managed_state.inner(), &config)
+                restart_desktop_managed_core(&app, managed_state.inner(), &config)
                     .await
                     .map_err(|err| err.to_string())?;
             let mut view = DesktopCoreSourceView::from_config(&effective_config, status);
@@ -1648,7 +1704,7 @@ async fn mcp_shell_manage_local_core_service(
             view
         }
         (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Stop) => {
-            stop_desktop_managed_core(managed_state.inner(), &config)
+            stop_desktop_managed_core(managed_state.inner())
                 .await
                 .map(|status| DesktopCoreSourceView::from_config(&config, status))
                 .map_err(|err| err.to_string())?
@@ -1796,7 +1852,7 @@ async fn initialize_selected_core_source(
                     start_desktop_managed_core(&app, &managed_state, &config).await?;
                 config = effective_config;
             } else {
-                let _ = read_desktop_managed_status(&managed_state, &config).await?;
+                let _ = read_desktop_managed_status(&managed_state).await?;
             }
         }
     }
@@ -2045,10 +2101,8 @@ where
 
 async fn read_desktop_managed_status(
     state: &DesktopManagedCoreState,
-    config: &DesktopCoreSourceConfig,
 ) -> Result<LocalCoreServiceStatusView> {
-    let running = state.is_spawned().await
-        || core_service::probe_localhost_core(config.localhost.api_port).await;
+    let running = state.is_spawned().await;
     Ok(LocalCoreServiceStatusView {
         status: if running {
             core_service::LocalCoreServiceStatusKind::Running
@@ -2076,20 +2130,38 @@ async fn start_desktop_managed_core(
     state: &DesktopManagedCoreState,
     config: &DesktopCoreSourceConfig,
 ) -> Result<(DesktopCoreSourceConfig, LocalCoreServiceStatusView)> {
-    if core_service::probe_localhost_core(config.localhost.api_port).await {
-        state.clear_stale_startup_state().await;
-        let status = read_desktop_managed_status(state, config).await?;
+    let _operation = state.operation.lock().await;
+    start_desktop_managed_core_locked(app, state, config).await
+}
+
+async fn start_desktop_managed_core_locked(
+    app: &tauri::AppHandle,
+    state: &DesktopManagedCoreState,
+    config: &DesktopCoreSourceConfig,
+) -> Result<(DesktopCoreSourceConfig, LocalCoreServiceStatusView)> {
+    if let Some(startup_id) = state.active_startup_id().await
+        && let Some(exit_status) = state.take_exit_status_for(&startup_id).await?
+    {
+        let _ = state
+            .record_terminal_startup_failure(
+                &startup_id,
+                DesktopCoreStartupFailureView {
+                    startup_id: startup_id.clone(),
+                    api_port: config.localhost.api_port,
+                    mcp_port: config.localhost.mcp_port,
+                },
+            )
+            .await;
+        info!(%exit_status, "Observed exited desktop-managed core before starting a replacement");
+    }
+    if state.is_spawned().await {
+        let status = read_desktop_managed_status(state).await?;
         return Ok((config.clone(), status));
     }
+    state.clear_stale_startup_state().await;
 
     let mut effective_config = config.clone();
     let recovered_ports = recover_desktop_managed_ports(&mut effective_config).await?;
-
-    if core_service::probe_localhost_core(effective_config.localhost.api_port).await {
-        state.clear_stale_startup_state().await;
-        let status = read_desktop_managed_status(state, &effective_config).await?;
-        return Ok((effective_config, status));
-    }
     let startup_id = uuid::Uuid::new_v4().to_string();
     let child = spawn_desktop_managed_core(app, &effective_config, &startup_id)?;
     info!(
@@ -2102,6 +2174,7 @@ async fn start_desktop_managed_core(
             api_port: effective_config.localhost.api_port,
             mcp_port: effective_config.localhost.mcp_port,
             ports_changed: recovered_ports.is_some(),
+            slow: false,
         })
         .await;
 
@@ -2112,7 +2185,7 @@ async fn start_desktop_managed_core(
         startup_id,
     );
 
-    let status = read_desktop_managed_status(state, &effective_config).await?;
+    let status = read_desktop_managed_status(state).await?;
     Ok((effective_config, status))
 }
 
@@ -2123,84 +2196,191 @@ fn spawn_core_ready_notification(
     startup_id: String,
 ) {
     tauri::async_runtime::spawn(async move {
-        if let Err(err) = wait_for_desktop_managed_core(&state, config.localhost.api_port).await {
-            if !state.is_current_startup(&startup_id).await {
-                return;
-            }
-            warn!(
-                error = %err,
-                api_port = config.localhost.api_port,
-                startup_id,
-                "Desktop-managed localhost core did not become ready in time"
+        loop {
+            let observation =
+                wait_for_desktop_managed_core(&state, &startup_id, config.localhost.api_port).await;
+            let keep_observing = matches!(
+                &observation,
+                Ok(DesktopManagedCoreReadiness::StillStarting { .. }) | Err(_)
             );
-            state
-                .record_startup_failure(DesktopCoreStartupFailureView {
-                    startup_id: startup_id.clone(),
-                    api_port: config.localhost.api_port,
-                    mcp_port: config.localhost.mcp_port,
-                })
-                .await;
-            if let Ok(view) = read_core_state_view(&config, &state).await {
+            let changed = match observation {
+                Ok(DesktopManagedCoreReadiness::Ready) => {
+                    let changed = state.mark_startup_ready(&startup_id).await;
+                    if changed && let Ok(view) = read_core_state_view(&config, &state).await {
+                        emit_core_state_changed(&app, &view);
+                    }
+                    watch_desktop_managed_core_exit(&app, &state, &config, &startup_id).await;
+                    return;
+                }
+                Ok(DesktopManagedCoreReadiness::Cancelled) => return,
+                Ok(DesktopManagedCoreReadiness::StillStarting { last_failure }) => {
+                    warn!(
+                        api_port = config.localhost.api_port,
+                        startup_id,
+                        last_failure = ?last_failure.as_ref().map(core_service::LocalhostCoreProbeFailure::summary),
+                        "Desktop-managed localhost core is still starting after the initial readiness window"
+                    );
+                    state.mark_startup_slow(&startup_id).await
+                }
+                Ok(DesktopManagedCoreReadiness::Exited {
+                    exit_status,
+                    last_failure,
+                }) => {
+                    warn!(
+                        api_port = config.localhost.api_port,
+                        startup_id,
+                        %exit_status,
+                        last_failure = ?last_failure.as_ref().map(core_service::LocalhostCoreProbeFailure::summary),
+                        "Desktop-managed localhost core exited before readiness"
+                    );
+                    state
+                        .record_terminal_startup_failure(
+                            &startup_id,
+                            DesktopCoreStartupFailureView {
+                                startup_id: startup_id.clone(),
+                                api_port: config.localhost.api_port,
+                                mcp_port: config.localhost.mcp_port,
+                            },
+                        )
+                        .await
+                }
+                Err(err) => {
+                    warn!(
+                        error = %err,
+                        api_port = config.localhost.api_port,
+                        startup_id,
+                        "Failed to observe desktop-managed localhost core readiness"
+                    );
+                    state.mark_startup_slow(&startup_id).await
+                }
+            };
+            if changed && let Ok(view) = read_core_state_view(&config, &state).await {
                 emit_core_state_changed(&app, &view);
             }
-            return;
-        }
-
-        if !state.is_current_startup(&startup_id).await {
-            return;
-        }
-        state.clear_startup_progress().await;
-        if let Ok(view) = read_core_state_view(&config, &state).await {
-            emit_core_state_changed(&app, &view);
+            if keep_observing {
+                sleep(Duration::from_secs(1)).await;
+            } else {
+                return;
+            }
         }
     });
 }
 
+async fn watch_desktop_managed_core_exit(
+    app: &tauri::AppHandle,
+    state: &DesktopManagedCoreState,
+    config: &DesktopCoreSourceConfig,
+    startup_id: &str,
+) {
+    loop {
+        if !state.is_active_startup(startup_id).await {
+            return;
+        }
+        match state.take_exit_status_for(startup_id).await {
+            Ok(Some(exit_status)) => {
+                warn!(
+                    api_port = config.localhost.api_port,
+                    startup_id,
+                    %exit_status,
+                    "Desktop-managed localhost core exited after becoming ready"
+                );
+                if state.record_ready_exit(startup_id).await
+                    && let Ok(view) = read_core_state_view(config, state).await
+                {
+                    emit_core_state_changed(app, &view);
+                }
+                return;
+            }
+            Ok(None) => sleep(Duration::from_secs(1)).await,
+            Err(err) => {
+                warn!(
+                    error = %err,
+                    startup_id,
+                    "Failed to observe desktop-managed localhost core exit"
+                );
+                sleep(Duration::from_secs(1)).await;
+            }
+        }
+    }
+}
+
 async fn wait_for_desktop_managed_core(
     state: &DesktopManagedCoreState,
+    startup_id: &str,
     api_port: u16,
-) -> Result<()> {
+) -> Result<DesktopManagedCoreReadiness> {
     let mut last_failure = None;
     for _ in 1..=20 {
-        if let Some(status) = state.take_exit_status().await? {
-            let failure = last_failure
-                .as_ref()
-                .map(core_service::LocalhostCoreProbeFailure::summary)
-                .unwrap_or_else(|| "unknown".to_string());
-            bail!(
-                "desktop-managed core exited before readiness: api_port={api_port}, exit_status={status}, last_failure={failure}"
-            );
+        if !state.is_active_startup(startup_id).await {
+            return Ok(DesktopManagedCoreReadiness::Cancelled);
+        }
+        if let Some(exit_status) = state.take_exit_status_for(startup_id).await? {
+            return Ok(DesktopManagedCoreReadiness::Exited {
+                exit_status,
+                last_failure,
+            });
         }
 
         let probe = core_service::probe_localhost_core_detail(api_port).await;
         if probe.ready {
-            return Ok(());
+            return Ok(DesktopManagedCoreReadiness::Ready);
         }
         last_failure = probe.failure;
 
-        if let Some(status) = state.take_exit_status().await? {
-            let failure = last_failure
-                .as_ref()
-                .map(core_service::LocalhostCoreProbeFailure::summary)
-                .unwrap_or_else(|| "unknown".to_string());
-            bail!(
-                "desktop-managed core exited before readiness: api_port={api_port}, exit_status={status}, last_failure={failure}"
-            );
+        if !state.is_active_startup(startup_id).await {
+            return Ok(DesktopManagedCoreReadiness::Cancelled);
+        }
+        if let Some(exit_status) = state.take_exit_status_for(startup_id).await? {
+            return Ok(DesktopManagedCoreReadiness::Exited {
+                exit_status,
+                last_failure,
+            });
         }
         sleep(Duration::from_millis(300)).await;
     }
 
-    bail!("desktop-managed core did not become ready in time: api_port={api_port}")
+    Ok(DesktopManagedCoreReadiness::StillStarting { last_failure })
+}
+
+enum DesktopManagedCoreReadiness {
+    Cancelled,
+    Ready,
+    StillStarting {
+        last_failure: Option<core_service::LocalhostCoreProbeFailure>,
+    },
+    Exited {
+        exit_status: std::process::ExitStatus,
+        last_failure: Option<core_service::LocalhostCoreProbeFailure>,
+    },
 }
 
 async fn stop_desktop_managed_core(
     state: &DesktopManagedCoreState,
-    config: &DesktopCoreSourceConfig,
 ) -> Result<LocalCoreServiceStatusView> {
-    if let Some(mut child) = state.take().await {
-        graceful_stop_child(&mut child).await?;
+    let _operation = state.operation.lock().await;
+    stop_desktop_managed_core_locked(state).await
+}
+
+async fn stop_desktop_managed_core_locked(
+    state: &DesktopManagedCoreState,
+) -> Result<LocalCoreServiceStatusView> {
+    if let Some((mut child, startup_id)) = state.take_for_stop().await
+        && let Err(err) = graceful_stop_child(&mut child).await
+    {
+        state.restore_after_failed_stop(child, startup_id).await;
+        return Err(err);
     }
-    read_desktop_managed_status(state, config).await
+    read_desktop_managed_status(state).await
+}
+
+async fn restart_desktop_managed_core(
+    app: &tauri::AppHandle,
+    state: &DesktopManagedCoreState,
+    config: &DesktopCoreSourceConfig,
+) -> Result<(DesktopCoreSourceConfig, LocalCoreServiceStatusView)> {
+    let _operation = state.operation.lock().await;
+    stop_desktop_managed_core_locked(state).await?;
+    start_desktop_managed_core_locked(app, state, config).await
 }
 
 /// Send SIGTERM first, wait up to 8 s for graceful exit, then SIGKILL on timeout.

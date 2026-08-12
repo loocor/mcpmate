@@ -601,7 +601,9 @@ function BackendReadinessGate({ children }: { children: ReactNode }) {
 
 	async function handleRetryCoreStartup(): Promise<void> {
 		const { invoke } = await import("@tauri-apps/api/core");
-		await invoke("mcp_shell_manage_local_core_service", { action: "start" });
+		await invoke("mcp_shell_manage_local_core_service", {
+			action: readinessIssue?.action === "restart" ? "restart" : "start",
+		});
 		setReadinessIssue(null);
 		setDiagnosticsExportError(null);
 		setDiagnosticsExportPath(null);
@@ -807,7 +809,7 @@ function StartupAttentionFooter({
 					<span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
 				</span>
 				<span className="min-w-0 truncate">{detail}</span>
-				{issue?.terminal ? (
+				{issue?.action ? (
 					<button
 						type="button"
 						onClick={() => void onRetryCoreStartup()}
@@ -815,7 +817,9 @@ function StartupAttentionFooter({
 					>
 						<RotateCcw className="h-3 w-3" aria-hidden="true" />
 						<span className="hidden sm:inline">
-							{t("backendReadiness.retryCoreStartup", { defaultValue: "Retry startup" })}
+							{issue.action === "restart"
+								? t("backendReadiness.restartCore", { defaultValue: "Restart Core" })
+								: t("backendReadiness.retryCoreStartup", { defaultValue: "Retry startup" })}
 						</span>
 					</button>
 				) : null}

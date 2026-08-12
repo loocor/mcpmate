@@ -202,6 +202,23 @@ describe("backend readiness diagnostics", () => {
 		});
 	});
 
+	test("keeps an alive slow-starting desktop core non-terminal and requires restart", () => {
+		expect(
+			describeCoreStartupIssue({
+				startupProgress: {
+					apiPort: 8081,
+					mcpPort: 8001,
+					portsChanged: false,
+					slow: true,
+				},
+			}),
+		).toMatchObject({
+			action: "restart",
+			kind: "core_startup_slow",
+			statusKey: "core:starting:slow",
+		});
+	});
+
 	test("describes unhealthy desktop core source state", () => {
 		expect(
 			describeCoreStartupIssue({

@@ -8,10 +8,12 @@ export interface BackendReadinessAttempt {
 }
 
 export interface BackendReadinessIssue {
+	action?: "restart" | "retry";
 	detail: string;
 	kind:
 		| "backend_starting"
 		| "core_startup_failed"
+		| "core_startup_slow"
 		| "core_stopped"
 		| "core_unhealthy"
 		| "error"
@@ -41,6 +43,7 @@ export interface CoreStartupSnapshot {
 		apiPort: number;
 		mcpPort: number;
 		portsChanged: boolean;
+		slow?: boolean;
 	};
 }
 
@@ -53,6 +56,7 @@ type BackendReadinessIssueMessageKey =
 	| "notReady"
 	| "startupPortsRecovered"
 	| "startupPortsSelected"
+	| "startupSlow"
 	| "startupFailed"
 	| "unknown";
 
@@ -172,6 +176,7 @@ export function describeCoreStartupIssue(
 	if (snapshot.startupFailure) {
 		const { apiPort, mcpPort } = snapshot.startupFailure;
 		return {
+			action: "retry",
 			kind: "core_startup_failed",
 			detail: `MCPMate Core did not finish starting on MCP ${mcpPort} or API ${apiPort}`,
 			messageKey: "startupFailed",
@@ -185,7 +190,20 @@ export function describeCoreStartupIssue(
 	}
 
 	if (snapshot.startupProgress) {
-		const { apiPort, mcpPort, portsChanged } = snapshot.startupProgress;
+		const { apiPort, mcpPort, portsChanged, slow } = snapshot.startupProgress;
+		if (slow) {
+			return {
+				action: "restart",
+				kind: "core_startup_slow",
+				detail: `MCPMate Core is still starting on MCP ${mcpPort} and API ${apiPort}`,
+				messageKey: "startupSlow",
+				messageParams: {
+					apiPort: String(apiPort),
+					mcpPort: String(mcpPort),
+				},
+				statusKey: "core:starting:slow",
+			};
+		}
 		return {
 			kind: "backend_starting",
 			detail: portsChanged
