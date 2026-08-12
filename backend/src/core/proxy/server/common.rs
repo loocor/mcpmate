@@ -953,7 +953,7 @@ impl UnifiedHttpServer {
         &self,
         service_factory: F,
         client_context_resolver: Arc<SessionBoundClientContextResolver>,
-    ) -> Result<()>
+    ) -> Result<tokio::task::JoinHandle<Result<()>>>
     where
         F: Fn() -> S + Clone + Send + Sync + 'static,
         S: ServerHandler + Send + Sync + 'static,
@@ -1004,11 +1004,8 @@ impl UnifiedHttpServer {
 
         let _ = service_factory;
 
-        tokio::spawn(async move {
-            if let Err(e) = server.await {
-                tracing::error!(error = %e, "Unified HTTP server shutdown with error");
-            }
-        });
+        let server_handle =
+            tokio::spawn(async move { server.await.context("Unified HTTP server stopped with an error") });
 
         tracing::info!("Unified HTTP server started successfully with the following endpoint:");
         tracing::info!(
@@ -1017,7 +1014,7 @@ impl UnifiedHttpServer {
             self.config.streamable_http_path
         );
 
-        Ok(())
+        Ok(server_handle)
     }
 }
 
