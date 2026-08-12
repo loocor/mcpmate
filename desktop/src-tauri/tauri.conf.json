@@ -76,10 +76,8 @@
 			}
 		},
 		"updater": {
-			"active": false,
-			"dialog": true,
 			"endpoints": [
-				"https://github.com/loocor/mcpmate/releases/latest/download/update.json"
+				"https://public.mcp.umate.ai/updates/latest"
 			],
 			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENBQUFBQkI0NDdBMDBEMDUKUldRRkRhQkh0S3VxeW16WVhCM3JCWXR5OG9hdThEc1V1WXBtenpIRlVTZmFRRlFtc3NHU2RFemwK",
 			"windows": {

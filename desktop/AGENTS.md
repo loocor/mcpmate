@@ -151,13 +151,12 @@ See `docs/desktop/desktop-release-guide.md` for full details. Key steps:
    - Example (Apple ID): `../packaging/desktop/macos-build-tauri-release.sh --targets aarch64-apple-darwin,x86_64-apple-darwin --sign-identity "Developer ID Application: Your Org (TEAMID)" --apple-id you@example.com --apple-password abcd-efgh-ijkl-mnop --apple-team-id TEAMID`
    - Example (API key): `../packaging/desktop/macos-build-tauri-release.sh --targets aarch64-apple-darwin,x86_64-apple-darwin --sign-identity "Developer ID Application: Your Org (TEAMID)" --apple-api-key ABCDE12345 --apple-api-issuer 00112233-4455-6677-8899-aabbccddeeff --apple-api-key-path ~/AuthKeys/AuthKey_ABCD12345.p8`
    - The script summarizes detected identities and whether notarization is enabled.
-5. Sign bundles for the auto-updater (if enabling updates): `tauri signer sign --private-key key.pem bundle.dmg`
+5. Sign bundles when preparing updater materials: `tauri signer sign --private-key key.pem bundle.dmg`
 6. Generate update manifest: `../packaging/desktop/generate-update-manifest.sh`
 
 ## Known Limitations
 
-- Auto-updater is disabled (`plugins.updater.active = false`) until CDN/signing pipeline is ready
-- Placeholder Minisign public key needs replacement before enabling updates
+- Stable updater checks use the Admin `/updates/latest` endpoint. The Tauri v2 updater plugin has no `active` configuration field; updater availability is determined by plugin registration and the explicit Check for Updates action.
 - macOS 26+ requires `CI=true` to skip Finder AppleScript during DMG creation
 - Some backend doctests fail (pre-existing, tracked separately)
 

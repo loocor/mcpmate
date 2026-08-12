@@ -105,7 +105,7 @@ Some Help menu diagnostics for legacy market embedding may still be present; pre
 
 - Desktop release & updater workflow: `docs/desktop/desktop-release-guide.md`
 - Automation helpers: `packaging/desktop/macos-build-tauri-release.sh`, `packaging/desktop/generate-update-manifest.sh`
-- Auto-updater plugin is compiled in but disabled by default (`plugins.updater.active = false`). Replace the placeholder Minisign public key in `tauri.conf.json` and point to real endpoints before turning it on.
+- Stable updater checks use the Admin `/updates/latest` endpoint. The Tauri v2 updater plugin has no `active` configuration field; the desktop app checks for updates through its explicit Help menu action.
 
 ## Next Steps
 

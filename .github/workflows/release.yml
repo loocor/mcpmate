@@ -750,7 +750,7 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           name: ${{ env.RELEASE_TAG }}
           draft: false
-          prerelease: ${{ env.RELEASE_CHANNEL == 'beta' }}
+          prerelease: false
           body_path: artifacts/release-notes.md
           files: |
             artifacts/*.dmg

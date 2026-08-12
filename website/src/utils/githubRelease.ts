@@ -22,11 +22,34 @@ export interface PublicDownloadManifest {
 	assets: Record<string, PublicDownloadAsset>;
 }
 
+/** Exact release manifest fields used for region-aware installer redirects. */
+export interface PublicDownloadAssetV2 {
+	key: string;
+	platform: "macos" | "windows" | "linux";
+	arch: "arm64" | "x64";
+	format: "dmg" | "msi" | "deb" | "appimage";
+	name: string;
+	githubUrl: string;
+	githubReleaseUrl: string;
+	sha256: string;
+	githubDownloadCount?: number;
+	size: number;
+}
+
+export interface PublicDownloadManifestV2 {
+	schemaVersion: 2;
+	tag: string;
+	version: string;
+	releaseChannel: "stable" | "beta";
+	releaseUrl: string;
+	assets: Record<string, PublicDownloadAssetV2>;
+}
+
 /** Release payload shape normalized from the public download manifest. */
 export interface GitHubReleaseAsset {
 	name: string;
 	browser_download_url: string;
-	download_count: number;
+	download_count?: number;
 }
 
 export interface GitHubLatestRelease {
@@ -41,6 +64,15 @@ export const MCPMATE_GITHUB_OWNER = "loocor";
 export const MCPMATE_GITHUB_REPO = "mcpmate";
 
 export const DOWNLOADS_MANIFEST_API_URL = "https://public.mcp.umate.ai/downloads/latest";
+const PUBLIC_DOWNLOADS_ORIGIN = "https://public.mcp.umate.ai";
+
+export function exactDownloadsManifestApiUrl(tag: string): string {
+	return `${PUBLIC_DOWNLOADS_ORIGIN}/downloads/releases/${encodeURIComponent(tag)}`;
+}
+
+export function exactDownloadsReleaseAssetUrl(tag: string, assetKey: string): string {
+	return `${exactDownloadsManifestApiUrl(tag)}/${encodeURIComponent(assetKey)}`;
+}
 
 export const RELEASES_PAGE_URL = `https://github.com/${MCPMATE_GITHUB_OWNER}/${MCPMATE_GITHUB_REPO}/releases`;
 
@@ -59,6 +91,7 @@ export type BuildTier = "stable" | "beta";
 
 export interface DesktopBuildRow {
 	id: DesktopBuildRowId;
+	releaseAssetKey: string;
 	platformI18nKey: "download.platform_macos" | "download.platform_windows" | "download.platform_linux";
 	archI18nKey: "download.arch_arm64" | "download.arch_x64";
 	tier: BuildTier;
@@ -70,6 +103,7 @@ export interface DesktopBuildRow {
 export const DESKTOP_BUILD_ROWS: readonly DesktopBuildRow[] = [
 	{
 		id: "macos-aarch64",
+		releaseAssetKey: "macos-arm64-dmg",
 		platformI18nKey: "download.platform_macos",
 		archI18nKey: "download.arch_arm64",
 		tier: "beta",
@@ -77,6 +111,7 @@ export const DESKTOP_BUILD_ROWS: readonly DesktopBuildRow[] = [
 	},
 	{
 		id: "macos-x64",
+		releaseAssetKey: "macos-x64-dmg",
 		platformI18nKey: "download.platform_macos",
 		archI18nKey: "download.arch_x64",
 		tier: "beta",
@@ -84,6 +119,7 @@ export const DESKTOP_BUILD_ROWS: readonly DesktopBuildRow[] = [
 	},
 	{
 		id: "windows-x64",
+		releaseAssetKey: "windows-x64-msi",
 		platformI18nKey: "download.platform_windows",
 		archI18nKey: "download.arch_x64",
 		tier: "beta",
@@ -91,6 +127,7 @@ export const DESKTOP_BUILD_ROWS: readonly DesktopBuildRow[] = [
 	},
 	{
 		id: "windows-arm64",
+		releaseAssetKey: "windows-arm64-msi",
 		platformI18nKey: "download.platform_windows",
 		archI18nKey: "download.arch_arm64",
 		tier: "beta",
@@ -98,6 +135,7 @@ export const DESKTOP_BUILD_ROWS: readonly DesktopBuildRow[] = [
 	},
 	{
 		id: "linux-x64",
+		releaseAssetKey: "linux-x64-deb",
 		platformI18nKey: "download.platform_linux",
 		archI18nKey: "download.arch_x64",
 		tier: "beta",
@@ -105,6 +143,7 @@ export const DESKTOP_BUILD_ROWS: readonly DesktopBuildRow[] = [
 	},
 	{
 		id: "linux-arm64",
+		releaseAssetKey: "linux-arm64-deb",
 		platformI18nKey: "download.platform_linux",
 		archI18nKey: "download.arch_arm64",
 		tier: "beta",
@@ -112,13 +151,36 @@ export const DESKTOP_BUILD_ROWS: readonly DesktopBuildRow[] = [
 	},
 ] as const;
 
-export function releaseFromDownloadManifest(manifest: PublicDownloadManifest): GitHubLatestRelease {
+export function releaseFromDownloadManifest(manifest: PublicDownloadManifestV2): GitHubLatestRelease | null {
+	if (typeof manifest.tag !== "string" || typeof manifest.releaseUrl !== "string") {
+		return null;
+	}
+
+	const installerAssets = DESKTOP_BUILD_ROWS.map((row) => {
+		const asset = manifest.assets[row.releaseAssetKey];
+		if (
+			!asset ||
+			asset.key !== row.releaseAssetKey ||
+			typeof asset.name !== "string" ||
+			typeof asset.githubReleaseUrl !== "string" ||
+			asset.githubReleaseUrl !== exactDownloadsReleaseAssetUrl(manifest.tag, row.releaseAssetKey) ||
+			(asset.githubDownloadCount !== undefined &&
+				(!Number.isSafeInteger(asset.githubDownloadCount) || asset.githubDownloadCount < 0))
+		) {
+			return null;
+		}
+		return asset;
+	});
+	if (installerAssets.some((asset) => asset === null)) {
+		return null;
+	}
+
 	return {
 		tag_name: manifest.tag,
 		html_url: manifest.releaseUrl,
-		assets: Object.values(manifest.assets).map((asset) => ({
+		assets: installerAssets.map((asset) => ({
 			name: asset.name,
-			browser_download_url: asset.redirectUrl,
+			browser_download_url: asset.githubReleaseUrl,
 			download_count: asset.githubDownloadCount,
 		})),
 	};

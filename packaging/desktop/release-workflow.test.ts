@@ -4,6 +4,11 @@ const releaseWorkflowUrl = new URL("../../.github/workflows/release.yml", import
 const dockerWorkflowUrl = new URL("../../.github/workflows/docker-publish.yml", import.meta.url);
 const injectVersionActionUrl = new URL("../../.github/actions/inject-version/action.yml", import.meta.url);
 const nightlyWorkflowUrl = new URL("../../.github/workflows/nightly.yml", import.meta.url);
+const tauriConfigUrl = new URL("../../desktop/src-tauri/tauri.conf.json", import.meta.url);
+const tauriReleaseOverlayUrl = new URL(
+  "../../desktop/src-tauri/tauri.release-overlay.json",
+  import.meta.url,
+);
 const desktopWorkflowUrls = ["desktop-macos.yml", "desktop-windows.yml", "desktop-linux.yml"].map(
   (name) => new URL(`../../.github/workflows/${name}`, import.meta.url),
 );
@@ -39,7 +44,7 @@ describe("release workflow contract", () => {
 
     expect(workflow).toContain("RELEASE_CHANNEL: ${{ needs.validate-tag.outputs.release-channel }}");
     expect(workflow).toContain("APP_VERSION: ${{ needs.validate-tag.outputs.app-version }}");
-    expect(workflow).toContain("prerelease: ${{ env.RELEASE_CHANNEL == 'beta' }}");
+    expect(workflow).toContain("prerelease: false");
     expect(workflow).not.toContain("contains(env.RELEASE_TAG, '-')");
   });
 
@@ -167,5 +172,20 @@ describe("inject-version action contract", () => {
     expect(action).toContain('--configured-version "$CONFIGURED_VERSION"');
     expect(action).not.toContain("fall back");
     expect(action).not.toContain('VERSION="${VERSION%%-*}"');
+  });
+});
+
+describe("desktop updater configuration", () => {
+  test("uses the Admin updater endpoint without legacy activation fields", async () => {
+    const [config, releaseOverlay] = await Promise.all([
+      Bun.file(tauriConfigUrl).json(),
+      Bun.file(tauriReleaseOverlayUrl).json(),
+    ]);
+
+    expect(config.plugins.updater.endpoints).toEqual(["https://public.mcp.umate.ai/updates/latest"]);
+    expect(config.plugins.updater).not.toHaveProperty("active");
+    expect(config.plugins.updater).not.toHaveProperty("dialog");
+    expect(releaseOverlay).not.toHaveProperty("plugins");
+    expect(releaseOverlay.bundle.createUpdaterArtifacts).toBe(true);
   });
 });
