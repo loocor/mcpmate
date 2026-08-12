@@ -150,6 +150,58 @@ describe("backend readiness diagnostics", () => {
 		});
 	});
 
+	test("treats an exited desktop-managed core as a terminal startup failure", () => {
+		expect(
+			describeCoreStartupIssue({
+				localService: {
+					status: "stopped",
+					label: "Stopped",
+					detail: "The localhost core is currently stopped.",
+					running: false,
+				},
+				startupFailure: {
+					apiPort: 8081,
+					mcpPort: 8001,
+					startupId: "startup-a",
+				},
+			}),
+		).toMatchObject({
+			kind: "core_startup_failed",
+			statusKey: "core:startup_failed",
+			terminal: true,
+			messageParams: {
+				apiPort: "8081",
+				mcpPort: "8001",
+			},
+		});
+	});
+
+	test("reports recovered ports while the desktop-managed core is starting", () => {
+		expect(
+			describeCoreStartupIssue({
+				localService: {
+					status: "running_unhealthy",
+					label: "Starting",
+					detail: "The API health check is still pending.",
+					running: true,
+				},
+				startupProgress: {
+					apiPort: 8081,
+					mcpPort: 8001,
+					portsChanged: true,
+				},
+			}),
+		).toMatchObject({
+			kind: "backend_starting",
+			statusKey: "core:starting:ports_recovered",
+			messageKey: "startupPortsRecovered",
+			messageParams: {
+				apiPort: "8081",
+				mcpPort: "8001",
+			},
+		});
+	});
+
 	test("describes unhealthy desktop core source state", () => {
 		expect(
 			describeCoreStartupIssue({

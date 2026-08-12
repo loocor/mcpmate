@@ -1,6 +1,6 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { AlertTriangle, Download } from "lucide-react";
+import { AlertTriangle, Download, RotateCcw } from "lucide-react";
 import {
 	translateBackendReadinessIssue,
 	type BackendReadinessIssue,
@@ -22,6 +22,7 @@ export function OperatorBackendWaitingPage({
 	issue,
 	messageKey,
 	onExportDiagnostics,
+	onRetryCoreStartup,
 }: {
 	diagnosticsAvailable: boolean;
 	diagnosticsExportError: string | null;
@@ -30,6 +31,7 @@ export function OperatorBackendWaitingPage({
 	issue: BackendReadinessIssue | null;
 	messageKey: BackendReadinessMessageKey;
 	onExportDiagnostics: () => Promise<void>;
+	onRetryCoreStartup: () => Promise<void>;
 }) {
 	usePageTranslations("operator");
 	const { t } = useTranslation();
@@ -65,11 +67,21 @@ export function OperatorBackendWaitingPage({
 			<OperatorPanelShell data-testid="operator-backend-waiting">
 				<OperatorPanelHeader />
 				<section className="flex min-h-0 flex-1 flex-col items-center justify-center px-5 py-8 text-center">
-					<div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-emerald-500 dark:border-slate-700 dark:border-t-emerald-400" />
+					<div
+						className={`h-6 w-6 rounded-full border-2 border-slate-300 border-t-emerald-500 dark:border-slate-700 dark:border-t-emerald-400 ${
+							issue?.terminal ? "" : "animate-spin"
+						}`}
+					/>
 					<p className="mt-4 text-sm font-medium text-slate-800 dark:text-slate-100">
-						{t("operator:startup.title", { defaultValue: "Starting Core" })}
+						{issue?.terminal
+							? t("backendReadiness.failedTitle", { defaultValue: "MCPMate Core failed to start" })
+							: t("operator:startup.title", { defaultValue: "Starting Core" })}
 					</p>
-					<p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{message}</p>
+					<p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+						{issue?.terminal
+							? issueDetail
+							: message}
+					</p>
 					{issue ? (
 						<div className="mt-4 w-full rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-left text-amber-950 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
 							<div className="flex items-start gap-2">
@@ -89,6 +101,18 @@ export function OperatorBackendWaitingPage({
 					) : null}
 					{diagnosticsAvailable ? (
 						<div className="mt-3 flex w-full flex-col items-center gap-2">
+							{issue?.terminal ? (
+								<button
+									type="button"
+									onClick={() => void onRetryCoreStartup()}
+									className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+								>
+									<RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+									{t("backendReadiness.retryCoreStartup", {
+										defaultValue: "Retry startup",
+									})}
+								</button>
+							) : null}
 							<button
 								type="button"
 								onClick={() => void onExportDiagnostics()}

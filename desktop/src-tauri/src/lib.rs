@@ -15,7 +15,7 @@ use std::{
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-use anyhow::{Context, Error, Result};
+use anyhow::{Context, Error, Result, bail};
 use mcpmate::common::{MCPMatePaths, global_paths, set_global_paths};
 use serde_json::json;
 use tauri::{
@@ -101,37 +101,110 @@ struct DesktopCoreSourceView {
     api_base_url: String,
     local_service: LocalCoreServiceStatusView,
     remote_available: bool,
+    startup_failure: Option<DesktopCoreStartupFailureView>,
+    startup_progress: Option<DesktopCoreStartupProgressView>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopCoreStartupFailureView {
+    startup_id: String,
+    api_port: u16,
+    mcp_port: u16,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopCoreStartupProgressView {
+    api_port: u16,
+    mcp_port: u16,
+    ports_changed: bool,
+}
+
+#[derive(Default)]
+struct DesktopManagedCoreInner {
+    child: Option<Child>,
+    startup_id: Option<String>,
+    startup_failure: Option<DesktopCoreStartupFailureView>,
+    startup_progress: Option<DesktopCoreStartupProgressView>,
 }
 
 #[derive(Clone, Default)]
 struct DesktopManagedCoreState {
-    inner: Arc<AsyncMutex<Option<Child>>>,
+    inner: Arc<AsyncMutex<DesktopManagedCoreInner>>,
 }
 
 impl DesktopManagedCoreState {
-    async fn replace(&self, child: Child) {
+    async fn replace(&self, child: Child, startup_id: String) {
         let mut guard = self.inner.lock().await;
-        *guard = Some(child);
+        guard.child = Some(child);
+        guard.startup_id = Some(startup_id);
+        guard.startup_failure = None;
+        guard.startup_progress = None;
     }
 
     async fn take(&self) -> Option<Child> {
         let mut guard = self.inner.lock().await;
-        guard.take()
+        guard.startup_id = None;
+        guard.startup_failure = None;
+        guard.startup_progress = None;
+        guard.child.take()
+    }
+
+    async fn take_exit_status(&self) -> Result<Option<std::process::ExitStatus>> {
+        let mut guard = self.inner.lock().await;
+        let Some(child) = guard.child.as_mut() else {
+            return Ok(None);
+        };
+        let Some(status) = child
+            .try_wait()
+            .context("failed to query desktop-managed core exit status")?
+        else {
+            return Ok(None);
+        };
+        guard.child = None;
+        Ok(Some(status))
+    }
+
+    async fn record_startup_failure(&self, failure: DesktopCoreStartupFailureView) {
+        let mut guard = self.inner.lock().await;
+        guard.startup_failure = Some(failure);
+    }
+
+    async fn startup_failure(&self) -> Option<DesktopCoreStartupFailureView> {
+        self.inner.lock().await.startup_failure.clone()
+    }
+
+    async fn is_current_startup(&self, startup_id: &str) -> bool {
+        self.inner.lock().await.startup_id.as_deref() == Some(startup_id)
+    }
+
+    async fn record_startup_progress(&self, progress: DesktopCoreStartupProgressView) {
+        self.inner.lock().await.startup_progress = Some(progress);
+    }
+
+    async fn clear_startup_progress(&self) {
+        self.inner.lock().await.startup_progress = None;
+    }
+
+    async fn startup_progress(&self) -> Option<DesktopCoreStartupProgressView> {
+        self.inner.lock().await.startup_progress.clone()
+    }
+
+    async fn clear_stale_startup_state(&self) {
+        let mut guard = self.inner.lock().await;
+        if guard.child.is_none() {
+            guard.startup_id = None;
+            guard.startup_failure = None;
+            guard.startup_progress = None;
+        }
     }
 
     async fn is_spawned(&self) -> bool {
-        let mut guard = self.inner.lock().await;
-        if let Some(child) = guard.as_mut() {
-            match child.try_wait() {
-                Ok(Some(_)) => {
-                    *guard = None;
-                    false
-                }
-                Ok(None) => true,
-                Err(_) => true,
-            }
-        } else {
-            false
+        match self.take_exit_status().await {
+            Ok(Some(_)) => false,
+            Ok(None) => self.inner.lock().await.child.is_some(),
+            Err(_) => true,
         }
     }
 }
@@ -175,6 +248,8 @@ impl DesktopCoreSourceView {
             api_base_url,
             local_service,
             remote_available: false,
+            startup_failure: None,
+            startup_progress: None,
         }
     }
 }
@@ -223,7 +298,12 @@ async fn read_core_state_view(
             read_desktop_managed_status(managed_state, config).await?
         }
     };
-    Ok(DesktopCoreSourceView::from_config(config, local_service))
+    let mut view = DesktopCoreSourceView::from_config(config, local_service);
+    if config.localhost_runtime_mode == LocalCoreRuntimeMode::DesktopManaged {
+        view.startup_failure = managed_state.startup_failure().await;
+        view.startup_progress = managed_state.startup_progress().await;
+    }
+    Ok(view)
 }
 
 async fn diagnostics_runtime_metadata(
@@ -961,7 +1041,11 @@ pub fn run() -> Result<()> {
                                                 if let Err(err) = sync_shell_service_state(&shell_state, &status).await {
                                                     warn!(error = %err, "Failed to sync tray state after starting service");
                                                 }
-										let view = DesktopCoreSourceView::from_config(&effective_config, status.clone());
+										let mut view = DesktopCoreSourceView::from_config(&effective_config, status.clone());
+										if effective_config.localhost_runtime_mode == LocalCoreRuntimeMode::DesktopManaged {
+											view.startup_failure = managed_state.startup_failure().await;
+											view.startup_progress = managed_state.startup_progress().await;
+										}
 										emit_core_state_changed(&handle, &view);
                                                 if let Err(err) = shell::ensure_window_visibility(&handle) {
                                                     warn!(error = %err, "Failed to reveal main window after starting service");
@@ -1014,7 +1098,11 @@ pub fn run() -> Result<()> {
                                                 if let Err(err) = sync_shell_service_state(&shell_state, &status).await {
                                                     warn!(error = %err, "Failed to sync tray state after restarting service");
                                                 }
-										let view = DesktopCoreSourceView::from_config(&effective_config, status.clone());
+										let mut view = DesktopCoreSourceView::from_config(&effective_config, status.clone());
+										if effective_config.localhost_runtime_mode == LocalCoreRuntimeMode::DesktopManaged {
+											view.startup_failure = managed_state.startup_failure().await;
+											view.startup_progress = managed_state.startup_progress().await;
+										}
 										emit_core_state_changed(&handle, &view);
                                             }
                                             Err(err) => {
@@ -1417,7 +1505,10 @@ async fn mcp_shell_apply_core_source(
                     .await
                     .map_err(|err| err.to_string())?;
             config = effective_config;
-            DesktopCoreSourceView::from_config(&config, status)
+            let mut view = DesktopCoreSourceView::from_config(&config, status);
+            view.startup_failure = managed_state.inner().startup_failure().await;
+            view.startup_progress = managed_state.inner().startup_progress().await;
+            view
         }
         _ => read_core_state_view(&config, managed_state.inner())
             .await
@@ -1534,23 +1625,27 @@ async fn mcp_shell_manage_local_core_service(
                 .map_err(|err| err.to_string())?
         }
         (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Start) => {
-            start_desktop_managed_core(&app, managed_state.inner(), &config)
-                .await
-                .map(|(effective_config, status)| {
-                    DesktopCoreSourceView::from_config(&effective_config, status)
-                })
-                .map_err(|err| err.to_string())?
+            let (effective_config, status) =
+                start_desktop_managed_core(&app, managed_state.inner(), &config)
+                    .await
+                    .map_err(|err| err.to_string())?;
+            let mut view = DesktopCoreSourceView::from_config(&effective_config, status);
+            view.startup_failure = managed_state.inner().startup_failure().await;
+            view.startup_progress = managed_state.inner().startup_progress().await;
+            view
         }
         (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Restart) => {
             stop_desktop_managed_core(managed_state.inner(), &config)
                 .await
                 .map_err(|err| err.to_string())?;
-            start_desktop_managed_core(&app, managed_state.inner(), &config)
-                .await
-                .map(|(effective_config, status)| {
-                    DesktopCoreSourceView::from_config(&effective_config, status)
-                })
-                .map_err(|err| err.to_string())?
+            let (effective_config, status) =
+                start_desktop_managed_core(&app, managed_state.inner(), &config)
+                    .await
+                    .map_err(|err| err.to_string())?;
+            let mut view = DesktopCoreSourceView::from_config(&effective_config, status);
+            view.startup_failure = managed_state.inner().startup_failure().await;
+            view.startup_progress = managed_state.inner().startup_progress().await;
+            view
         }
         (LocalCoreRuntimeMode::DesktopManaged, LocalCoreServiceAction::Stop) => {
             stop_desktop_managed_core(managed_state.inner(), &config)
@@ -1691,20 +1786,21 @@ async fn initialize_selected_core_source(
         mcp_port = config.localhost.mcp_port,
         "Initializing selected desktop core source"
     );
-    let status = match config.localhost_runtime_mode {
-        LocalCoreRuntimeMode::Service => read_local_service_status(&config).await?,
+    match config.localhost_runtime_mode {
+        LocalCoreRuntimeMode::Service => {
+            let _ = read_local_service_status(&config).await?;
+        }
         LocalCoreRuntimeMode::DesktopManaged => {
             if config.selected_source == DesktopCoreSourceKind::Localhost {
-                let (effective_config, status) =
+                let (effective_config, _) =
                     start_desktop_managed_core(&app, &managed_state, &config).await?;
                 config = effective_config;
-                status
             } else {
-                read_desktop_managed_status(&managed_state, &config).await?
+                let _ = read_desktop_managed_status(&managed_state, &config).await?;
             }
         }
-    };
-    let view = DesktopCoreSourceView::from_config(&config, status);
+    }
+    let view = read_core_state_view(&config, &managed_state).await?;
     sync_and_emit_core_state(&app, &shell_state, &view).await?;
 
     Ok(())
@@ -1981,14 +2077,16 @@ async fn start_desktop_managed_core(
     config: &DesktopCoreSourceConfig,
 ) -> Result<(DesktopCoreSourceConfig, LocalCoreServiceStatusView)> {
     if core_service::probe_localhost_core(config.localhost.api_port).await {
+        state.clear_stale_startup_state().await;
         let status = read_desktop_managed_status(state, config).await?;
         return Ok((config.clone(), status));
     }
 
     let mut effective_config = config.clone();
-    recover_desktop_managed_ports(&mut effective_config).await?;
+    let recovered_ports = recover_desktop_managed_ports(&mut effective_config).await?;
 
     if core_service::probe_localhost_core(effective_config.localhost.api_port).await {
+        state.clear_stale_startup_state().await;
         let status = read_desktop_managed_status(state, &effective_config).await?;
         return Ok((effective_config, status));
     }
@@ -1998,7 +2096,14 @@ async fn start_desktop_managed_core(
         startup_id,
         "Desktop-managed localhost core spawn returned successfully"
     );
-    state.replace(child).await;
+    state.replace(child, startup_id.clone()).await;
+    state
+        .record_startup_progress(DesktopCoreStartupProgressView {
+            api_port: effective_config.localhost.api_port,
+            mcp_port: effective_config.localhost.mcp_port,
+            ports_changed: recovered_ports.is_some(),
+        })
+        .await;
 
     spawn_core_ready_notification(
         app.clone(),
@@ -2018,21 +2123,74 @@ fn spawn_core_ready_notification(
     startup_id: String,
 ) {
     tauri::async_runtime::spawn(async move {
-        if let Err(err) = core_service::wait_for_localhost_core(config.localhost.api_port).await {
+        if let Err(err) = wait_for_desktop_managed_core(&state, config.localhost.api_port).await {
+            if !state.is_current_startup(&startup_id).await {
+                return;
+            }
             warn!(
                 error = %err,
                 api_port = config.localhost.api_port,
                 startup_id,
                 "Desktop-managed localhost core did not become ready in time"
             );
+            state
+                .record_startup_failure(DesktopCoreStartupFailureView {
+                    startup_id: startup_id.clone(),
+                    api_port: config.localhost.api_port,
+                    mcp_port: config.localhost.mcp_port,
+                })
+                .await;
+            if let Ok(view) = read_core_state_view(&config, &state).await {
+                emit_core_state_changed(&app, &view);
+            }
             return;
         }
 
-        if let Ok(status) = read_desktop_managed_status(&state, &config).await {
-            let view = DesktopCoreSourceView::from_config(&config, status);
+        if !state.is_current_startup(&startup_id).await {
+            return;
+        }
+        state.clear_startup_progress().await;
+        if let Ok(view) = read_core_state_view(&config, &state).await {
             emit_core_state_changed(&app, &view);
         }
     });
+}
+
+async fn wait_for_desktop_managed_core(
+    state: &DesktopManagedCoreState,
+    api_port: u16,
+) -> Result<()> {
+    let mut last_failure = None;
+    for _ in 1..=20 {
+        if let Some(status) = state.take_exit_status().await? {
+            let failure = last_failure
+                .as_ref()
+                .map(core_service::LocalhostCoreProbeFailure::summary)
+                .unwrap_or_else(|| "unknown".to_string());
+            bail!(
+                "desktop-managed core exited before readiness: api_port={api_port}, exit_status={status}, last_failure={failure}"
+            );
+        }
+
+        let probe = core_service::probe_localhost_core_detail(api_port).await;
+        if probe.ready {
+            return Ok(());
+        }
+        last_failure = probe.failure;
+
+        if let Some(status) = state.take_exit_status().await? {
+            let failure = last_failure
+                .as_ref()
+                .map(core_service::LocalhostCoreProbeFailure::summary)
+                .unwrap_or_else(|| "unknown".to_string());
+            bail!(
+                "desktop-managed core exited before readiness: api_port={api_port}, exit_status={status}, last_failure={failure}"
+            );
+        }
+        sleep(Duration::from_millis(300)).await;
+    }
+
+    bail!("desktop-managed core did not become ready in time: api_port={api_port}")
 }
 
 async fn stop_desktop_managed_core(

@@ -83,6 +83,13 @@ export const commonTranslations = {
 		},
 		backendReadiness: {
 			title: "MCPMate is starting",
+			failedTitle: "MCPMate Core failed to start",
+			startupFailed: "MCPMate Core did not finish starting on MCP {{mcpPort}} or API {{apiPort}}.",
+			startupPortsRecovered:
+				"Ports were in use; switched to MCP {{mcpPort}} and confirming API {{apiPort}}.",
+			startupPortsSelected:
+				"Starting MCP {{mcpPort}} and confirming API {{apiPort}}.",
+			retryCoreStartup: "Retry startup",
 			starting: "Starting MCPMate Core...",
 			waitingForBackend: "Waiting for MCPMate backend",
 			confirmingReadiness: "Confirming backend readiness",
@@ -96,6 +103,12 @@ export const commonTranslations = {
 				coreService: "{{label}}{{detail}}",
 				networkError: "Backend API is not reachable{{target}}: {{error}}",
 				notReady: "Backend readiness is {{statusKey}}{{reason}}",
+				startupFailed:
+					"MCPMate Core did not finish starting on MCP {{mcpPort}} or API {{apiPort}}.",
+				startupPortsRecovered:
+					"Ports were in use; switched to MCP {{mcpPort}} and confirming API {{apiPort}}.",
+				startupPortsSelected:
+					"Starting MCP {{mcpPort}} and confirming API {{apiPort}}.",
 				unknown: "{{detail}}",
 			},
 		},
@@ -221,6 +234,13 @@ export const commonTranslations = {
 		},
 		backendReadiness: {
 			title: "MCPMate 正在启动",
+			failedTitle: "MCPMate Core 启动失败",
+			startupFailed: "MCPMate Core 未能在 MCP {{mcpPort}} 或 API {{apiPort}} 上完成启动。",
+			startupPortsRecovered:
+				"端口已被占用，已切换至 MCP {{mcpPort}}，正在确认 API {{apiPort}}。",
+			startupPortsSelected:
+				"正在以 MCP {{mcpPort}} 启动服务，并确认 API {{apiPort}}。",
+			retryCoreStartup: "重试启动",
 			starting: "正在启动 MCPMate Core...",
 			waitingForBackend: "正在等待 MCPMate 后端",
 			confirmingReadiness: "正在确认后端就绪状态...",
@@ -234,6 +254,11 @@ export const commonTranslations = {
 				coreService: "{{label}}{{detail}}",
 				networkError: "无法访问后端 API{{target}}：{{error}}",
 				notReady: "后端就绪状态为 {{statusKey}}{{reason}}",
+				startupFailed: "MCPMate Core 未能在 MCP {{mcpPort}} 或 API {{apiPort}} 上完成启动。",
+				startupPortsRecovered:
+					"端口已被占用，已切换至 MCP {{mcpPort}}，正在确认 API {{apiPort}}。",
+				startupPortsSelected:
+					"正在以 MCP {{mcpPort}} 启动服务，并确认 API {{apiPort}}。",
 				unknown: "{{detail}}",
 			},
 		},
@@ -361,6 +386,13 @@ export const commonTranslations = {
 		},
 		backendReadiness: {
 			title: "MCPMate を起動しています",
+			failedTitle: "MCPMate Core を起動できませんでした",
+			startupFailed: "MCPMate Core は MCP {{mcpPort}} または API {{apiPort}} で起動を完了できませんでした。",
+			startupPortsRecovered:
+				"ポートが使用中のため、MCP {{mcpPort}} に切り替え、API {{apiPort}} を確認しています。",
+			startupPortsSelected:
+				"MCP {{mcpPort}} を起動し、API {{apiPort}} を確認しています。",
+			retryCoreStartup: "起動を再試行",
 			starting: "MCPMate Core を起動しています...",
 			waitingForBackend: "MCPMate backend を待機中",
 			confirmingReadiness: "backend readiness を確認中...",
@@ -374,6 +406,12 @@ export const commonTranslations = {
 				coreService: "{{label}}{{detail}}",
 				networkError: "backend API に到達できません{{target}}: {{error}}",
 				notReady: "backend readiness は {{statusKey}}{{reason}} です",
+				startupFailed:
+					"MCPMate Core は MCP {{mcpPort}} または API {{apiPort}} で起動を完了できませんでした。",
+				startupPortsRecovered:
+					"ポートが使用中のため、MCP {{mcpPort}} に切り替え、API {{apiPort}} を確認しています。",
+				startupPortsSelected:
+					"MCP {{mcpPort}} を起動し、API {{apiPort}} を確認しています。",
 				unknown: "{{detail}}",
 			},
 		},

@@ -17,6 +17,16 @@ export interface DesktopCoreSourceResponse {
 		running: boolean;
 	};
 	remoteAvailable: boolean;
+	startupFailure?: {
+		apiPort: number;
+		mcpPort: number;
+		startupId: string;
+	} | null;
+	startupProgress?: {
+		apiPort: number;
+		mcpPort: number;
+		portsChanged: boolean;
+	} | null;
 }
 
 type Action = "start" | "stop" | "restart" | "status" | "install" | "uninstall";

@@ -10,6 +10,8 @@ use crate::macros::resp::api_resp;
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "System status response")]
 pub struct SystemStatusResp {
+    #[schemars(description = "Product identifier for local runtime verification")]
+    pub product: String,
     #[schemars(description = "System status - running, starting, stopping, etc.")]
     pub status: String,
     #[schemars(description = "System uptime in seconds")]

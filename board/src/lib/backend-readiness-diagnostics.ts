@@ -11,6 +11,7 @@ export interface BackendReadinessIssue {
 	detail: string;
 	kind:
 		| "backend_starting"
+		| "core_startup_failed"
 		| "core_stopped"
 		| "core_unhealthy"
 		| "error"
@@ -20,6 +21,7 @@ export interface BackendReadinessIssue {
 	messageKey: BackendReadinessIssueMessageKey;
 	messageParams?: Record<string, string>;
 	statusKey: string;
+	terminal?: boolean;
 }
 
 export interface CoreStartupSnapshot {
@@ -30,6 +32,16 @@ export interface CoreStartupSnapshot {
 		running?: boolean;
 		status?: string;
 	};
+	startupFailure?: {
+		apiPort: number;
+		mcpPort: number;
+		startupId: string;
+	};
+	startupProgress?: {
+		apiPort: number;
+		mcpPort: number;
+		portsChanged: boolean;
+	};
 }
 
 const DEFAULT_READINESS_REPORT_THROTTLE_MS = 30_000;
@@ -39,6 +51,9 @@ type BackendReadinessIssueMessageKey =
 	| "coreService"
 	| "networkError"
 	| "notReady"
+	| "startupPortsRecovered"
+	| "startupPortsSelected"
+	| "startupFailed"
 	| "unknown";
 
 type TranslateBackendReadinessIssue = (
@@ -154,6 +169,41 @@ export function describeBackendReadinessIssue(
 export function describeCoreStartupIssue(
 	snapshot: CoreStartupSnapshot,
 ): BackendReadinessIssue | null {
+	if (snapshot.startupFailure) {
+		const { apiPort, mcpPort } = snapshot.startupFailure;
+		return {
+			kind: "core_startup_failed",
+			detail: `MCPMate Core did not finish starting on MCP ${mcpPort} or API ${apiPort}`,
+			messageKey: "startupFailed",
+			messageParams: {
+				apiPort: String(apiPort),
+				mcpPort: String(mcpPort),
+			},
+			statusKey: "core:startup_failed",
+			terminal: true,
+		};
+	}
+
+	if (snapshot.startupProgress) {
+		const { apiPort, mcpPort, portsChanged } = snapshot.startupProgress;
+		return {
+			kind: "backend_starting",
+			detail: portsChanged
+				? `Occupied ports were replaced; starting MCP on ${mcpPort} and confirming API on ${apiPort}`
+				: `Starting MCP on ${mcpPort} and confirming API on ${apiPort}`,
+			messageKey: portsChanged
+				? "startupPortsRecovered"
+				: "startupPortsSelected",
+			messageParams: {
+				apiPort: String(apiPort),
+				mcpPort: String(mcpPort),
+			},
+			statusKey: portsChanged
+				? "core:starting:ports_recovered"
+				: "core:starting",
+		};
+	}
+
 	const service = snapshot.localService;
 	if (!service?.status) {
 		return null;
