@@ -3105,6 +3105,37 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
+    async fn broker_only_standard_resource_read_keeps_corrupt_persisted_template_internal() {
+        let (_temp_dir, pool, server, server_id, _profile_id) = create_subscription_test_server().await;
+        let context = bind_resource_client(
+            &server,
+            "unify-client",
+            "broker-only-corrupt-template",
+            "unify",
+            Some(Default::default()),
+        )
+        .await;
+        sqlx::query(
+            "UPDATE server_resource_templates SET uri_template = 'fixture://documents/{path', unique_name = 'mcpmate://resources/template/subscription_docs/fixture/broker/{path}' WHERE uri_template = 'fixture://documents/{path}'",
+        )
+            .execute(&pool)
+            .await
+            .expect("corrupt persisted Broker template");
+
+        let error = crate::core::proxy::server::resources::read_resource(
+            &server,
+            ReadResourceRequestParams::new("mcpmate://resources/template/subscription_docs/fixture/broker/guide.md"),
+            context,
+        )
+        .await
+        .expect_err("corrupt persisted template must fail the standard Broker read");
+
+        assert_eq!(error.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
+        crate::core::capability::resolver::remove_by_id(&server_id).await;
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
     async fn non_unify_standard_resource_read_does_not_enter_broker_resolution() {
         let (_temp_dir, _pool, server, server_id, _profile_id) = create_subscription_test_server().await;
         let context = bind_resource_client(&server, "hosted-client", "hosted-standard-read", "hosted", None).await;

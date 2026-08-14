@@ -128,7 +128,7 @@ async fn resolve_broker_external_resource_target(
                 })),
             ));
         }
-        Err(error) if crate::mcper::builtin::is_invalid_broker_resource_route_error(&error) => {
+        Err(error) if crate::core::capability::resource_registry::is_invalid_resource_route_error(&error) => {
             return Err(McpError::invalid_params(error.to_string(), None));
         }
         Err(error) => return Err(McpError::internal_error(error.to_string(), None)),

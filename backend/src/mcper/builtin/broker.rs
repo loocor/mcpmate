@@ -71,17 +71,6 @@ pub(crate) fn is_catalog_authority_error(error: &anyhow::Error) -> bool {
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("Invalid Broker Resource route: {source}")]
-pub(crate) struct InvalidBrokerResourceRouteError {
-    #[source]
-    source: anyhow::Error,
-}
-
-pub(crate) fn is_invalid_broker_resource_route_error(error: &anyhow::Error) -> bool {
-    error.downcast_ref::<InvalidBrokerResourceRouteError>().is_some()
-}
-
-#[derive(Debug, thiserror::Error)]
 #[error("Trusted resource catalog is unavailable for server '{server_name}' ({server_id}): {source}")]
 struct CatalogAuthorityReadError {
     server_id: String,
@@ -1980,20 +1969,9 @@ impl BrokerService {
         external_uri: &str,
     ) -> Result<Option<crate::core::capability::resource_registry::ResolvedResourceRoute>> {
         let route =
-            match crate::core::capability::resource_registry::resolve_resource_route(&self.database.pool, external_uri)
+            crate::core::capability::resource_registry::resolve_resource_route(&self.database.pool, external_uri)
                 .await
-            {
-                Ok(route) => route,
-                Err(error)
-                    if error
-                        .chain()
-                        .any(|source| source.downcast_ref::<sqlx::Error>().is_some()) =>
-                {
-                    return Err(error)
-                        .with_context(|| format!("Failed to resolve canonical resource URI '{external_uri}'"));
-                }
-                Err(error) => return Err(InvalidBrokerResourceRouteError { source: error }.into()),
-            };
+                .with_context(|| format!("Failed to resolve canonical resource URI '{external_uri}'"))?;
         if matches!(
             &route.source,
             crate::core::capability::resource_registry::ResourceRouteSource::Issued
