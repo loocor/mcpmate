@@ -3136,6 +3136,36 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
+    async fn broker_only_standard_resource_read_rejects_non_utf8_canonical_template_argument() {
+        let (_temp_dir, pool, server, server_id, _profile_id) = create_subscription_test_server().await;
+        let context = bind_resource_client(
+            &server,
+            "unify-client",
+            "broker-only-non-utf8-template-argument",
+            "unify",
+            Some(Default::default()),
+        )
+        .await;
+        sqlx::query(
+            "UPDATE server_resource_templates SET unique_name = 'mcpmate://resources/template/subscription_docs/fixture/broker/{path}' WHERE uri_template = 'fixture://documents/{path}'",
+        )
+        .execute(&pool)
+        .await
+        .expect("move persisted Broker template outside Active Surface");
+        let error = crate::core::proxy::server::resources::read_resource(
+            &server,
+            ReadResourceRequestParams::new("mcpmate://resources/template/subscription_docs/fixture/broker/%FF"),
+            context,
+        )
+        .await
+        .expect_err("non-UTF-8 canonical argument must fail standard Broker read");
+
+        assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        crate::core::capability::resolver::remove_by_id(&server_id).await;
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
     async fn non_unify_standard_resource_read_does_not_enter_broker_resolution() {
         let (_temp_dir, _pool, server, server_id, _profile_id) = create_subscription_test_server().await;
         let context = bind_resource_client(&server, "hosted-client", "hosted-standard-read", "hosted", None).await;

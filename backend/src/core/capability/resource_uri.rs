@@ -41,6 +41,16 @@ struct ParsedUpstreamAddress {
     fragment: Option<String>,
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+struct MalformedCanonicalResourceUriError(#[source] anyhow::Error);
+
+pub(crate) fn is_malformed_canonical_resource_uri_error(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|source| source.downcast_ref::<MalformedCanonicalResourceUriError>().is_some())
+}
+
 fn validate_namespace(namespace: &str) -> Result<()> {
     crate::config::server::validate_server_namespace(namespace)
         .map(|_| ())
@@ -701,6 +711,7 @@ fn decode_path_value(value: &str) -> Result<String> {
         .decode_utf8()
         .map(|value| value.into_owned())
         .context("Canonical resource template argument is not valid UTF-8")
+        .map_err(|source| MalformedCanonicalResourceUriError(source).into())
 }
 
 fn validate_percent_encoding(value: &str) -> Result<()> {
@@ -819,6 +830,7 @@ fn decode_query_value(value: &str) -> Result<String> {
         .decode_utf8()
         .map(|value| value.into_owned())
         .context("Canonical resource template query argument is not valid UTF-8")
+        .map_err(|source| MalformedCanonicalResourceUriError(source).into())
 }
 
 fn captured_query_arguments(query: &str) -> Result<Vec<(String, String)>> {

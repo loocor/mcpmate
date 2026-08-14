@@ -155,9 +155,14 @@ pub(crate) async fn resolve_resource_route(
     .context("Failed to resolve resource template route")?;
     let mut matches = Vec::new();
     for (server_id, server_name, upstream_template, external_template) in template_rows {
-        if let Some((upstream_uri, arguments)) =
-            expand_upstream_resource_template(&external_template, &upstream_template, external_uri)?
-        {
+        let expansion = match expand_upstream_resource_template(&external_template, &upstream_template, external_uri) {
+            Ok(expansion) => expansion,
+            Err(error) if super::resource_uri::is_malformed_canonical_resource_uri_error(&error) => {
+                return Err(invalid_resource_route_error(error));
+            }
+            Err(error) => return Err(error),
+        };
+        if let Some((upstream_uri, arguments)) = expansion {
             matches.push((server_id, server_name, upstream_template, upstream_uri, arguments));
         }
     }
