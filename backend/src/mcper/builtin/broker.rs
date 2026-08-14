@@ -492,7 +492,7 @@ fn default_catalog_stale_hint() -> String {
 }
 
 fn default_error_recovery_hint() -> String {
-    "If a call fails, verify capability_name and capability_kind from the surface directory, inspect details with detail_level=full, then retry with corrected arguments.".to_string()
+    "Recovery path: verify capability_name and capability_kind from mcpmate_ucan_catalog, inspect Details with detail_level=full, then retry Tool or Prompt with corrected arguments. For Resource or ResourceTemplate, use Details to obtain or expand the concrete canonical URI, then invoke resources/read.".to_string()
 }
 
 fn default_profile_get_description() -> String {
@@ -2845,7 +2845,7 @@ impl BuiltinService for BrokerService {
                             },
                             "arguments": {
                                 "type": "object",
-                                "description": "Arguments for tool/prompt surface items. Omit or pass {} for resources."
+                                "description": "Arguments for Tool or Prompt targets only. Resource and ResourceTemplate targets use a concrete canonical URI with resources/read."
                             }
                         },
                         "required": ["capability_kind", "capability_name"]
@@ -2966,7 +2966,7 @@ fn default_ucan_prompt_config() -> UcanPromptConfig {
         catalog_tool_description: "MCPMATE SURFACE DIRECTORY\nROLE: Discover the current MCP surface exposed to this client.\nUSE_WHEN: Before starting any task, call this first to find the most relevant surface item.\nRETURNS: A paginated surface directory with lightweight summaries.\nWORKFLOW: directory -> details -> invoke, read, or select.\nRULES: Use the current page first. If you still have not found a good match, request the next page instead of expanding everything at once.\nExample: mcpmate_ucan_catalog(page=1, page_size=10) or mcpmate_ucan_catalog(page=1, page_size=10, kind_filter=[\"tool\"]) or mcpmate_ucan_catalog(page=1, page_size=10, search=\"github\")".to_string(),
         details_tool_description: "MCPMATE SURFACE INSPECTOR\nROLE: Explain how to use one surface item selected from MCPMate's surface directory.\nUSE_WHEN: After directory, before invocation, standard resource read, or profile selection.\nRETURNS: Summary or full details for the selected surface item.\nWORKFLOW: Use summary first for quick judgment. Use full only when you need complete metadata.\nRULES: Do not inspect unrelated surface items in full.\nExample: mcpmate_ucan_details(capability_kind=\"tool\", capability_name=\"github_search\", detail_level=\"summary\")".to_string(),
         call_tool_description: "MCPMATE SURFACE CALLER\nROLE: Call one Tool or Prompt selected from MCPMate's surface directory.\nUSE_WHEN: Only after you already know which callable surface item to use.\nRETURNS: The execution result produced by the selected surface item.\nWORKFLOW: directory -> details -> call for Tool or Prompt; use resources/read for Resource or ResourceTemplate targets.\nRULES: Do not use this tool to read resources. Use details first when arguments or behavior are unclear.\nExample: mcpmate_ucan_call(capability_kind=\"tool\", capability_name=\"github_search\", arguments={\"query\":\"rust mcp\"})".to_string(),
-        catalog_usage: "Before starting any task, call mcpmate_ucan_catalog first. Pick the most relevant surface item from the current page. If the current page is not enough, request the next page instead of expanding everything at once. Then use mcpmate_ucan_details to inspect the selected surface item, call Tool or Prompt with mcpmate_ucan_call, or use resources/read with a concrete Resource URI.".to_string(),
+        catalog_usage: "Use mcpmate_ucan_catalog to choose one surface item, then inspect it with mcpmate_ucan_details. Call Tool or Prompt with mcpmate_ucan_call. For Resource or ResourceTemplate, use Details to obtain or expand the concrete canonical URI, then invoke resources/read.".to_string(),
         catalog_stale_hint: default_catalog_stale_hint(),
         error_recovery_hint: default_error_recovery_hint(),
         catalog_format: vec![
@@ -3300,7 +3300,9 @@ mod tests {
         pool::{CapSyncFlags, UpstreamConnectionPool},
     };
     use crate::mcper::builtin::registry::BuiltinService;
-    use rmcp::model::{CallToolRequestParams, ContentBlock, Prompt, Resource, ResourceTemplate, Tool};
+    use rmcp::model::{
+        Annotations, CallToolRequestParams, ContentBlock, Icon, MetaObject, Prompt, Resource, ResourceTemplate, Tool,
+    };
     use sqlx::sqlite::SqlitePoolOptions;
     use std::collections::HashSet;
     use std::path::PathBuf;
@@ -3440,6 +3442,28 @@ mod tests {
         serde_json::from_str(&text.text).expect("parse UCAN text envelope")
     }
 
+    fn assert_exact_details_envelope(response: &serde_json::Value) {
+        let object = response.as_object().expect("details envelope");
+        assert_eq!(object.len(), 11);
+        assert!(
+            [
+                "argument_tips",
+                "call_requirements",
+                "capability_kind",
+                "capability_name",
+                "detail_level",
+                "details",
+                "error_recovery_hint",
+                "related_capabilities",
+                "server_id",
+                "server_name",
+                "workflow_hints",
+            ]
+            .into_iter()
+            .all(|key| object.contains_key(key))
+        );
+    }
+
     #[test]
     fn catalog_keeps_usable_entries_when_an_upstream_listing_fails() {
         let mut templates = crate::core::capability::aggregate::AggregateListStatus::new("resource templates");
@@ -3540,16 +3564,37 @@ mod tests {
     #[serial_test::serial]
     async fn resource_details_emit_minimal_standard_read_metadata_and_canonical_link() {
         let resource = Resource::new("file:///guide.md", "Guide")
+            .with_title("Guide title")
             .with_description("Project architecture document")
-            .with_mime_type("text/markdown");
+            .with_mime_type("text/markdown")
+            .with_size(42)
+            .with_icons(vec![Icon::new("https://example.test/guide.svg")])
+            .with_meta(MetaObject(
+                serde_json::json!({"origin": "fixture"})
+                    .as_object()
+                    .expect("fixture metadata")
+                    .clone(),
+            ))
+            .with_annotations(Annotations::default().with_priority(0.75));
         let (broker, context, _) = resolver_fixture(vec![resource], Vec::new(), None).await;
         let canonical_uri = "mcpmate://resources/docs/file/guide.md";
+        let expected_resource = serde_json::json!({
+            "uri": canonical_uri,
+            "name": "Guide",
+            "title": "Guide title",
+            "description": "Project architecture document",
+            "mimeType": "text/markdown",
+            "size": 42, "icons": [{"src": "https://example.test/guide.svg"}],
+            "_meta": {"origin": "fixture"},
+            "annotations": {"priority": 0.75},
+        });
 
         let summary = details_with_context(&broker, &context, "resource", canonical_uri, "summary").await;
         let full = details_with_context(&broker, &context, "resource", canonical_uri, "full").await;
         let summary_json = text_response(&summary);
         let full_json = text_response(&full);
-        assert_eq!(summary_json.as_object().map(|value| value.len()), Some(11));
+        assert_exact_details_envelope(&summary_json);
+        assert_exact_details_envelope(&full_json);
         assert!(
             summary_json["workflow_hints"][0]
                 .as_str()
@@ -3573,11 +3618,19 @@ mod tests {
         assert_eq!(requirements["accepts_arguments"], false);
         assert_eq!(requirements["required_arguments"], serde_json::json!([]));
         assert_eq!(requirements["call_ready_without_arguments"], false);
-        assert!(matches!(&summary.content[1], ContentBlock::ResourceLink(link) if link.uri == canonical_uri));
-        assert_eq!(full_json["details"]["uri"], canonical_uri);
-        assert_eq!(full_json["details"]["mimeType"], "text/markdown");
-        assert_eq!(full_json["details"]["read_with"], "resources/read");
-        assert!(matches!(&full.content[1], ContentBlock::ResourceLink(link) if link.uri == canonical_uri));
+        let mut expected_full = expected_resource.clone();
+        expected_full["read_with"] = serde_json::json!("resources/read");
+        assert_eq!(full_json["details"], expected_full);
+        for result in [&summary, &full] {
+            assert_eq!(result.content.len(), 2);
+            let ContentBlock::ResourceLink(link) = &result.content[1] else {
+                panic!("expected ResourceLink after details envelope");
+            };
+            assert_eq!(
+                serde_json::to_value(link).expect("serialize ResourceLink"),
+                expected_resource
+            );
+        }
     }
 
     #[tokio::test]
@@ -3587,12 +3640,19 @@ mod tests {
             ResourceTemplate::new("file:///guides/{name}.md", "Guides").with_description("Read a guide by name");
         let (broker, context, _) = resolver_fixture(Vec::new(), vec![template], None).await;
         let canonical_template = "mcpmate://resources/template/docs/file/guides/{name}.md";
+        let expected_template = serde_json::json!({
+            "uriTemplate": canonical_template,
+            "name": "Guides",
+            "description": "Read a guide by name",
+        });
 
         let summary = details_with_context(&broker, &context, "resource_template", canonical_template, "summary").await;
         let full = details_with_context(&broker, &context, "resource_template", canonical_template, "full").await;
         let summary_json = text_response(&summary);
         let full_json = text_response(&full);
         assert_eq!([summary.content.len(), full.content.len()], [1, 1]);
+        assert_exact_details_envelope(&summary_json);
+        assert_exact_details_envelope(&full_json);
         assert_eq!(
             summary_json["details"],
             serde_json::json!({
@@ -3605,13 +3665,29 @@ mod tests {
         assert_eq!(summary_json["call_requirements"]["accepts_arguments"], false);
         assert_eq!(summary_json["call_requirements"]["call_ready_without_arguments"], false);
 
-        assert_eq!(full_json["details"]["uriTemplate"], canonical_template);
-        assert_eq!(full_json["details"]["read_with"], "resources/read");
-        assert!(
-            full_json["details"]["instruction"]
-                .as_str()
-                .expect("template instruction")
-                .contains("RFC 6570")
+        let mut expected_full = expected_template;
+        expected_full["read_with"] = serde_json::json!("resources/read");
+        expected_full["instruction"] =
+            serde_json::json!("Expand RFC 6570 variables to a concrete canonical URI, then invoke resources/read.");
+        assert_eq!(full_json["details"], expected_full);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn call_tool_schema_reserves_arguments_for_tool_and_prompt() {
+        let arguments = resolver_fixture(Vec::new(), Vec::new(), None).await.0.tools()
+            .into_iter()
+            .find(|tool| tool.name == super::MCPMATE_UCAN_CALL_TOOL)
+            .expect("public call tool")
+            .schema_as_json_value()["properties"]["arguments"]
+            .clone();
+
+        assert_eq!(
+            arguments,
+            serde_json::json!({
+                "type": "object",
+                "description": "Arguments for Tool or Prompt targets only. Resource and ResourceTemplate targets use a concrete canonical URI with resources/read.",
+            })
         );
     }
 
@@ -4596,6 +4672,10 @@ mod tests {
         let content = std::fs::read_to_string(&path).expect("read ucan config");
         let value: serde_json::Value = json5::from_str(&content).expect("parse json5");
         assert!(value.is_object(), "ucan.json5 root must be object");
+        let bundled = super::load_ucan_prompt_config_blocking().expect("load bundled prompt config");
+        let fallback = super::default_ucan_prompt_config();
+        assert_eq!(bundled.catalog_usage, fallback.catalog_usage);
+        assert_eq!(bundled.error_recovery_hint, fallback.error_recovery_hint);
     }
 
     #[test]
