@@ -1207,6 +1207,14 @@ impl CapabilityReadService {
         }
     }
 
+    #[allow(dead_code, reason = "Resource read wiring is introduced in a later slice.")]
+    pub(crate) async fn catalog_only(
+        &self,
+        ctx: &ListCtx,
+    ) -> Result<Option<ListResult>, CapabilityReadError> {
+        self.backend.try_cache_first(ctx).await
+    }
+
     pub(crate) async fn list(
         &self,
         ctx: &ListCtx,
@@ -2761,6 +2769,76 @@ mod tests {
             drop(provider);
             fixture.shutdown().await;
         }
+    }
+
+    #[tokio::test]
+    async fn catalog_only_preserves_catalog_projection_without_warming() {
+        let mut expected = result("sqlite_catalog");
+        expected.meta.duration_ms = 41;
+        let backend = Arc::new(FakeBackend::new(Ok(Some(expected))));
+        let fixture = test_peer().await;
+        let provider = Arc::new(FakeProvider::new(fixture.peer.clone()));
+        let service = CapabilityReadService::with_backend(backend.clone(), provider.clone(), 0);
+        let listed = service
+            .catalog_only(&list_ctx(Some(RefreshStrategy::Force)))
+            .await
+            .expect("catalog projection should be returned")
+            .expect("catalog projection should remain available");
+
+        assert_eq!(listed.meta.source, "sqlite_catalog");
+        assert_eq!(listed.meta.duration_ms, 41);
+        assert!(!listed.meta.had_peer);
+        assert_eq!(backend.cache_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(provider.existing_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(provider.fresh_calls.load(Ordering::Relaxed), 0);
+        drop(service);
+        drop(provider);
+        fixture.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn catalog_only_returns_missing_catalog_without_warming() {
+        let backend = Arc::new(FakeBackend::new(Ok(None)));
+        let fixture = test_peer().await;
+        let provider = Arc::new(FakeProvider::new(fixture.peer.clone()));
+        let service = CapabilityReadService::with_backend(backend.clone(), provider.clone(), 0);
+
+        let listed = service
+            .catalog_only(&list_ctx(None))
+            .await
+            .expect("missing catalog is not an error");
+
+        assert!(listed.is_none());
+        assert_eq!(backend.cache_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(provider.existing_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(provider.fresh_calls.load(Ordering::Relaxed), 0);
+        drop(service);
+        drop(provider);
+        fixture.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn catalog_only_propagates_catalog_error_without_warming() {
+        let backend = Arc::new(FakeBackend::new(Err(CapabilityReadError::CatalogOperation {
+            server_id: "server-1".to_string(),
+            source: anyhow::anyhow!("catalog query failed"),
+        })));
+        let fixture = test_peer().await;
+        let provider = Arc::new(FakeProvider::new(fixture.peer.clone()));
+        let service = CapabilityReadService::with_backend(backend.clone(), provider.clone(), 0);
+
+        let error = service
+            .catalog_only(&list_ctx(None))
+            .await
+            .expect_err("catalog read error should propagate");
+
+        assert!(matches!(error, CapabilityReadError::CatalogOperation { .. }));
+        assert_eq!(backend.cache_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(provider.existing_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(provider.fresh_calls.load(Ordering::Relaxed), 0);
+        drop(service);
+        drop(provider);
+        fixture.shutdown().await;
     }
 
     #[tokio::test]
