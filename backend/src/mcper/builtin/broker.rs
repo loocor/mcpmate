@@ -3703,30 +3703,34 @@ mod tests {
                     .is_err()
             );
         }
-        for (id, template) in [
-            ("template-a", "file:///guides/{name}.md"),
-            ("template-b", "file:///guides/{slug}.md"),
+        for (id, template, unique_name) in [
+            (
+                "template-a",
+                "file:///guides/{name}.md",
+                "mcpmate://resources/template/docs/file/guides/{name}.md",
+            ),
+            (
+                "template-b",
+                "file:///guides/{slug}.md",
+                "mcpmate://resources/template/docs/file/guides/{slug}.md",
+            ),
         ] {
             sqlx::query(
                 "INSERT INTO server_resource_templates (id, server_id, server_name, uri_template, unique_name, name) VALUES (?, 'server-a', 'docs', ?, ?, ?)",
             )
             .bind(id)
             .bind(template)
-            .bind(format!("mcpmate://resources/template/docs/file/guides/{id}.md"))
+            .bind(unique_name)
             .bind(id)
             .execute(&database.pool)
             .await
             .expect("insert ambiguous resolver template");
         }
-        assert!(
-            broker
-                .resolve_current_broker_resource_route(
-                    &context,
-                    "mcpmate://resources/template/docs/file/guides/rust.md"
-                )
-                .await
-                .is_err()
-        );
+        let error = broker
+            .resolve_current_broker_resource_route(&context, "mcpmate://resources/template/docs/file/guides/rust.md")
+            .await
+            .expect_err("overlapping templates are ambiguous");
+        assert!(error.chain().any(|cause| cause.to_string().contains("ambiguous")));
     }
 
     #[tokio::test]
