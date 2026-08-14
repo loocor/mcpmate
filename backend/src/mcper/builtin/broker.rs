@@ -65,9 +65,20 @@ fn ensure_catalog_result_is_authoritative(
     Ok(())
 }
 
-fn is_catalog_authority_error(error: &anyhow::Error) -> bool {
+pub(crate) fn is_catalog_authority_error(error: &anyhow::Error) -> bool {
     error.downcast_ref::<AggregateListCompletionError>().is_some()
         || error.downcast_ref::<CatalogAuthorityReadError>().is_some()
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("Invalid Broker Resource route: {source}")]
+pub(crate) struct InvalidBrokerResourceRouteError {
+    #[source]
+    source: anyhow::Error,
+}
+
+pub(crate) fn is_invalid_broker_resource_route_error(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<InvalidBrokerResourceRouteError>().is_some()
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1923,10 +1934,17 @@ impl BrokerService {
         &self,
         context: &ClientBuiltinContext,
     ) -> Result<UcanCatalogScope> {
-        let client_context = context.as_client_context();
+        self.resolve_ucan_catalog_scope_for_client(&context.as_client_context())
+            .await
+    }
+
+    async fn resolve_ucan_catalog_scope_for_client(
+        &self,
+        client_context: &ClientContext,
+    ) -> Result<UcanCatalogScope> {
         let visibility = ProfileVisibilityService::new(Some(self.database.clone()), None);
         let snapshot = visibility
-            .resolve_snapshot_for_client(&client_context)
+            .resolve_snapshot_for_client(client_context)
             .await
             .context("Failed to resolve UCan visibility snapshot")?;
         let visible_server_ids = snapshot.server_ids.iter().cloned().collect::<HashSet<_>>();
@@ -1939,7 +1957,7 @@ impl BrokerService {
             .collect();
 
         Ok(UcanCatalogScope {
-            client_context,
+            client_context: client_context.clone(),
             snapshot,
             visible_server_ids,
             enabled_servers,
@@ -1952,10 +1970,30 @@ impl BrokerService {
         context: &ClientBuiltinContext,
         external_uri: &str,
     ) -> Result<Option<crate::core::capability::resource_registry::ResolvedResourceRoute>> {
+        self.resolve_current_broker_resource_route_for_client(&context.as_client_context(), external_uri)
+            .await
+    }
+
+    pub(crate) async fn resolve_current_broker_resource_route_for_client(
+        &self,
+        client_context: &ClientContext,
+        external_uri: &str,
+    ) -> Result<Option<crate::core::capability::resource_registry::ResolvedResourceRoute>> {
         let route =
-            crate::core::capability::resource_registry::resolve_resource_route(&self.database.pool, external_uri)
+            match crate::core::capability::resource_registry::resolve_resource_route(&self.database.pool, external_uri)
                 .await
-                .with_context(|| format!("Failed to resolve canonical resource URI '{external_uri}'"))?;
+            {
+                Ok(route) => route,
+                Err(error)
+                    if error
+                        .chain()
+                        .any(|source| source.downcast_ref::<sqlx::Error>().is_some()) =>
+                {
+                    return Err(error)
+                        .with_context(|| format!("Failed to resolve canonical resource URI '{external_uri}'"));
+                }
+                Err(error) => return Err(InvalidBrokerResourceRouteError { source: error }.into()),
+            };
         if matches!(
             &route.source,
             crate::core::capability::resource_registry::ResourceRouteSource::Issued
@@ -1963,7 +2001,7 @@ impl BrokerService {
             return Ok(None);
         }
 
-        let scope = self.resolve_ucan_catalog_scope(context).await?;
+        let scope = self.resolve_ucan_catalog_scope_for_client(client_context).await?;
         if !scope.visible_server_ids.contains(&route.server_id)
             || !scope
                 .enabled_servers
@@ -1973,7 +2011,7 @@ impl BrokerService {
             return Ok(None);
         }
         if crate::core::proxy::server::unify_directly_exposed_resource_route_allowed(
-            context.unify_workspace.as_ref(),
+            client_context.unify_workspace.as_ref(),
             &scope.eligible_server_ids,
             &route.server_id,
             &route,

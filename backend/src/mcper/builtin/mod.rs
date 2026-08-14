@@ -13,6 +13,7 @@ mod registry;
 mod types;
 
 pub use broker::BrokerService;
+pub(crate) use broker::{is_catalog_authority_error, is_invalid_broker_resource_route_error};
 pub use client::{ClientBuiltinContext, ClientService};
 pub use names::*;
 pub use profile::ProfileService;

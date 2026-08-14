@@ -37,10 +37,9 @@ pub(super) async fn resolve_external_resource_target(
     Ok(ResolvedExternalResourceTarget { server_id, route })
 }
 
-pub(super) async fn resolve_authorized_external_resource_target(
+pub(super) async fn resolve_active_external_resource_target(
     server: &ProxyServer,
-    client: &crate::core::proxy::server::common::ClientContext,
-    external_uri: &str,
+    surface_route: crate::core::capability::surface_read::ActiveResourceRoute,
 ) -> Result<ResolvedExternalResourceTarget, McpError> {
     let Some(db) = &server.database else {
         return Err(McpError::internal_error(
@@ -48,7 +47,6 @@ pub(super) async fn resolve_authorized_external_resource_target(
             None,
         ));
     };
-    let surface_route = server.resolve_active_resource_route(client, external_uri).await?;
     let server_name: String = sqlx::query_scalar("SELECT name FROM server_config WHERE id = ?")
         .bind(&surface_route.source_server_id)
         .fetch_one(&db.pool)
@@ -79,6 +77,64 @@ pub(super) async fn resolve_authorized_external_resource_target(
             source,
         },
     })
+}
+
+pub(super) async fn resolve_authorized_external_resource_target(
+    server: &ProxyServer,
+    client: &crate::core::proxy::server::common::ClientContext,
+    external_uri: &str,
+) -> Result<ResolvedExternalResourceTarget, McpError> {
+    let surface_route = server.resolve_active_resource_route(client, external_uri).await?.ok_or_else(|| {
+        McpError::invalid_params(
+            format!(
+                "Resource is not in the active Surface publication: invalid surface value for active surface resource route: {}/{}",
+                client.client_id, external_uri
+            ),
+            None,
+        )
+    })?;
+    resolve_active_external_resource_target(server, surface_route).await
+}
+
+async fn resolve_broker_external_resource_target(
+    server: &ProxyServer,
+    client: &crate::core::proxy::server::common::ClientContext,
+    external_uri: &str,
+) -> Result<ResolvedExternalResourceTarget, McpError> {
+    let database = server.database.as_ref().ok_or_else(|| {
+        McpError::internal_error(
+            "Resource routing requires database-backed registry metadata".to_string(),
+            None,
+        )
+    })?;
+    let broker = crate::mcper::builtin::BrokerService::new(database.clone(), server.connection_pool.clone());
+    let route = match broker
+        .resolve_current_broker_resource_route_for_client(client, external_uri)
+        .await
+    {
+        Ok(Some(route)) => route,
+        Ok(None) => {
+            return Err(McpError::invalid_params(
+                format!("Resource '{external_uri}' is not available in the current MCP surface"),
+                None,
+            ));
+        }
+        Err(error) if crate::mcper::builtin::is_catalog_authority_error(&error) => {
+            return Err(McpError::internal_error(
+                "The current capability directory could not be completed".to_string(),
+                Some(serde_json::json!({
+                    "error_code": "catalog_incomplete",
+                    "retry_eligible": true,
+                })),
+            ));
+        }
+        Err(error) if crate::mcper::builtin::is_invalid_broker_resource_route_error(&error) => {
+            return Err(McpError::invalid_params(error.to_string(), None));
+        }
+        Err(error) => return Err(McpError::internal_error(error.to_string(), None)),
+    };
+    let server_id = route.server_id.clone();
+    Ok(ResolvedExternalResourceTarget { server_id, route })
 }
 
 fn map_resource_read_error(error: anyhow::Error) -> McpError {
@@ -153,7 +209,21 @@ pub(super) async fn read_resource(
     let client = server.resolve_bound_client_context(&_context).await?;
     tracing::debug!("Reading resource: {}", request.uri);
 
-    let target = resolve_authorized_external_resource_target(server, &client, &request.uri).await?;
+    let target = match server.resolve_active_resource_route(&client, &request.uri).await? {
+        Some(surface_route) => resolve_active_external_resource_target(server, surface_route).await?,
+        None if matches!(client.config_mode.as_deref(), Some("unify")) => {
+            resolve_broker_external_resource_target(server, &client, &request.uri).await?
+        }
+        None => {
+            return Err(McpError::invalid_params(
+                format!(
+                    "Resource is not in the active Surface publication: invalid surface value for active surface resource route: {}/{}",
+                    client.client_id, request.uri
+                ),
+                None,
+            ));
+        }
+    };
     let server_filter = target.server_id.clone();
     let lookup_uri = target.upstream_uri().to_string();
 

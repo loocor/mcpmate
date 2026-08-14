@@ -258,13 +258,13 @@ impl ProxyServer {
         &self,
         client: &ClientContext,
         external_uri: &str,
-    ) -> Result<crate::core::capability::surface_read::ActiveResourceRoute, rmcp::ErrorData> {
+    ) -> Result<Option<crate::core::capability::surface_read::ActiveResourceRoute>, rmcp::ErrorData> {
         let access = self.resolve_consumer_access_context(client).await?;
         let database = self.database.as_ref().ok_or_else(|| {
             rmcp::ErrorData::internal_error("Active Surface resolution requires database access".to_string(), None)
         })?;
         crate::core::capability::surface_read::SurfaceReader::new(database.pool.clone())
-            .resolve_resource_route(&access.consumer_id, external_uri)
+            .try_resolve_resource_route(&access.consumer_id, external_uri)
             .await
             .map_err(|error| {
                 rmcp::ErrorData::invalid_params(
@@ -1399,7 +1399,13 @@ impl ProxyServer {
             observed_client_info: binding.observed_client_info.clone(),
         };
         drop(binding);
-        if self.resolve_active_resource_route(&client, uri).await.is_err() {
+        if self
+            .resolve_active_resource_route(&client, uri)
+            .await
+            .ok()
+            .flatten()
+            .is_none()
+        {
             self.remove_resource_subscription(session_id, uri);
             return false;
         }
@@ -2186,6 +2192,7 @@ mod tests {
     use axum::http::Request;
     use rmcp::ServiceExt;
     use sqlx::sqlite::SqlitePoolOptions;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::TempDir;
 
     #[derive(Clone)]
@@ -2249,7 +2256,9 @@ mod tests {
     }
 
     #[derive(Clone)]
-    struct SubscriptionResourceServer;
+    struct SubscriptionResourceServer {
+        resource_list_calls: Arc<AtomicUsize>,
+    }
 
     impl rmcp::ServerHandler for SubscriptionResourceServer {
         fn get_info(&self) -> rmcp::model::ServerInfo {
@@ -2261,6 +2270,7 @@ mod tests {
             _request: Option<rmcp::model::PaginatedRequestParams>,
             _context: rmcp::service::RequestContext<rmcp::RoleServer>,
         ) -> Result<rmcp::model::ListResourcesResult, rmcp::ErrorData> {
+            self.resource_list_calls.fetch_add(1, Ordering::SeqCst);
             Err(rmcp::ErrorData::internal_error(
                 "Intentional resources/list failure".to_string(),
                 None,
@@ -2285,13 +2295,17 @@ mod tests {
     async fn install_subscription_resource_connection(
         server: &ProxyServer,
         server_id: &str,
-    ) {
+    ) -> Arc<AtomicUsize> {
         let (server_transport, client_transport) = tokio::io::duplex(4096);
+        let resource_list_calls = Arc::new(AtomicUsize::new(0));
+        let upstream_resource_list_calls = resource_list_calls.clone();
         tokio::spawn(async move {
-            let service = SubscriptionResourceServer
-                .serve(server_transport)
-                .await
-                .expect("serve subscription resource");
+            let service = SubscriptionResourceServer {
+                resource_list_calls: upstream_resource_list_calls,
+            }
+            .serve(server_transport)
+            .await
+            .expect("serve subscription resource");
             service.waiting().await.expect("wait for subscription resource");
         });
         let handler = crate::core::transport::client::UpstreamClientHandler::new("subscription-resource".to_string());
@@ -2327,6 +2341,7 @@ mod tests {
             .insert(instance_id.clone(), connection);
         pool.production_routes
             .insert(crate::core::pool::ProductionRouteKey::shareable(server_id), instance_id);
+        resource_list_calls
     }
 
     async fn subscription_request_context(
@@ -2412,7 +2427,7 @@ mod tests {
                 .expect("decode subscription initialize fixture"),
             ),
             Vec::new(),
-            Vec::new(),
+            vec![rmcp::model::Resource::new("fixture://documents/guide.md", "Guide")],
             Vec::new(),
             vec![
                 serde_json::from_value(serde_json::json!({
@@ -2516,6 +2531,33 @@ mod tests {
         let mut server = ProxyServer::new(Arc::new(Config::default()));
         server.database = Some(database);
         (temp_dir, pool, server, server_id, profile_id)
+    }
+
+    async fn bind_resource_client(
+        server: &ProxyServer,
+        client_id: &str,
+        session_id: &str,
+        config_mode: &str,
+        unify_workspace: Option<crate::clients::models::UnifyDirectExposureConfig>,
+    ) -> rmcp::service::RequestContext<rmcp::RoleServer> {
+        let client = ClientContext {
+            client_id: client_id.to_string(),
+            session_id: Some(session_id.to_string()),
+            profile_id: None,
+            config_mode: Some(config_mode.to_string()),
+            unify_workspace,
+            surface_fingerprint: None,
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedQuery,
+            observed_client_info: None,
+        };
+        server
+            .client_context_resolver
+            .bind_session(session_id, &client)
+            .await
+            .expect("bind Resource Consumer");
+        let (context, _client_service, _server_service) = subscription_request_context(client_id, session_id).await;
+        context
     }
 
     #[tokio::test]
@@ -2916,25 +2958,8 @@ mod tests {
             }],
             ..Default::default()
         };
-        let client = ClientContext {
-            client_id: "unify-client".to_string(),
-            session_id: Some(session_id.to_string()),
-            profile_id: None,
-            config_mode: Some("unify".to_string()),
-            unify_workspace: Some(workspace),
-            surface_fingerprint: None,
-            transport: ClientTransport::StreamableHttp,
-            source: ClientIdentitySource::ManagedQuery,
-            observed_client_info: None,
-        };
-        server
-            .client_context_resolver
-            .bind_session(session_id, &client)
-            .await
-            .expect("bind unify client");
-        let (context, _client_service, _server_service) =
-            subscription_request_context("unify-client", session_id).await;
-        install_subscription_resource_connection(&server, &server_id).await;
+        let context = bind_resource_client(&server, "unify-client", session_id, "unify", Some(workspace)).await;
+        let _resource_list_calls = install_subscription_resource_connection(&server, &server_id).await;
 
         let selected = crate::core::capability::resource_uri::encode_resource_template(
             "subscription_docs",
@@ -2980,6 +3005,125 @@ mod tests {
                 .await
                 .is_err()
         );
+        crate::core::capability::resolver::remove_by_id(&server_id).await;
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn broker_only_standard_resource_read_uses_current_catalog_route_without_upstream_list() {
+        let (_temp_dir, _pool, server, server_id, _profile_id) = create_subscription_test_server().await;
+        let session_id = "broker-only-standard-read";
+        let context = bind_resource_client(
+            &server,
+            "unify-client",
+            session_id,
+            "unify",
+            Some(crate::clients::models::UnifyDirectExposureConfig {
+                route_mode: crate::clients::models::UnifyRouteMode::BrokerOnly,
+                ..Default::default()
+            }),
+        )
+        .await;
+        let resource_list_calls = install_subscription_resource_connection(&server, &server_id).await;
+        let canonical_uri = crate::core::capability::resource_uri::encode_resource_uri(
+            "subscription_docs",
+            "fixture://documents/guide.md",
+        )
+        .expect("encode cataloged listed Resource URI");
+
+        let result = crate::core::proxy::server::resources::read_resource(
+            &server,
+            ReadResourceRequestParams::new(canonical_uri.clone()),
+            context,
+        )
+        .await
+        .expect("read BrokerOnly canonical Resource through the standard handler");
+
+        assert_eq!(resource_list_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(result.contents.len(), 1);
+        match &result.contents[0] {
+            rmcp::model::ResourceContents::TextResourceContents { uri, text, .. } => {
+                assert_eq!(uri, &canonical_uri);
+                assert_eq!(text, "read:fixture://documents/guide.md");
+            }
+            rmcp::model::ResourceContents::BlobResourceContents { .. } => panic!("expected text resource"),
+            _ => panic!("expected known resource contents"),
+        }
+
+        crate::core::capability::resolver::remove_by_id(&server_id).await;
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn broker_only_standard_resource_read_returns_catalog_incomplete_error_data() {
+        let (_temp_dir, pool, server, server_id, _profile_id) = create_subscription_test_server().await;
+        let context = bind_resource_client(
+            &server,
+            "unify-client",
+            "broker-only-catalog-error",
+            "unify",
+            Some(crate::clients::models::UnifyDirectExposureConfig {
+                route_mode: crate::clients::models::UnifyRouteMode::BrokerOnly,
+                ..Default::default()
+            }),
+        )
+        .await;
+        server
+            .database
+            .as_ref()
+            .expect("database")
+            .capability_cache
+            .invalidate_server(&server_id)
+            .await;
+        sqlx::query("UPDATE capability_server_snapshots SET snapshot_state = 'invalidated' WHERE server_id = ?")
+            .bind(&server_id)
+            .execute(&pool)
+            .await
+            .expect("invalidate trusted resource catalog");
+
+        let error = crate::core::proxy::server::resources::read_resource(
+            &server,
+            ReadResourceRequestParams::new(
+                crate::core::capability::resource_uri::encode_resource_uri(
+                    "subscription_docs",
+                    "fixture://documents/guide.md",
+                )
+                .expect("encode cataloged listed Resource URI"),
+            ),
+            context,
+        )
+        .await
+        .expect_err("missing catalog authority must fail standard Broker read");
+
+        assert_eq!(error.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
+        assert_eq!(
+            error.data,
+            Some(serde_json::json!({"error_code": "catalog_incomplete", "retry_eligible": true}))
+        );
+        crate::core::capability::resolver::remove_by_id(&server_id).await;
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn non_unify_standard_resource_read_does_not_enter_broker_resolution() {
+        let (_temp_dir, _pool, server, server_id, _profile_id) = create_subscription_test_server().await;
+        let context = bind_resource_client(&server, "hosted-client", "hosted-standard-read", "hosted", None).await;
+
+        let error = crate::core::proxy::server::resources::read_resource(
+            &server,
+            ReadResourceRequestParams::new(
+                crate::core::capability::resource_uri::encode_resource_uri(
+                    "subscription_docs",
+                    "fixture://documents/guide.md",
+                )
+                .expect("encode cataloged listed Resource URI"),
+            ),
+            context,
+        )
+        .await
+        .expect_err("non-Unify Consumer must not read a Broker-only Resource");
+
+        assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
         crate::core::capability::resolver::remove_by_id(&server_id).await;
     }
 
