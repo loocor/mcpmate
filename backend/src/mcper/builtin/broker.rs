@@ -3636,14 +3636,29 @@ mod tests {
     #[tokio::test]
     #[serial_test::serial]
     async fn resource_template_details_use_uri_template_as_the_only_parameter_contract() {
-        let template =
-            ResourceTemplate::new("file:///guides/{name}.md", "Guides").with_description("Read a guide by name");
+        let template = ResourceTemplate::new("file:///guides/{name}.md", "Guides")
+            .with_title("Guide template")
+            .with_description("Read a guide by name")
+            .with_mime_type("text/markdown")
+            .with_icons(vec![Icon::new("https://example.test/guides.svg")])
+            .with_meta(MetaObject(
+                serde_json::json!({"origin": "fixture"})
+                    .as_object()
+                    .expect("fixture metadata")
+                    .clone(),
+            ))
+            .with_annotations(Annotations::default().with_priority(0.5));
         let (broker, context, _) = resolver_fixture(Vec::new(), vec![template], None).await;
         let canonical_template = "mcpmate://resources/template/docs/file/guides/{name}.md";
         let expected_template = serde_json::json!({
             "uriTemplate": canonical_template,
             "name": "Guides",
+            "title": "Guide template",
             "description": "Read a guide by name",
+            "mimeType": "text/markdown",
+            "icons": [{"src": "https://example.test/guides.svg"}],
+            "_meta": {"origin": "fixture"},
+            "annotations": {"priority": 0.5},
         });
 
         let summary = details_with_context(&broker, &context, "resource_template", canonical_template, "summary").await;
