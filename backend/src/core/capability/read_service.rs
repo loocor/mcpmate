@@ -1207,7 +1207,6 @@ impl CapabilityReadService {
         }
     }
 
-    #[allow(dead_code, reason = "Resource read wiring is introduced in a later slice.")]
     pub(crate) async fn catalog_only(
         &self,
         ctx: &ListCtx,
@@ -2022,6 +2021,7 @@ mod tests {
     };
     use rmcp::{
         ServerHandler, ServiceExt,
+        model::Tool,
         service::{Peer, RoleClient, RunningService},
     };
     use tokio::sync::Mutex;
@@ -2087,6 +2087,10 @@ mod tests {
         coordination_fingerprint: std::sync::Mutex<String>,
         cache_result: Mutex<Option<Result<Option<ListResult>, CapabilityReadError>>>,
         cache_calls: AtomicUsize,
+        persisted_kind_calls: AtomicUsize,
+        canonical_name_calls: AtomicUsize,
+        discovery_calls: AtomicUsize,
+        projection_calls: AtomicUsize,
         discoveries: Mutex<VecDeque<Result<CapabilityDiscoveryObservation, RuntimeFailure>>>,
         warmed_cache: Mutex<HashMap<CapabilityType, ListResult>>,
         evidence: Mutex<Vec<EvidenceRecord>>,
@@ -2210,6 +2214,10 @@ mod tests {
                 coordination_fingerprint: std::sync::Mutex::new("test-config".to_string()),
                 cache_result: Mutex::new(Some(cache_result)),
                 cache_calls: AtomicUsize::new(0),
+                persisted_kind_calls: AtomicUsize::new(0),
+                canonical_name_calls: AtomicUsize::new(0),
+                discovery_calls: AtomicUsize::new(0),
+                projection_calls: AtomicUsize::new(0),
                 discoveries: Mutex::new(VecDeque::new()),
                 warmed_cache: Mutex::new(HashMap::new()),
                 evidence: Mutex::new(Vec::new()),
@@ -2336,11 +2344,20 @@ mod tests {
             self.cache_result.lock().await.take().unwrap_or(Ok(None))
         }
 
+        async fn persisted_kind_failure(
+            &self,
+            _ctx: &ListCtx,
+        ) -> Result<Option<RuntimeFailure>, CapabilityReadError> {
+            self.persisted_kind_calls.fetch_add(1, Ordering::Relaxed);
+            Ok(None)
+        }
+
         async fn discover(
             &self,
             _ctx: &ListCtx,
             _owner: &CapabilityOwner,
         ) -> Result<CapabilityDiscoveryObservation, RuntimeFailure> {
+            self.discovery_calls.fetch_add(1, Ordering::Relaxed);
             self.discoveries
                 .lock()
                 .await
@@ -2352,6 +2369,7 @@ mod tests {
             &self,
             _ctx: &ListCtx,
         ) -> Result<String, CapabilityReadError> {
+            self.canonical_name_calls.fetch_add(1, Ordering::Relaxed);
             Ok("docs".to_string())
         }
 
@@ -2371,6 +2389,7 @@ mod tests {
             items: crate::core::capability::runtime::CapabilityItems,
             _committed_revision: i64,
         ) -> Result<ListResult, CapabilityProjectionFailure> {
+            self.projection_calls.fetch_add(1, Ordering::Relaxed);
             if let Some(error) = self.projection_error.lock().await.take() {
                 return Err(error);
             }
@@ -2417,6 +2436,7 @@ mod tests {
             _ctx: &ListCtx,
             _owner: &CapabilityOwner,
         ) -> Result<runtime::CapabilityFullDiscoveryObservation, RuntimeFailure> {
+            self.discovery_calls.fetch_add(1, Ordering::Relaxed);
             self.discovery_started.add_permits(1);
             if let Some(gate) = self.discovery_gate.lock().await.clone() {
                 gate.acquire().await.expect("discovery test gate remains open").forget();
@@ -2773,8 +2793,19 @@ mod tests {
 
     #[tokio::test]
     async fn catalog_only_preserves_catalog_projection_without_warming() {
-        let mut expected = result("sqlite_catalog");
-        expected.meta.duration_ms = 41;
+        let expected = ListResult {
+            items: CapabilityItems::Tools(vec![Tool::new(
+                "literal-catalog-tool",
+                "Literal catalog tool",
+                Arc::new(serde_json::Map::new()),
+            )]),
+            meta: Meta {
+                cache_hit: true,
+                source: "sqlite_catalog".to_string(),
+                duration_ms: 41,
+                had_peer: false,
+            },
+        };
         let backend = Arc::new(FakeBackend::new(Ok(Some(expected))));
         let fixture = test_peer().await;
         let provider = Arc::new(FakeProvider::new(fixture.peer.clone()));
@@ -2787,8 +2818,21 @@ mod tests {
 
         assert_eq!(listed.meta.source, "sqlite_catalog");
         assert_eq!(listed.meta.duration_ms, 41);
+        assert!(listed.meta.cache_hit);
         assert!(!listed.meta.had_peer);
+        let tools = listed
+            .items
+            .into_tools()
+            .expect("catalog projection should retain tool items");
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name.as_ref(), "literal-catalog-tool");
         assert_eq!(backend.cache_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(backend.persisted_kind_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(backend.canonical_name_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(backend.discovery_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(backend.projection_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(backend.commits.load(Ordering::Relaxed), 0);
+        assert!(backend.warmed_cache.lock().await.is_empty());
         assert_eq!(provider.existing_calls.load(Ordering::Relaxed), 0);
         assert_eq!(provider.fresh_calls.load(Ordering::Relaxed), 0);
         drop(service);
@@ -2810,6 +2854,12 @@ mod tests {
 
         assert!(listed.is_none());
         assert_eq!(backend.cache_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(backend.persisted_kind_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(backend.canonical_name_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(backend.discovery_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(backend.projection_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(backend.commits.load(Ordering::Relaxed), 0);
+        assert!(backend.warmed_cache.lock().await.is_empty());
         assert_eq!(provider.existing_calls.load(Ordering::Relaxed), 0);
         assert_eq!(provider.fresh_calls.load(Ordering::Relaxed), 0);
         drop(service);
@@ -2832,8 +2882,20 @@ mod tests {
             .await
             .expect_err("catalog read error should propagate");
 
-        assert!(matches!(error, CapabilityReadError::CatalogOperation { .. }));
+        match error {
+            CapabilityReadError::CatalogOperation { server_id, source } => {
+                assert_eq!(server_id, "server-1");
+                assert_eq!(source.to_string(), "catalog query failed");
+            }
+            other => panic!("catalog error must be forwarded unchanged: {other}"),
+        }
         assert_eq!(backend.cache_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(backend.persisted_kind_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(backend.canonical_name_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(backend.discovery_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(backend.projection_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(backend.commits.load(Ordering::Relaxed), 0);
+        assert!(backend.warmed_cache.lock().await.is_empty());
         assert_eq!(provider.existing_calls.load(Ordering::Relaxed), 0);
         assert_eq!(provider.fresh_calls.load(Ordering::Relaxed), 0);
         drop(service);

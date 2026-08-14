@@ -98,20 +98,21 @@ pub fn unify_directly_exposed_resource_allowed(
     }
 }
 
-#[cfg(test)]
-pub(crate) fn unify_directly_exposed_resource_route_allowed(
-    workspace: Option<&UnifyDirectExposureConfig>,
-    eligible_server_ids: &HashSet<String>,
-    server_id: &str,
-    route: &crate::core::capability::resource_registry::ResolvedResourceRoute,
-) -> bool {
-    match &route.source {
-        crate::core::capability::resource_registry::ResourceRouteSource::Template { upstream_template, .. } => {
-            unify_directly_exposed_template_allowed(workspace, eligible_server_ids, server_id, upstream_template)
-        }
-        crate::core::capability::resource_registry::ResourceRouteSource::Listed
-        | crate::core::capability::resource_registry::ResourceRouteSource::Issued => {
-            unify_directly_exposed_resource_allowed(workspace, eligible_server_ids, server_id, &route.upstream_uri)
+impl ClientContext {
+    pub(crate) fn unify_directly_exposed_resource_route_allowed(
+        workspace: Option<&UnifyDirectExposureConfig>,
+        eligible_server_ids: &HashSet<String>,
+        server_id: &str,
+        route: &crate::core::capability::resource_registry::ResolvedResourceRoute,
+    ) -> bool {
+        match &route.source {
+            crate::core::capability::resource_registry::ResourceRouteSource::Template { upstream_template, .. } => {
+                unify_directly_exposed_template_allowed(workspace, eligible_server_ids, server_id, upstream_template)
+            }
+            crate::core::capability::resource_registry::ResourceRouteSource::Listed
+            | crate::core::capability::resource_registry::ResourceRouteSource::Issued => {
+                unify_directly_exposed_resource_allowed(workspace, eligible_server_ids, server_id, &route.upstream_uri)
+            }
         }
     }
 }
@@ -1074,25 +1075,25 @@ mod tests {
             },
         };
 
-        assert!(unify_directly_exposed_resource_route_allowed(
+        assert!(ClientContext::unify_directly_exposed_resource_route_allowed(
             Some(&workspace),
             &eligible,
             server_id,
             &static_route,
         ));
-        assert!(unify_directly_exposed_resource_route_allowed(
+        assert!(ClientContext::unify_directly_exposed_resource_route_allowed(
             Some(&workspace),
             &eligible,
             server_id,
             &template_route,
         ));
-        assert!(!unify_directly_exposed_resource_route_allowed(
+        assert!(!ClientContext::unify_directly_exposed_resource_route_allowed(
             Some(&workspace),
             &eligible,
             server_id,
             &denied_template,
         ));
-        assert!(!unify_directly_exposed_resource_route_allowed(
+        assert!(!ClientContext::unify_directly_exposed_resource_route_allowed(
             None,
             &eligible,
             server_id,
@@ -1102,7 +1103,7 @@ mod tests {
             route_mode: crate::clients::models::UnifyRouteMode::BrokerOnly,
             ..workspace.clone()
         };
-        assert!(!unify_directly_exposed_resource_route_allowed(
+        assert!(!ClientContext::unify_directly_exposed_resource_route_allowed(
             Some(&broker_only),
             &eligible,
             server_id,
