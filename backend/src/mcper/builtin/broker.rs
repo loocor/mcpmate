@@ -67,43 +67,28 @@ fn ensure_catalog_result_is_authoritative(
 
 fn is_catalog_authority_error(error: &anyhow::Error) -> bool {
     error.downcast_ref::<AggregateListCompletionError>().is_some()
+        || error.downcast_ref::<CatalogAuthorityReadError>().is_some()
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("Trusted resource catalog is unavailable for server '{server_name}' ({server_id}): {source}")]
+struct CatalogAuthorityReadError {
+    server_id: String,
+    server_name: String,
+    #[source]
+    source: anyhow::Error,
 }
 
 fn catalog_authority_error_for_route(
-    route: &crate::core::capability::resource_registry::ResolvedResourceRoute
+    server_id: &str,
+    server_name: &str,
+    source: anyhow::Error,
 ) -> anyhow::Error {
-    let mut aggregate = AggregateListStatus::new("resource catalog");
-    aggregate.record_failure(
-        &route.server_id,
-        &route.server_name,
-        "trusted catalog snapshot is unavailable",
-    );
-    anyhow::Error::from(
-        aggregate
-            .finish_for_result(false)
-            .expect_err("a missing target catalog must be non-authoritative"),
-    )
-}
-
-fn listed_resource_route_is_current(
-    route: &crate::core::capability::resource_registry::ResolvedResourceRoute,
-    resources: &[Resource],
-) -> bool {
-    resources
-        .iter()
-        .any(|resource| resource.uri.as_str() == route.external_uri.as_str())
-}
-
-fn template_resource_route_is_current(
-    route: &crate::core::capability::resource_registry::ResolvedResourceRoute,
-    raw_templates: &[String],
-) -> bool {
-    let crate::core::capability::resource_registry::ResourceRouteSource::Template { upstream_template, .. } =
-        &route.source
-    else {
-        return false;
-    };
-    raw_templates.iter().any(|template| template == upstream_template)
+    anyhow::Error::new(CatalogAuthorityReadError {
+        server_id: server_id.to_string(),
+        server_name: server_name.to_string(),
+        source,
+    })
 }
 
 /// Structured error response for UCAN tools, designed for LLM parsing and recovery.
@@ -1987,7 +1972,7 @@ impl BrokerService {
         {
             return Ok(None);
         }
-        if ClientContext::unify_directly_exposed_resource_route_allowed(
+        if crate::core::proxy::server::unify_directly_exposed_resource_route_allowed(
             context.unify_workspace.as_ref(),
             &scope.eligible_server_ids,
             &route.server_id,
@@ -2016,13 +2001,29 @@ impl BrokerService {
             visibility_snapshot: Some(Arc::new(scope.snapshot)),
             name_domain: crate::core::capability::runtime::NameDomain::External,
         };
-        let catalog = crate::core::capability::read_service::CapabilityReadService::from_runtime(
+        let catalog = match crate::core::capability::read_service::CapabilityReadService::from_runtime(
             self.database.clone(),
             self.connection_pool.clone(),
         )
         .catalog_only(&ctx)
-        .await?
-        .ok_or_else(|| catalog_authority_error_for_route(&route))?;
+        .await
+        {
+            Ok(Some(catalog)) => catalog,
+            Ok(None) => {
+                return Err(catalog_authority_error_for_route(
+                    &route.server_id,
+                    &route.server_name,
+                    anyhow!("trusted catalog snapshot is unavailable"),
+                ));
+            }
+            Err(error) => {
+                return Err(catalog_authority_error_for_route(
+                    &route.server_id,
+                    &route.server_name,
+                    anyhow::Error::new(error),
+                ));
+            }
+        };
 
         let current = match (&route.source, catalog.items) {
             (crate::core::capability::resource_registry::ResourceRouteSource::Listed, items) => {
@@ -2032,27 +2033,34 @@ impl BrokerService {
                         route.server_id
                     )
                 })?;
-                listed_resource_route_is_current(&route, &resources)
+                resources
+                    .iter()
+                    .any(|resource| resource.uri.as_str() == route.external_uri.as_str())
             }
-            (crate::core::capability::resource_registry::ResourceRouteSource::Template { .. }, items) => {
+            (
+                crate::core::capability::resource_registry::ResourceRouteSource::Template { upstream_template, .. },
+                items,
+            ) => {
                 let templates = items.into_resource_templates().ok_or_else(|| {
                     anyhow!(
                         "Resource template catalog returned a different capability kind for server '{}'",
                         route.server_id
                     )
                 })?;
-                let mut raw_templates = Vec::with_capacity(templates.len());
+                let mut current = false;
                 for template in templates {
-                    raw_templates.push(
-                        crate::core::proxy::server::resolve_direct_surface_value(
-                            NamingKind::ResourceTemplate,
-                            &route.server_id,
-                            template.uri_template.as_ref(),
-                        )
-                        .await?,
-                    );
+                    let raw_template = crate::core::proxy::server::resolve_direct_surface_value(
+                        NamingKind::ResourceTemplate,
+                        &route.server_id,
+                        template.uri_template.as_ref(),
+                    )
+                    .await?;
+                    if raw_template == *upstream_template {
+                        current = true;
+                        break;
+                    }
                 }
-                template_resource_route_is_current(&route, &raw_templates)
+                current
             }
             (crate::core::capability::resource_registry::ResourceRouteSource::Issued, _) => unreachable!(),
         };
@@ -3331,12 +3339,24 @@ mod tests {
         CapabilitySource, UnifyDirectExposureConfig, UnifyDirectPromptSurface, UnifyDirectResourceSurface,
         UnifyDirectToolSurface, UnifyRouteMode,
     };
-    use crate::core::capability::resource_registry::{ResolvedResourceRoute, ResourceRouteSource};
+    use crate::config::{
+        database::Database,
+        models::{Server, ServerTransportDraft},
+        server::upsert_server_definition,
+    };
+    use crate::core::{
+        capability::resource_registry::issue_resource_route,
+        models::Config,
+        pool::{CapSyncFlags, UpstreamConnectionPool},
+    };
     use rmcp::model::{Prompt, Resource, ResourceTemplate, Tool};
+    use sqlx::sqlite::SqlitePoolOptions;
     use std::collections::HashSet;
+    use std::path::PathBuf;
     use std::sync::{Arc, Mutex as StdMutex};
     use std::time::Duration;
     use tempfile::tempdir;
+    use tokio::sync::Mutex;
 
     static ENV_LOCK: StdMutex<()> = StdMutex::new(());
 
@@ -3353,6 +3373,79 @@ mod tests {
             custom_profile_id: None,
             unify_workspace: None,
         }
+    }
+
+    async fn resolver_fixture(
+        resources: Vec<Resource>,
+        templates: Vec<ResourceTemplate>,
+        workspace: Option<UnifyDirectExposureConfig>,
+    ) -> (super::BrokerService, ClientBuiltinContext, Arc<Database>) {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect resolver database");
+        crate::test_helpers::prepare_config_database(&pool).await;
+        crate::config::server::init::initialize_server_tables(&pool)
+            .await
+            .expect("initialize server tables");
+        crate::config::client::init::initialize_client_table(&pool)
+            .await
+            .expect("initialize client table");
+        crate::config::profile::init::initialize_profile_tables(&pool)
+            .await
+            .expect("initialize profile tables");
+        crate::config::database::initialize_capability_catalog(&pool)
+            .await
+            .expect("initialize catalog");
+        crate::core::capability::naming::initialize(pool.clone());
+
+        let mut server = Server::new_stdio("docs".to_string(), Some("fixture-command".to_string()));
+        server.id = Some("server-a".to_string());
+        upsert_server_definition(
+            &pool,
+            &server,
+            &ServerTransportDraft::Stdio {
+                command: Some("fixture-command".to_string()),
+                args: Vec::new(),
+                env: Default::default(),
+            },
+        )
+        .await
+        .expect("insert resolver server");
+        sqlx::query("UPDATE server_config SET unify_direct_exposure_eligible = 1 WHERE id = 'server-a'")
+            .execute(&pool)
+            .await
+            .expect("enable direct exposure fixture");
+        crate::config::server::capabilities::commit_protocol_items_for_kinds(
+            &pool,
+            "server-a",
+            "docs",
+            Some(serde_json::from_value(serde_json::json!({"protocolVersion":"2025-11-25","capabilities":{"tools":{"listChanged":true}},"serverInfo":{"name":"docs","version":"1.0.0"}})).expect("build resolver initialize")),
+            Vec::new(),
+            resources,
+            Vec::new(),
+            templates,
+            CapSyncFlags::ALL,
+        )
+        .await
+        .expect("commit resolver catalog");
+
+        let database = Arc::new(Database {
+            pool,
+            path: PathBuf::new(),
+            capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
+        });
+        let broker = super::BrokerService::new(
+            database.clone(),
+            Arc::new(Mutex::new(UpstreamConnectionPool::new(
+                Arc::new(Config::default()),
+                Some(database.clone()),
+            ))),
+        );
+        let mut context = test_client_context(Some("unify"), CapabilitySource::Profiles);
+        context.unify_workspace = workspace;
+        (broker, context, database)
     }
 
     #[test]
@@ -3427,45 +3520,104 @@ mod tests {
         )));
     }
 
-    #[test]
-    fn broker_currentness_requires_the_same_listed_canonical_uri() {
-        let route = ResolvedResourceRoute {
-            server_id: "server-a".to_string(),
-            server_name: "docs".to_string(),
-            external_uri: "mcpmate://resources/docs/file/guide.md".to_string(),
-            upstream_uri: "file:///guide.md".to_string(),
-            source: ResourceRouteSource::Listed,
-        };
-        let resources = vec![
-            Resource::new("mcpmate://resources/docs/file/other.md", "Other"),
-            Resource::new("mcpmate://resources/docs/file/guide.md", "Guide"),
-        ];
+    #[tokio::test]
+    async fn resolver_reads_listed_and_template_routes_from_catalog_only() {
+        let (broker, context, _) = resolver_fixture(
+            vec![Resource::new("file:///guide.md", "Guide")],
+            vec![ResourceTemplate::new("file:///guides/{name}.md", "Guides")],
+            None,
+        )
+        .await;
 
-        assert!(super::listed_resource_route_is_current(&route, &resources));
-        assert!(!super::listed_resource_route_is_current(&route, &resources[..1]));
+        let listed = broker
+            .resolve_current_broker_resource_route(&context, "mcpmate://resources/docs/file/guide.md")
+            .await
+            .expect("resolve listed catalog route")
+            .expect("listed route remains current");
+        assert_eq!(listed.upstream_uri, "file:///guide.md");
+        let template = broker
+            .resolve_current_broker_resource_route(&context, "mcpmate://resources/template/docs/file/guides/rust.md")
+            .await
+            .expect("resolve template catalog route")
+            .expect("template route remains current");
+        assert_eq!(template.upstream_uri, "file:///guides/rust.md");
+    }
+
+    #[tokio::test]
+    async fn resolver_rejects_issued_disabled_and_direct_routes() {
+        let direct = UnifyDirectExposureConfig {
+            route_mode: UnifyRouteMode::CapabilityLevel,
+            selected_resource_surfaces: vec![UnifyDirectResourceSurface {
+                server_id: "server-a".to_string(),
+                resource_uri: "file:///guide.md".to_string(),
+            }],
+            ..Default::default()
+        };
+        let (broker, context, database) = resolver_fixture(
+            vec![Resource::new("file:///guide.md", "Guide")],
+            Vec::new(),
+            Some(direct),
+        )
+        .await;
+        assert!(
+            broker
+                .resolve_current_broker_resource_route(&context, "mcpmate://resources/docs/file/guide.md")
+                .await
+                .expect("direct route resolves")
+                .is_none()
+        );
+
+        let mut broker_only = context.clone();
+        broker_only.unify_workspace.as_mut().expect("workspace").route_mode = UnifyRouteMode::BrokerOnly;
+        assert!(
+            broker
+                .resolve_current_broker_resource_route(&broker_only, "mcpmate://resources/docs/file/guide.md")
+                .await
+                .expect("broker-only route resolves")
+                .is_some()
+        );
+
+        let issued = issue_resource_route(&database.pool, "server-a", "docs", "file:///issued.md")
+            .await
+            .expect("issue resource route");
+        assert!(
+            broker
+                .resolve_current_broker_resource_route(&broker_only, &issued)
+                .await
+                .expect("issued route resolves")
+                .is_none()
+        );
+
+        database.capability_cache.invalidate_server("server-a").await;
+        sqlx::query("DELETE FROM capability_server_snapshots WHERE server_id = 'server-a'")
+            .execute(&database.pool)
+            .await
+            .expect("remove resolver catalog");
+        let missing_catalog = broker
+            .resolve_current_broker_resource_route(&broker_only, "mcpmate://resources/docs/file/guide.md")
+            .await
+            .expect_err("missing catalog is non-authoritative");
+        assert!(super::is_catalog_authority_error(&missing_catalog));
+
+        sqlx::query("UPDATE server_config SET enabled = 0 WHERE id = 'server-a'")
+            .execute(&database.pool)
+            .await
+            .expect("disable resolver server");
+        assert!(
+            broker
+                .resolve_current_broker_resource_route(&broker_only, "mcpmate://resources/docs/file/guide.md")
+                .await
+                .expect("disabled route resolves")
+                .is_none()
+        );
     }
 
     #[test]
-    fn broker_currentness_matches_template_by_raw_upstream_template() {
-        let route = ResolvedResourceRoute {
-            server_id: "server-a".to_string(),
-            server_name: "docs".to_string(),
-            external_uri: "mcpmate://resources/template/docs/file/guides/rust.md".to_string(),
-            upstream_uri: "file:///guides/rust.md".to_string(),
-            source: ResourceRouteSource::Template {
-                upstream_template: "file:///guides/{name}.md".to_string(),
-                arguments: Default::default(),
-            },
-        };
-
-        assert!(super::template_resource_route_is_current(
-            &route,
-            &["file:///guides/{name}.md".to_string()],
-        ));
-        assert!(!super::template_resource_route_is_current(
-            &route,
-            &["file:///guides/{slug}.md".to_string()],
-        ));
+    fn catalog_read_failure_remains_catalog_authority_error() {
+        let route =
+            super::catalog_authority_error_for_route("server-a", "docs", anyhow::anyhow!("catalog query failed"));
+        assert!(super::is_catalog_authority_error(&route));
+        assert!(route.chain().any(|cause| cause.to_string() == "catalog query failed"));
     }
 
     #[test]
