@@ -2793,12 +2793,18 @@ mod tests {
 
     #[tokio::test]
     async fn catalog_only_preserves_catalog_projection_without_warming() {
+        let literal_tool: Tool = serde_json::from_value(serde_json::json!({
+            "name": "literal-catalog-tool",
+            "description": "Literal catalog tool",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"]
+            }
+        }))
+        .expect("build literal catalog tool");
         let expected = ListResult {
-            items: CapabilityItems::Tools(vec![Tool::new(
-                "literal-catalog-tool",
-                "Literal catalog tool",
-                Arc::new(serde_json::Map::new()),
-            )]),
+            items: CapabilityItems::Tools(vec![literal_tool]),
             meta: Meta {
                 cache_hit: true,
                 source: "sqlite_catalog".to_string(),
@@ -2826,6 +2832,10 @@ mod tests {
             .expect("catalog projection should retain tool items");
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].name.as_ref(), "literal-catalog-tool");
+        let literal_payload = serde_json::to_value(&tools[0]).expect("serialize literal catalog tool");
+        assert_eq!(literal_payload["description"], "Literal catalog tool");
+        assert_eq!(literal_payload["inputSchema"]["type"], "object");
+        assert_eq!(literal_payload["inputSchema"]["properties"]["query"]["type"], "string");
         assert_eq!(backend.cache_calls.load(Ordering::Relaxed), 1);
         assert_eq!(backend.persisted_kind_calls.load(Ordering::Relaxed), 0);
         assert_eq!(backend.canonical_name_calls.load(Ordering::Relaxed), 0);

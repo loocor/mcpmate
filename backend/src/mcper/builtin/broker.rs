@@ -3339,9 +3339,10 @@ mod tests {
         CapabilitySource, UnifyDirectExposureConfig, UnifyDirectPromptSurface, UnifyDirectResourceSurface,
         UnifyDirectToolSurface, UnifyRouteMode,
     };
+    use crate::common::profile::ProfileType;
     use crate::config::{
         database::Database,
-        models::{Server, ServerTransportDraft},
+        models::{Profile, Server, ServerTransportDraft},
         server::upsert_server_definition,
     };
     use crate::core::{
@@ -3521,6 +3522,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn resolver_reads_listed_and_template_routes_from_catalog_only() {
         let (broker, context, _) = resolver_fixture(
             vec![Resource::new("file:///guide.md", "Guide")],
@@ -3544,6 +3546,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn resolver_rejects_issued_disabled_and_direct_routes() {
         let direct = UnifyDirectExposureConfig {
             route_mode: UnifyRouteMode::CapabilityLevel,
@@ -3609,6 +3612,142 @@ mod tests {
                 .await
                 .expect("disabled route resolves")
                 .is_none()
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn resolver_returns_none_for_stale_listed_registry_route() {
+        let (broker, context, database) =
+            resolver_fixture(vec![Resource::new("file:///guide.md", "Guide")], Vec::new(), None).await;
+        sqlx::query("UPDATE server_resources SET unique_uri = 'mcpmate://resources/docs/file/stale.md' WHERE server_id = 'server-a'")
+            .execute(&database.pool)
+            .await
+            .expect("make listed registry route stale");
+
+        assert!(
+            broker
+                .resolve_current_broker_resource_route(&context, "mcpmate://resources/docs/file/stale.md")
+                .await
+                .expect("stale listed route resolves")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn resolver_returns_none_for_invisible_resource_and_template() {
+        let (broker, mut context, database) = resolver_fixture(
+            vec![
+                Resource::new("file:///allowed.md", "Allowed"),
+                Resource::new("file:///hidden.md", "Hidden"),
+            ],
+            vec![
+                ResourceTemplate::new("file:///allowed/{name}.md", "Allowed"),
+                ResourceTemplate::new("file:///hidden/{name}.md", "Hidden"),
+            ],
+            None,
+        )
+        .await;
+        let profile_id = crate::test_helpers::insert_profile(
+            &database.pool,
+            &Profile::new("filtered".to_string(), ProfileType::Scenario),
+        )
+        .await;
+        for (kind, origin) in [
+            ("resources", "file:///allowed.md"),
+            ("resource_templates", "file:///allowed/{name}.md"),
+        ] {
+            sqlx::query(
+                "INSERT INTO profile_capability_refs (profile_id, ref_id, enabled) SELECT ?, ref_id, 1 FROM capability_refs WHERE server_id = 'server-a' AND kind = ? AND origin_key = ?",
+            )
+            .bind(&profile_id)
+            .bind(kind)
+            .bind(origin)
+            .execute(&database.pool)
+            .await
+            .expect("allow selected capability");
+        }
+        sqlx::query(
+            "INSERT INTO client (id, name, identifier, capability_source, selected_profile_ids) VALUES ('client-filtered', 'client-1', 'client-1', 'profiles', ?)",
+        )
+        .bind(serde_json::to_string(&vec![profile_id]).expect("serialize selected profile"))
+        .execute(&database.pool)
+        .await
+        .expect("configure filtered resolver client");
+        context.config_mode = None;
+
+        for external_uri in [
+            "mcpmate://resources/docs/file/hidden.md",
+            "mcpmate://resources/template/docs/file/hidden/rust.md",
+        ] {
+            assert!(
+                broker
+                    .resolve_current_broker_resource_route(&context, external_uri)
+                    .await
+                    .expect("invisible capability route resolves")
+                    .is_none()
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn resolver_keeps_invalid_and_ambiguous_routes_as_errors() {
+        let (broker, context, database) = resolver_fixture(Vec::new(), Vec::new(), None).await;
+        for external_uri in ["not a uri", "mcpmate://resources/docs/file/missing.md"] {
+            assert!(
+                broker
+                    .resolve_current_broker_resource_route(&context, external_uri)
+                    .await
+                    .is_err()
+            );
+        }
+        for (id, template) in [
+            ("template-a", "file:///guides/{name}.md"),
+            ("template-b", "file:///guides/{slug}.md"),
+        ] {
+            sqlx::query(
+                "INSERT INTO server_resource_templates (id, server_id, server_name, uri_template, unique_name, name) VALUES (?, 'server-a', 'docs', ?, ?, ?)",
+            )
+            .bind(id)
+            .bind(template)
+            .bind(format!("mcpmate://resources/template/docs/file/guides/{id}.md"))
+            .bind(id)
+            .execute(&database.pool)
+            .await
+            .expect("insert ambiguous resolver template");
+        }
+        assert!(
+            broker
+                .resolve_current_broker_resource_route(
+                    &context,
+                    "mcpmate://resources/template/docs/file/guides/rust.md"
+                )
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn resolver_wraps_real_catalog_read_errors_with_their_source() {
+        let (broker, context, database) =
+            resolver_fixture(vec![Resource::new("file:///guide.md", "Guide")], Vec::new(), None).await;
+        sqlx::query("UPDATE capability_server_snapshots SET record_format_version = 99 WHERE server_id = 'server-a'")
+            .execute(&database.pool)
+            .await
+            .expect("corrupt resolver catalog format");
+
+        let error = broker
+            .resolve_current_broker_resource_route(&context, "mcpmate://resources/docs/file/guide.md")
+            .await
+            .expect_err("catalog read failure is not a missing route");
+        assert!(super::is_catalog_authority_error(&error));
+        assert!(
+            error
+                .chain()
+                .any(|cause| cause.to_string().contains("unsupported record format version 99"))
         );
     }
 
