@@ -220,7 +220,7 @@ impl UcanError {
                 "{} targets must be read through standard resources/read.",
                 capitalize_kind(capability_kind)
             ),
-            recovery_hint: "Use mcpmate_ucan_catalog to select the target, inspect it with mcpmate_ucan_details, expand RFC 6570 variables for a resource template, then invoke resources/read with the concrete canonical URI.".to_string(),
+            recovery_hint: standard_read_recovery_hint(),
             alternatives: Vec::new(),
             retry_eligible: false,
         }
