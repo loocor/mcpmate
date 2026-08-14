@@ -946,6 +946,38 @@ pub(crate) fn expand_upstream_resource_template(
     Ok(Some((upstream_uri, arguments)))
 }
 
+pub(crate) fn project_upstream_resource_uri_through_template(
+    external_template: &str,
+    upstream_template: &str,
+    upstream_uri: &str,
+) -> Result<Option<String>> {
+    UriTemplateStr::new(external_template)
+        .with_context(|| format!("Invalid canonical resource template '{external_template}'"))?;
+    UriTemplateStr::new(upstream_template)
+        .with_context(|| format!("Invalid persisted upstream resource template '{upstream_template}'"))?;
+    validate_percent_encoding(upstream_uri)?;
+    Url::parse(upstream_uri).with_context(|| format!("Invalid upstream resource URI '{upstream_uri}'"))?;
+
+    let Some((_, upstream_expressions, expansions)) = capture_template_expansions(upstream_template, upstream_uri)?
+    else {
+        return Ok(None);
+    };
+    let (external_literals, external_expressions) = template_parts(external_template)?;
+    if external_expressions != upstream_expressions {
+        bail!("Canonical resource template does not preserve its upstream expression structure");
+    }
+
+    let mut external_uri = String::new();
+    for (index, expansion) in expansions.iter().enumerate() {
+        external_uri.push_str(external_literals[index]);
+        external_uri.push_str(expansion);
+    }
+    external_uri.push_str(external_literals.last().copied().unwrap_or_default());
+    match_resource_template(external_template, &external_uri)?
+        .context("Canonical resource template projection did not preserve a valid route")?;
+    Ok(Some(external_uri))
+}
+
 fn template_variables(template: &UriTemplateStr) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut variables = Vec::new();
@@ -1073,6 +1105,27 @@ mod tests {
             .execute(&pool)
             .await
             .expect("insert server");
+        pool
+    }
+
+    async fn template_projection_pool(templates: &[(&str, &str)]) -> sqlx::Pool<sqlx::Sqlite> {
+        let pool = projection_pool().await;
+        sqlx::query("UPDATE server_config SET name = 'everything' WHERE id = 'server-a'")
+            .execute(&pool)
+            .await
+            .expect("align fixture namespace");
+        for (template, name) in templates {
+            crate::config::server::capabilities::upsert_shadow_resource_template(
+                &pool,
+                "server-a",
+                "everything",
+                template,
+                Some(name),
+                None,
+            )
+            .await
+            .expect("register resource template");
+        }
         pool
     }
 
@@ -1717,6 +1770,91 @@ mod tests {
                 .await
                 .expect("count issued routes"),
             1
+        );
+    }
+
+    #[tokio::test]
+    async fn template_derived_resource_link_reuses_registered_canonical_template_route() {
+        use rmcp::model::{CallToolResult, ContentBlock, Resource};
+
+        let pool =
+            template_projection_pool(&[("demo://resource/dynamic/text/{resourceId}", "Dynamic Text Resource")]).await;
+
+        let mut result = CallToolResult::success(vec![ContentBlock::resource_link(Resource::new(
+            "demo://resource/dynamic/text/2",
+            "Dynamic text resource",
+        ))]);
+
+        rewrite_call_tool_result(&pool, "server-a", "everything", &mut result)
+            .await
+            .expect("rewrite template-derived resource link");
+
+        assert_eq!(
+            result.content[0].as_resource_link().expect("resource link").uri,
+            "mcpmate://resources/template/everything/demo/dynamic/text/2"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM server_issued_resources")
+                .fetch_one(&pool)
+                .await
+                .expect("count issued resource routes"),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn template_derived_resource_link_falls_back_to_issued_route_without_template_match() {
+        use rmcp::model::{CallToolResult, ContentBlock, Resource};
+
+        let pool =
+            template_projection_pool(&[("demo://resource/dynamic/text/{resourceId}", "Dynamic Text Resource")]).await;
+        let mut result = CallToolResult::success(vec![ContentBlock::resource_link(Resource::new(
+            "demo://resource/generated/report.md",
+            "Generated report",
+        ))]);
+
+        rewrite_call_tool_result(&pool, "server-a", "everything", &mut result)
+            .await
+            .expect("rewrite unmatched resource link");
+
+        assert_eq!(
+            result.content[0].as_resource_link().expect("resource link").uri,
+            "mcpmate://resources/everything/demo/generated/report.md"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM server_issued_resources")
+                .fetch_one(&pool)
+                .await
+                .expect("count issued resource routes"),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn template_derived_resource_link_rejects_ambiguous_template_matches_without_issuing() {
+        use rmcp::model::{CallToolResult, ContentBlock, Resource};
+
+        let pool = template_projection_pool(&[
+            ("demo://resource/dynamic/text/{resourceId}", "Dynamic Text Resource"),
+            ("demo://resource/dynamic/{kind}/{resourceId}", "Dynamic Resource"),
+        ])
+        .await;
+        let mut result = CallToolResult::success(vec![ContentBlock::resource_link(Resource::new(
+            "demo://resource/dynamic/text/2",
+            "Dynamic text resource",
+        ))]);
+
+        let error = rewrite_call_tool_result(&pool, "server-a", "everything", &mut result)
+            .await
+            .expect_err("ambiguous template-derived resource link must fail");
+
+        assert!(error.to_string().contains("ambiguous"));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM server_issued_resources")
+                .fetch_one(&pool)
+                .await
+                .expect("count issued resource routes"),
+            0
         );
     }
 }

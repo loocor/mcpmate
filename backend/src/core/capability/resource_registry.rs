@@ -4,7 +4,10 @@ use anyhow::{Context, Result, anyhow, bail};
 use sqlx::{Pool, Sqlite, SqliteConnection};
 use url::Url;
 
-use super::resource_uri::{ResourceAddressKind, expand_upstream_resource_template, resource_alias_candidates};
+use super::resource_uri::{
+    ResourceAddressKind, expand_upstream_resource_template, project_upstream_resource_uri_through_template,
+    resource_alias_candidates,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ResourceRouteSource {
@@ -246,6 +249,36 @@ pub(crate) async fn issue_resource_route(
             .context("Failed to finish listed resource route lookup")?;
         return Ok(unique_uri);
     }
+
+    let template_rows = sqlx::query_as::<_, (String, String)>(
+        "SELECT uri_template, unique_name FROM server_resource_templates WHERE server_id = ?",
+    )
+    .bind(server_id)
+    .fetch_all(&mut *transaction)
+    .await
+    .context("Failed to load Resource Templates for resource route projection")?;
+    let mut template_matches = Vec::new();
+    for (upstream_template, external_template) in template_rows {
+        if let Some(external_uri) =
+            project_upstream_resource_uri_through_template(&external_template, &upstream_template, upstream_uri)?
+        {
+            template_matches.push(external_uri);
+        }
+    }
+    match template_matches.as_slice() {
+        [external_uri] => {
+            transaction
+                .commit()
+                .await
+                .context("Failed to finish Resource Template route projection")?;
+            return Ok(external_uri.clone());
+        }
+        [] => {}
+        _ => bail!(
+            "Upstream resource URI '{upstream_uri}' is ambiguous across registered Resource Templates for server '{server_id}'"
+        ),
+    }
+
     if let Some(unique_uri) = sqlx::query_scalar::<_, String>(
         "SELECT unique_uri FROM server_issued_resources WHERE server_id = ? AND resource_uri = ?",
     )

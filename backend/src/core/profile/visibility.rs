@@ -1710,10 +1710,18 @@ mod tests {
             &db.pool,
             &allowed_server_id,
             "alpha_server",
-            "file://workspace/generated.txt",
+            "file://other/generated.txt",
         )
         .await
-        .expect("issue dynamic resource route");
+        .expect("issue unmatched resource route");
+        let issued_route =
+            crate::core::capability::resource_registry::resolve_resource_route(&db.pool, &issued_resource)
+                .await
+                .expect("resolve issued resource route");
+        assert_eq!(
+            issued_route.source,
+            crate::core::capability::resource_registry::ResourceRouteSource::Issued
+        );
         assert!(
             service
                 .assert_resource_allowed_with_snapshot(&snapshot, &issued_resource)
