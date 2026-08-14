@@ -10,6 +10,7 @@ use rmcp::model::{
     ReadResourceResult,
 };
 use rmcp::service::RequestContext;
+use std::collections::HashSet;
 
 #[derive(Debug)]
 pub(super) struct ResolvedExternalResourceTarget {
@@ -156,7 +157,13 @@ pub(super) async fn list_resources(
 ) -> Result<ListResourcesResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
     let surface = server.load_active_surface(&client).await?;
-    let page = server.paginator.paginate_resources(&_request, surface.resources())?;
+    let mut resources = surface.resources();
+    if matches!(client.config_mode.as_deref(), Some("unify")) {
+        resources.insert(0, super::resource_guide::listed_resource());
+        let mut seen_uris = HashSet::new();
+        resources.retain(|resource| seen_uris.insert(resource.uri.clone()));
+    }
+    let page = server.paginator.paginate_resources(&_request, resources)?;
 
     tracing::info!(
         total = page.items.len(),
@@ -181,9 +188,15 @@ pub(super) async fn list_resource_templates(
 ) -> Result<ListResourceTemplatesResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
     let surface = server.load_active_surface(&client).await?;
+    let mut resource_templates = surface.resource_templates();
+    if matches!(client.config_mode.as_deref(), Some("unify")) {
+        resource_templates.insert(0, super::resource_guide::listed_template());
+        let mut seen_uris = HashSet::new();
+        resource_templates.retain(|template| seen_uris.insert(template.uri_template.clone()));
+    }
     let page = server
         .paginator
-        .paginate_resource_templates(&_request, surface.resource_templates())?;
+        .paginate_resource_templates(&_request, resource_templates)?;
 
     tracing::info!(
         total = page.items.len(),
@@ -207,6 +220,11 @@ pub(super) async fn read_resource(
     _context: RequestContext<rmcp::RoleServer>,
 ) -> Result<ReadResourceResult, McpError> {
     let client = server.resolve_bound_client_context(&_context).await?;
+    if matches!(client.config_mode.as_deref(), Some("unify"))
+        && let Some(result) = super::resource_guide::try_read(&request.uri)
+    {
+        return result;
+    }
     tracing::debug!("Reading resource: {}", request.uri);
 
     let target = match server.resolve_active_resource_route(&client, &request.uri).await? {

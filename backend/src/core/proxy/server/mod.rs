@@ -3,6 +3,7 @@
 mod common;
 mod gateway;
 mod prompts;
+mod resource_guide;
 mod resources;
 mod tools;
 
