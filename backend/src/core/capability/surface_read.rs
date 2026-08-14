@@ -239,19 +239,32 @@ impl SurfaceReader {
         consumer_id: &str,
         external_uri: &str,
     ) -> Result<ActiveResourceRoute> {
+        self.try_resolve_resource_route(consumer_id, external_uri)
+            .await?
+            .ok_or_else(|| CatalogError::InvalidSurfaceValue {
+                field: "active surface resource route",
+                value: format!("{consumer_id}/{external_uri}"),
+            })
+    }
+
+    pub async fn try_resolve_resource_route(
+        &self,
+        consumer_id: &str,
+        external_uri: &str,
+    ) -> Result<Option<ActiveResourceRoute>> {
         let surface = self.load(consumer_id).await?;
         if let Some(entry) = surface
             .entries
             .iter()
             .find(|entry| entry.kind == CapabilityKind::Resources && entry.external_key == external_uri)
         {
-            return Ok(ActiveResourceRoute {
+            return Ok(Some(ActiveResourceRoute {
                 source_server_id: entry.source_server_id.clone(),
                 external_uri: external_uri.to_string(),
                 upstream_uri: entry.upstream_key.clone(),
                 upstream_template: None,
                 template_arguments: None,
-            });
+            }));
         }
 
         let mut matches = Vec::new();
@@ -281,11 +294,8 @@ impl SurfaceReader {
         }
 
         match matches.len() {
-            1 => Ok(matches.pop().expect("single active Surface Resource route")),
-            0 => Err(CatalogError::InvalidSurfaceValue {
-                field: "active surface resource route",
-                value: format!("{consumer_id}/{external_uri}"),
-            }),
+            1 => Ok(Some(matches.pop().expect("single active Surface Resource route"))),
+            0 => Ok(None),
             _ => Err(CatalogError::InvalidSurfaceValue {
                 field: "ambiguous active surface resource route",
                 value: format!("{consumer_id}/{external_uri}"),
