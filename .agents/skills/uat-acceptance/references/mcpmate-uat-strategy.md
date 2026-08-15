@@ -175,7 +175,7 @@ For each UAT pass or review:
 3. Add findings with severity and owner.
 4. Keep unresolved P0/P1 issues out of "done" status.
 5. Convert P2/P3 items into follow-up Project items only when they are not required by the current acceptance contract.
-6. Attach Playwright, lint/build, backend/API, Inspector, or manual evidence before reporting ready for Loocor/Copilot review.
+6. Attach Playwright, lint/build, backend/API, Inspector, or manual evidence before reporting ready for Loocor/Codex review.
 
 ## Recommended Report
 

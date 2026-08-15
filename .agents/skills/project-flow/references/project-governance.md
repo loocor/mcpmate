@@ -32,8 +32,8 @@ Treat stale metadata as a workflow defect.
 
 - Agents may create and update PRs for approved implementation tasks, but PR merge remains a product-owner action by default.
 - Do not run `gh pr merge`, enable auto-merge, delete the review branch, or mark the linked Project item `Done` unless Loocor explicitly asks for that exact action in the current session.
-- Validation success means the PR is ready for Loocor/Copilot review; it does not by itself authorize merge.
-- Keep Project status at the most accurate pre-merge state and attach validation evidence so Loocor can request Copilot review manually.
+- Validation success means the PR is ready for Loocor/Codex review; it does not by itself authorize merge.
+- Keep Project status at the most accurate pre-merge state and attach validation evidence so Codex Review can be triggered with `@codex review`.
 
 ## Worktree discipline
 
