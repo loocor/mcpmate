@@ -562,10 +562,7 @@ fn default_workflow_hints_prompt() -> Vec<String> {
 }
 
 fn default_workflow_hints_resource() -> Vec<String> {
-    vec![
-        "Inspect resource details first, then invoke resources/read with the canonical URI."
-            .to_string(),
-    ]
+    vec!["Inspect resource details first, then invoke resources/read with the canonical URI.".to_string()]
 }
 
 fn default_workflow_hints_resource_template() -> Vec<String> {
@@ -1146,16 +1143,16 @@ impl BrokerService {
             let source = get_enrichment(&entry.server_id);
             SurfaceDirectoryItem {
                 capability_name: entry.resource.uri.to_string(),
-                    capability_kind: SurfaceKind::Resource,
-                    summary: compact_description(extract_description_from_value(&entry.resource).as_deref()),
-                    action: "inspect_first",
-                    next_step: "details",
-                    server_id: entry.server_id,
-                    server_name: entry.server_name,
-                    interaction_mode: "application_context",
-                    detail_hint: "Inspect resource details, then invoke resources/read with the canonical URI.",
-                    source,
-                }
+                capability_kind: SurfaceKind::Resource,
+                summary: compact_description(extract_description_from_value(&entry.resource).as_deref()),
+                action: "inspect_first",
+                next_step: "details",
+                server_id: entry.server_id,
+                server_name: entry.server_name,
+                interaction_mode: "application_context",
+                detail_hint: "Inspect resource details, then invoke resources/read with the canonical URI.",
+                source,
+            }
         }));
 
         summaries.extend(
@@ -3690,7 +3687,10 @@ mod tests {
     #[tokio::test]
     #[serial_test::serial]
     async fn call_tool_schema_reserves_arguments_for_tool_and_prompt() {
-        let arguments = resolver_fixture(Vec::new(), Vec::new(), None).await.0.tools()
+        let arguments = resolver_fixture(Vec::new(), Vec::new(), None)
+            .await
+            .0
+            .tools()
             .into_iter()
             .find(|tool| tool.name == super::MCPMATE_UCAN_CALL_TOOL)
             .expect("public call tool")
@@ -3724,9 +3724,11 @@ mod tests {
             serde_json::json!({"capability_kind": "resource_template", "capability_name": "mcpmate://resources/unknown"}),
         )
         .await;
-        assert!(text_response(&resource)["recovery_hint"]
-            .as_str()
-            .is_some_and(|value| value.contains("resources/read")));
+        assert!(
+            text_response(&resource)["recovery_hint"]
+                .as_str()
+                .is_some_and(|value| value.contains("resources/read"))
+        );
         for result in [&resource, &template] {
             let error = text_response(result);
             assert_eq!(result.is_error, Some(true));
