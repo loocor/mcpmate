@@ -1,7 +1,7 @@
 use mcpmate::core::capability::surface_read::SurfaceReader;
 use mcpmate_capability_store::{
-    CapabilityCatalog, CapabilityKind, CapabilityObservation, CapabilityPayload, CatalogRecord, DeclarationState,
-    InventoryState, KindObservation, SqliteCapabilityCatalog, SqliteSurfaceStore, SurfaceManifest,
+    CapabilityCatalog, CapabilityKind, CapabilityObservation, CapabilityPayload, CatalogError, CatalogRecord,
+    DeclarationState, InventoryState, KindObservation, SqliteCapabilityCatalog, SqliteSurfaceStore, SurfaceManifest,
     SurfaceManifestEntryInput, SurfacePublication,
 };
 use rmcp::model::{InitializeResult, Resource, ResourceTemplate, Tool};
@@ -221,6 +221,16 @@ async fn resource_reads_resolve_only_static_or_template_routes_pinned_by_the_act
         "name": "Files"
     }))
     .unwrap();
+    let ambiguous_template: ResourceTemplate = serde_json::from_value(json!({
+        "uriTemplate": "docs://ambiguous/{item}",
+        "name": "Ambiguous files"
+    }))
+    .unwrap();
+    let overlapping_template: ResourceTemplate = serde_json::from_value(json!({
+        "uriTemplate": "docs://{kind}/{item}",
+        "name": "Overlapping files"
+    }))
+    .unwrap();
     let resource_record = CatalogRecord::materialize(
         "server-a",
         "docs://static/guide",
@@ -233,6 +243,20 @@ async fn resource_reads_resolve_only_static_or_template_routes_pinned_by_the_act
         "docs://files/{path}",
         "mcpmate://resources/template/docs/files/{path}",
         CapabilityPayload::ResourceTemplate(template),
+    )
+    .unwrap();
+    let ambiguous_template_record = CatalogRecord::materialize(
+        "server-a",
+        "docs://ambiguous/{item}",
+        "mcpmate://resources/template/other/ambiguous/{item}",
+        CapabilityPayload::ResourceTemplate(ambiguous_template),
+    )
+    .unwrap();
+    let overlapping_template_record = CatalogRecord::materialize(
+        "server-a",
+        "docs://{kind}/{item}",
+        "mcpmate://resources/template/other/{kind}/{item}",
+        CapabilityPayload::ResourceTemplate(overlapping_template),
     )
     .unwrap();
     let initialize: InitializeResult = serde_json::from_value(json!({
@@ -259,7 +283,12 @@ async fn resource_reads_resolve_only_static_or_template_routes_pinned_by_the_act
                     InventoryState::Complete,
                 ),
             ],
-            vec![resource_record.clone(), template_record.clone()],
+            vec![
+                resource_record.clone(),
+                template_record.clone(),
+                ambiguous_template_record.clone(),
+                overlapping_template_record.clone(),
+            ],
         ))
         .await
         .unwrap();
@@ -278,6 +307,18 @@ async fn resource_reads_resolve_only_static_or_template_routes_pinned_by_the_act
                 template_record.capability_id,
                 CapabilityKind::ResourceTemplates,
                 template_record.external_key,
+            ),
+            SurfaceManifestEntryInput::new(
+                ambiguous_template_record.ref_id,
+                ambiguous_template_record.capability_id,
+                CapabilityKind::ResourceTemplates,
+                ambiguous_template_record.external_key,
+            ),
+            SurfaceManifestEntryInput::new(
+                overlapping_template_record.ref_id,
+                overlapping_template_record.capability_id,
+                CapabilityKind::ResourceTemplates,
+                overlapping_template_record.external_key,
             ),
         ],
     )
@@ -307,28 +348,69 @@ async fn resource_reads_resolve_only_static_or_template_routes_pinned_by_the_act
 
     let reader = SurfaceReader::new(pool);
     let static_route = reader
-        .resolve_resource_route("consumer-a", "mcpmate://resources/docs/static/guide")
+        .try_resolve_resource_route("consumer-a", "mcpmate://resources/docs/static/guide")
         .await
         .unwrap();
+    let static_route = static_route.expect("listed Resource must resolve");
     assert_eq!(static_route.source_server_id, "server-a");
+    assert_eq!(static_route.external_uri, "mcpmate://resources/docs/static/guide");
     assert_eq!(static_route.upstream_uri, "docs://static/guide");
     assert!(static_route.template_arguments.is_none());
 
+    let legacy_static_route = reader
+        .resolve_resource_route("consumer-a", "mcpmate://resources/docs/static/guide")
+        .await
+        .unwrap();
+    assert_eq!(legacy_static_route.source_server_id, "server-a");
+    assert_eq!(
+        legacy_static_route.external_uri,
+        "mcpmate://resources/docs/static/guide"
+    );
+    assert_eq!(legacy_static_route.upstream_uri, "docs://static/guide");
+
     let template_route = reader
-        .resolve_resource_route(
+        .try_resolve_resource_route(
             "consumer-a",
             "mcpmate://resources/template/docs/files/architecture%2Foverview.md",
         )
         .await
         .unwrap();
+    let template_route = template_route.expect("listed ResourceTemplate must resolve");
+    assert_eq!(template_route.source_server_id, "server-a");
+    assert_eq!(
+        template_route.external_uri,
+        "mcpmate://resources/template/docs/files/architecture%2Foverview.md"
+    );
     assert_eq!(template_route.upstream_uri, "docs://files/architecture%2Foverview.md");
     assert_eq!(
         template_route.template_arguments.unwrap().get("path"),
         Some(&"architecture/overview.md".to_string())
     );
+
+    let missing_uri = "mcpmate://resources/template/other/files/architecture/extra.md";
+    let missing_error = reader
+        .resolve_resource_route("consumer-a", missing_uri)
+        .await
+        .expect_err("legacy wrapper must preserve the missing route error");
+    assert!(matches!(
+        missing_error,
+        CatalogError::InvalidSurfaceValue { field, value }
+            if field == "active surface resource route"
+                && value == "consumer-a/mcpmate://resources/template/other/files/architecture/extra.md"
+    ));
     assert!(
         reader
-            .resolve_resource_route("consumer-a", "mcpmate://resources/template/other/files/architecture.md",)
+            .try_resolve_resource_route("consumer-a", missing_uri)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        reader
+            .try_resolve_resource_route(
+                "consumer-a",
+                "mcpmate://resources/template/other/ambiguous/architecture",
+            )
             .await
             .is_err()
     );

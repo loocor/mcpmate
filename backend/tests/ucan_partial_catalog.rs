@@ -308,6 +308,12 @@ fn assert_catalog_incomplete(response: CallToolResponse) {
     );
 }
 
+fn assert_resource_standard_read_required(response: CallToolResponse) {
+    let result = complete_result(response);
+    assert_eq!(result.is_error, Some(true));
+    assert_eq!(text_json(&result)["error_code"], "resource_standard_read_required");
+}
+
 fn build_app_state(
     database: Arc<Database>,
     connection_pool: Arc<Mutex<UpstreamConnectionPool>>,
@@ -449,7 +455,7 @@ async fn ucan_partial_catalog_preserves_healthy_entries_returns_structured_error
         .await
         .expect("incomplete call must return a structured UCan result"),
     );
-    assert_catalog_incomplete(
+    assert_resource_standard_read_required(
         call_ucan(
             &proxy,
             &context,
@@ -461,7 +467,7 @@ async fn ucan_partial_catalog_preserves_healthy_entries_returns_structured_error
             }),
         )
         .await
-        .expect("partial catalog unknown resource call must remain authoritative"),
+        .expect("resource call must direct the client to standard resources/read"),
     );
 
     std::fs::write(&failed_state, "ready").expect("restore upstream fixture behavior");
@@ -536,7 +542,7 @@ async fn ucan_details_keeps_capability_not_found_for_an_unknown_item_in_a_comple
     assert_eq!(result.is_error, Some(true));
     assert_eq!(text_json(&result)["error_code"], "capability_not_found");
 
-    let result = complete_result(
+    assert_resource_standard_read_required(
         call_ucan(
             &proxy,
             &context,
@@ -548,10 +554,8 @@ async fn ucan_details_keeps_capability_not_found_for_an_unknown_item_in_a_comple
             }),
         )
         .await
-        .expect("complete catalog unknown resource call must be a structured UCan result"),
+        .expect("resource call must direct the client to standard resources/read"),
     );
-    assert_eq!(result.is_error, Some(true));
-    assert_eq!(text_json(&result)["error_code"], "capability_not_found");
 
     drop((client_service, server_service));
 }

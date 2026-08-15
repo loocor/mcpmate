@@ -1,10 +1,13 @@
 use std::collections::BTreeMap;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use sqlx::{Pool, Sqlite, SqliteConnection};
 use url::Url;
 
-use super::resource_uri::{ResourceAddressKind, expand_upstream_resource_template, resource_alias_candidates};
+use super::resource_uri::{
+    ResourceAddressKind, expand_upstream_resource_template, project_upstream_resource_uri_through_template,
+    resource_alias_candidates,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ResourceRouteSource {
@@ -23,6 +26,23 @@ pub(crate) struct ResolvedResourceRoute {
     pub(crate) external_uri: String,
     pub(crate) upstream_uri: String,
     pub(crate) source: ResourceRouteSource,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("{source}")]
+struct InvalidResourceRouteError {
+    #[source]
+    source: anyhow::Error,
+}
+
+fn invalid_resource_route_error(source: anyhow::Error) -> anyhow::Error {
+    InvalidResourceRouteError { source }.into()
+}
+
+pub(crate) fn is_invalid_resource_route_error(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|source| source.downcast_ref::<InvalidResourceRouteError>().is_some())
 }
 
 fn parse_external_uri(external_uri: &str) -> Result<Url> {
@@ -81,7 +101,7 @@ pub(crate) async fn resolve_resource_route(
     pool: &Pool<Sqlite>,
     external_uri: &str,
 ) -> Result<ResolvedResourceRoute> {
-    let parsed = parse_external_uri(external_uri)?;
+    let parsed = parse_external_uri(external_uri).map_err(invalid_resource_route_error)?;
     if let Some((server_id, server_name, upstream_uri)) = sqlx::query_as::<_, (String, String, String)>(
         "SELECT server_id, server_name, resource_uri FROM server_resources WHERE unique_uri = ?",
     )
@@ -121,11 +141,14 @@ pub(crate) async fn resolve_resource_route(
         .filter(|segment| !segment.is_empty())
         .collect::<Vec<_>>();
     if segments.first().copied() != Some("template") {
-        bail!("Canonical resource URI '{external_uri}' is not registered");
+        return Err(invalid_resource_route_error(anyhow!(
+            "Canonical resource URI '{external_uri}' is not registered"
+        )));
     }
     let namespace = segments
         .get(1)
-        .context("Canonical resource template URI is missing its namespace")?;
+        .context("Canonical resource template URI is missing its namespace")
+        .map_err(invalid_resource_route_error)?;
     let template_rows = sqlx::query_as::<_, (String, String, String, String)>(
         "SELECT server_id, server_name, uri_template, unique_name FROM server_resource_templates WHERE server_name = ?",
     )
@@ -135,17 +158,26 @@ pub(crate) async fn resolve_resource_route(
     .context("Failed to resolve resource template route")?;
     let mut matches = Vec::new();
     for (server_id, server_name, upstream_template, external_template) in template_rows {
-        if let Some((upstream_uri, arguments)) =
-            expand_upstream_resource_template(&external_template, &upstream_template, external_uri)?
-        {
+        let expansion = match expand_upstream_resource_template(&external_template, &upstream_template, external_uri) {
+            Ok(expansion) => expansion,
+            Err(error) if super::resource_uri::is_malformed_canonical_resource_uri_error(&error) => {
+                return Err(invalid_resource_route_error(error));
+            }
+            Err(error) => return Err(error),
+        };
+        if let Some((upstream_uri, arguments)) = expansion {
             matches.push((server_id, server_name, upstream_template, upstream_uri, arguments));
         }
     }
     let [(server_id, server_name, upstream_template, upstream_uri, arguments)] = matches.as_slice() else {
         if matches.is_empty() {
-            bail!("Canonical resource URI '{external_uri}' is not registered");
+            return Err(invalid_resource_route_error(anyhow!(
+                "Canonical resource URI '{external_uri}' is not registered"
+            )));
         }
-        bail!("Canonical resource template URI '{external_uri}' is ambiguous");
+        return Err(invalid_resource_route_error(anyhow!(
+            "Canonical resource template URI '{external_uri}' is ambiguous"
+        )));
     };
 
     Ok(ResolvedResourceRoute {
@@ -217,6 +249,36 @@ pub(crate) async fn issue_resource_route(
             .context("Failed to finish listed resource route lookup")?;
         return Ok(unique_uri);
     }
+
+    let template_rows = sqlx::query_as::<_, (String, String)>(
+        "SELECT uri_template, unique_name FROM server_resource_templates WHERE server_id = ?",
+    )
+    .bind(server_id)
+    .fetch_all(&mut *transaction)
+    .await
+    .context("Failed to load Resource Templates for resource route projection")?;
+    let mut template_matches = Vec::new();
+    for (upstream_template, external_template) in template_rows {
+        if let Some(external_uri) =
+            project_upstream_resource_uri_through_template(&external_template, &upstream_template, upstream_uri)?
+        {
+            template_matches.push(external_uri);
+        }
+    }
+    match template_matches.as_slice() {
+        [external_uri] => {
+            transaction
+                .commit()
+                .await
+                .context("Failed to finish Resource Template route projection")?;
+            return Ok(external_uri.clone());
+        }
+        [] => {}
+        _ => bail!(
+            "Upstream resource URI '{upstream_uri}' is ambiguous across registered Resource Templates for server '{server_id}'"
+        ),
+    }
+
     if let Some(unique_uri) = sqlx::query_scalar::<_, String>(
         "SELECT unique_uri FROM server_issued_resources WHERE server_id = ? AND resource_uri = ?",
     )

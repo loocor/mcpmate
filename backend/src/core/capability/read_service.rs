@@ -1207,6 +1207,13 @@ impl CapabilityReadService {
         }
     }
 
+    pub(crate) async fn catalog_only(
+        &self,
+        ctx: &ListCtx,
+    ) -> Result<Option<ListResult>, CapabilityReadError> {
+        self.backend.try_cache_first(ctx).await
+    }
+
     pub(crate) async fn list(
         &self,
         ctx: &ListCtx,
@@ -2014,6 +2021,7 @@ mod tests {
     };
     use rmcp::{
         ServerHandler, ServiceExt,
+        model::Tool,
         service::{Peer, RoleClient, RunningService},
     };
     use tokio::sync::Mutex;
@@ -2079,6 +2087,10 @@ mod tests {
         coordination_fingerprint: std::sync::Mutex<String>,
         cache_result: Mutex<Option<Result<Option<ListResult>, CapabilityReadError>>>,
         cache_calls: AtomicUsize,
+        persisted_kind_calls: AtomicUsize,
+        canonical_name_calls: AtomicUsize,
+        discovery_calls: AtomicUsize,
+        projection_calls: AtomicUsize,
         discoveries: Mutex<VecDeque<Result<CapabilityDiscoveryObservation, RuntimeFailure>>>,
         warmed_cache: Mutex<HashMap<CapabilityType, ListResult>>,
         evidence: Mutex<Vec<EvidenceRecord>>,
@@ -2202,6 +2214,10 @@ mod tests {
                 coordination_fingerprint: std::sync::Mutex::new("test-config".to_string()),
                 cache_result: Mutex::new(Some(cache_result)),
                 cache_calls: AtomicUsize::new(0),
+                persisted_kind_calls: AtomicUsize::new(0),
+                canonical_name_calls: AtomicUsize::new(0),
+                discovery_calls: AtomicUsize::new(0),
+                projection_calls: AtomicUsize::new(0),
                 discoveries: Mutex::new(VecDeque::new()),
                 warmed_cache: Mutex::new(HashMap::new()),
                 evidence: Mutex::new(Vec::new()),
@@ -2328,11 +2344,20 @@ mod tests {
             self.cache_result.lock().await.take().unwrap_or(Ok(None))
         }
 
+        async fn persisted_kind_failure(
+            &self,
+            _ctx: &ListCtx,
+        ) -> Result<Option<RuntimeFailure>, CapabilityReadError> {
+            self.persisted_kind_calls.fetch_add(1, Ordering::Relaxed);
+            Ok(None)
+        }
+
         async fn discover(
             &self,
             _ctx: &ListCtx,
             _owner: &CapabilityOwner,
         ) -> Result<CapabilityDiscoveryObservation, RuntimeFailure> {
+            self.discovery_calls.fetch_add(1, Ordering::Relaxed);
             self.discoveries
                 .lock()
                 .await
@@ -2344,6 +2369,7 @@ mod tests {
             &self,
             _ctx: &ListCtx,
         ) -> Result<String, CapabilityReadError> {
+            self.canonical_name_calls.fetch_add(1, Ordering::Relaxed);
             Ok("docs".to_string())
         }
 
@@ -2363,6 +2389,7 @@ mod tests {
             items: crate::core::capability::runtime::CapabilityItems,
             _committed_revision: i64,
         ) -> Result<ListResult, CapabilityProjectionFailure> {
+            self.projection_calls.fetch_add(1, Ordering::Relaxed);
             if let Some(error) = self.projection_error.lock().await.take() {
                 return Err(error);
             }
@@ -2409,6 +2436,7 @@ mod tests {
             _ctx: &ListCtx,
             _owner: &CapabilityOwner,
         ) -> Result<runtime::CapabilityFullDiscoveryObservation, RuntimeFailure> {
+            self.discovery_calls.fetch_add(1, Ordering::Relaxed);
             self.discovery_started.add_permits(1);
             if let Some(gate) = self.discovery_gate.lock().await.clone() {
                 gate.acquire().await.expect("discovery test gate remains open").forget();
@@ -2761,6 +2789,128 @@ mod tests {
             drop(provider);
             fixture.shutdown().await;
         }
+    }
+
+    #[tokio::test]
+    async fn catalog_only_preserves_catalog_projection_without_warming() {
+        let literal_tool: Tool = serde_json::from_value(serde_json::json!({
+            "name": "literal-catalog-tool",
+            "description": "Literal catalog tool",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"]
+            }
+        }))
+        .expect("build literal catalog tool");
+        let expected = ListResult {
+            items: CapabilityItems::Tools(vec![literal_tool]),
+            meta: Meta {
+                cache_hit: true,
+                source: "sqlite_catalog".to_string(),
+                duration_ms: 41,
+                had_peer: false,
+            },
+        };
+        let backend = Arc::new(FakeBackend::new(Ok(Some(expected))));
+        let fixture = test_peer().await;
+        let provider = Arc::new(FakeProvider::new(fixture.peer.clone()));
+        let service = CapabilityReadService::with_backend(backend.clone(), provider.clone(), 0);
+        let listed = service
+            .catalog_only(&list_ctx(Some(RefreshStrategy::Force)))
+            .await
+            .expect("catalog projection should be returned")
+            .expect("catalog projection should remain available");
+
+        assert_eq!(listed.meta.source, "sqlite_catalog");
+        assert_eq!(listed.meta.duration_ms, 41);
+        assert!(listed.meta.cache_hit);
+        assert!(!listed.meta.had_peer);
+        let tools = listed
+            .items
+            .into_tools()
+            .expect("catalog projection should retain tool items");
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name.as_ref(), "literal-catalog-tool");
+        let literal_payload = serde_json::to_value(&tools[0]).expect("serialize literal catalog tool");
+        assert_eq!(literal_payload["description"], "Literal catalog tool");
+        assert_eq!(literal_payload["inputSchema"]["type"], "object");
+        assert_eq!(literal_payload["inputSchema"]["properties"]["query"]["type"], "string");
+        assert_eq!(backend.cache_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(backend.persisted_kind_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(backend.canonical_name_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(backend.discovery_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(backend.projection_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(backend.commits.load(Ordering::Relaxed), 0);
+        assert!(backend.warmed_cache.lock().await.is_empty());
+        assert_eq!(provider.existing_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(provider.fresh_calls.load(Ordering::Relaxed), 0);
+        drop(service);
+        drop(provider);
+        fixture.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn catalog_only_returns_missing_catalog_without_warming() {
+        let backend = Arc::new(FakeBackend::new(Ok(None)));
+        let fixture = test_peer().await;
+        let provider = Arc::new(FakeProvider::new(fixture.peer.clone()));
+        let service = CapabilityReadService::with_backend(backend.clone(), provider.clone(), 0);
+
+        let listed = service
+            .catalog_only(&list_ctx(None))
+            .await
+            .expect("missing catalog is not an error");
+
+        assert!(listed.is_none());
+        assert_eq!(backend.cache_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(backend.persisted_kind_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(backend.canonical_name_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(backend.discovery_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(backend.projection_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(backend.commits.load(Ordering::Relaxed), 0);
+        assert!(backend.warmed_cache.lock().await.is_empty());
+        assert_eq!(provider.existing_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(provider.fresh_calls.load(Ordering::Relaxed), 0);
+        drop(service);
+        drop(provider);
+        fixture.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn catalog_only_propagates_catalog_error_without_warming() {
+        let backend = Arc::new(FakeBackend::new(Err(CapabilityReadError::CatalogOperation {
+            server_id: "server-1".to_string(),
+            source: anyhow::anyhow!("catalog query failed"),
+        })));
+        let fixture = test_peer().await;
+        let provider = Arc::new(FakeProvider::new(fixture.peer.clone()));
+        let service = CapabilityReadService::with_backend(backend.clone(), provider.clone(), 0);
+
+        let error = service
+            .catalog_only(&list_ctx(None))
+            .await
+            .expect_err("catalog read error should propagate");
+
+        match error {
+            CapabilityReadError::CatalogOperation { server_id, source } => {
+                assert_eq!(server_id, "server-1");
+                assert_eq!(source.to_string(), "catalog query failed");
+            }
+            other => panic!("catalog error must be forwarded unchanged: {other}"),
+        }
+        assert_eq!(backend.cache_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(backend.persisted_kind_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(backend.canonical_name_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(backend.discovery_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(backend.projection_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(backend.commits.load(Ordering::Relaxed), 0);
+        assert!(backend.warmed_cache.lock().await.is_empty());
+        assert_eq!(provider.existing_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(provider.fresh_calls.load(Ordering::Relaxed), 0);
+        drop(service);
+        drop(provider);
+        fixture.shutdown().await;
     }
 
     #[tokio::test]

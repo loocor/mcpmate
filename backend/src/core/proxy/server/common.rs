@@ -98,7 +98,6 @@ pub fn unify_directly_exposed_resource_allowed(
     }
 }
 
-#[cfg(test)]
 pub(crate) fn unify_directly_exposed_resource_route_allowed(
     workspace: Option<&UnifyDirectExposureConfig>,
     eligible_server_ids: &HashSet<String>,

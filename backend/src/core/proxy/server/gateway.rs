@@ -258,13 +258,13 @@ impl ProxyServer {
         &self,
         client: &ClientContext,
         external_uri: &str,
-    ) -> Result<crate::core::capability::surface_read::ActiveResourceRoute, rmcp::ErrorData> {
+    ) -> Result<Option<crate::core::capability::surface_read::ActiveResourceRoute>, rmcp::ErrorData> {
         let access = self.resolve_consumer_access_context(client).await?;
         let database = self.database.as_ref().ok_or_else(|| {
             rmcp::ErrorData::internal_error("Active Surface resolution requires database access".to_string(), None)
         })?;
         crate::core::capability::surface_read::SurfaceReader::new(database.pool.clone())
-            .resolve_resource_route(&access.consumer_id, external_uri)
+            .try_resolve_resource_route(&access.consumer_id, external_uri)
             .await
             .map_err(|error| {
                 rmcp::ErrorData::invalid_params(
@@ -1399,7 +1399,13 @@ impl ProxyServer {
             observed_client_info: binding.observed_client_info.clone(),
         };
         drop(binding);
-        if self.resolve_active_resource_route(&client, uri).await.is_err() {
+        if self
+            .resolve_active_resource_route(&client, uri)
+            .await
+            .ok()
+            .flatten()
+            .is_none()
+        {
             self.remove_resource_subscription(session_id, uri);
             return false;
         }
@@ -2184,8 +2190,10 @@ mod tests {
     use crate::core::models::Config;
     use crate::core::proxy::server::common::{ClientIdentitySource, ClientTransport};
     use axum::http::Request;
+    use mcpmate_capability_store::CapabilityCatalog;
     use rmcp::ServiceExt;
     use sqlx::sqlite::SqlitePoolOptions;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::TempDir;
 
     #[derive(Clone)]
@@ -2249,7 +2257,9 @@ mod tests {
     }
 
     #[derive(Clone)]
-    struct SubscriptionResourceServer;
+    struct SubscriptionResourceServer {
+        resource_list_calls: Arc<AtomicUsize>,
+    }
 
     impl rmcp::ServerHandler for SubscriptionResourceServer {
         fn get_info(&self) -> rmcp::model::ServerInfo {
@@ -2261,6 +2271,7 @@ mod tests {
             _request: Option<rmcp::model::PaginatedRequestParams>,
             _context: rmcp::service::RequestContext<rmcp::RoleServer>,
         ) -> Result<rmcp::model::ListResourcesResult, rmcp::ErrorData> {
+            self.resource_list_calls.fetch_add(1, Ordering::SeqCst);
             Err(rmcp::ErrorData::internal_error(
                 "Intentional resources/list failure".to_string(),
                 None,
@@ -2285,13 +2296,17 @@ mod tests {
     async fn install_subscription_resource_connection(
         server: &ProxyServer,
         server_id: &str,
-    ) {
+    ) -> Arc<AtomicUsize> {
         let (server_transport, client_transport) = tokio::io::duplex(4096);
+        let resource_list_calls = Arc::new(AtomicUsize::new(0));
+        let upstream_resource_list_calls = resource_list_calls.clone();
         tokio::spawn(async move {
-            let service = SubscriptionResourceServer
-                .serve(server_transport)
-                .await
-                .expect("serve subscription resource");
+            let service = SubscriptionResourceServer {
+                resource_list_calls: upstream_resource_list_calls,
+            }
+            .serve(server_transport)
+            .await
+            .expect("serve subscription resource");
             service.waiting().await.expect("wait for subscription resource");
         });
         let handler = crate::core::transport::client::UpstreamClientHandler::new("subscription-resource".to_string());
@@ -2327,6 +2342,7 @@ mod tests {
             .insert(instance_id.clone(), connection);
         pool.production_routes
             .insert(crate::core::pool::ProductionRouteKey::shareable(server_id), instance_id);
+        resource_list_calls
     }
 
     async fn subscription_request_context(
@@ -2412,7 +2428,7 @@ mod tests {
                 .expect("decode subscription initialize fixture"),
             ),
             Vec::new(),
-            Vec::new(),
+            vec![rmcp::model::Resource::new("fixture://documents/guide.md", "Guide")],
             Vec::new(),
             vec![
                 serde_json::from_value(serde_json::json!({
@@ -2425,34 +2441,129 @@ mod tests {
         )
         .await
         .expect("commit subscription template catalog row");
-        let template_ref = mcpmate_capability_store::CapabilityRefId::derive(
-            &mcpmate_capability_store::CapabilitySourceIdentity::new(
-                &server_id,
-                mcpmate_capability_store::CapabilityKind::ResourceTemplates,
+        crate::config::server::capabilities::upsert_shadow_resource(
+            &pool,
+            &server_id,
+            "subscription_docs",
+            "fixture://conflicts/readme.md",
+            Some("Conflicting Readme"),
+            Some("upstream Resource that must not replace the built-in Readme"),
+            Some("text/plain"),
+        )
+        .await
+        .expect("add conflicting Resource to the fixture shadow index");
+        crate::config::server::capabilities::upsert_shadow_resource_template(
+            &pool,
+            &server_id,
+            "subscription_docs",
+            "fixture://conflicts/guides/{topic}",
+            Some("Conflicting Guide"),
+            Some("upstream Resource Template that must not replace the built-in guide"),
+        )
+        .await
+        .expect("add conflicting Resource Template to the fixture shadow index");
+        let fixture_resource = mcpmate_capability_store::CatalogRecord::materialize(
+            &server_id,
+            "fixture://documents/guide.md",
+            crate::core::capability::resource_uri::encode_resource_uri(
+                "subscription_docs",
+                "fixture://documents/guide.md",
+            )
+            .expect("encode fixture Resource URI"),
+            mcpmate_capability_store::CapabilityPayload::Resource(rmcp::model::Resource::new(
+                "fixture://documents/guide.md",
+                "Guide",
+            )),
+        )
+        .expect("materialize fixture Resource");
+        let fixture_template = mcpmate_capability_store::CatalogRecord::materialize(
+            &server_id,
+            "fixture://documents/{path}",
+            crate::core::capability::resource_uri::encode_resource_template(
+                "subscription_docs",
                 "fixture://documents/{path}",
+            )
+            .expect("encode fixture Resource Template URI"),
+            mcpmate_capability_store::CapabilityPayload::ResourceTemplate(rmcp::model::ResourceTemplate::new(
+                "fixture://documents/{path}",
+                "Documents",
+            )),
+        )
+        .expect("materialize fixture Resource Template");
+        let conflicting_readme = mcpmate_capability_store::CatalogRecord::materialize(
+            &server_id,
+            "fixture://conflicts/readme.md",
+            "mcpmate://resources/mcpmate/readme",
+            mcpmate_capability_store::CapabilityPayload::Resource(
+                rmcp::model::Resource::new("fixture://conflicts/readme.md", "Conflicting Readme")
+                    .with_description("upstream Resource that must not replace the built-in Readme")
+                    .with_mime_type("text/plain"),
             ),
         )
-        .expect("derive subscription template ref")
-        .to_string();
+        .expect("materialize conflicting Readme");
+        let conflicting_guide = mcpmate_capability_store::CatalogRecord::materialize(
+            &server_id,
+            "fixture://conflicts/guides/{topic}",
+            "mcpmate://resources/template/mcpmate/guide/{topic}",
+            mcpmate_capability_store::CapabilityPayload::ResourceTemplate(
+                rmcp::model::ResourceTemplate::new("fixture://conflicts/guides/{topic}", "Conflicting Guide")
+                    .with_description("upstream Resource Template that must not replace the built-in guide")
+                    .with_mime_type("text/plain"),
+            ),
+        )
+        .expect("materialize conflicting Resource Template");
+        let initialize_result = serde_json::from_value(serde_json::json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": {"resources": {"subscribe": true, "listChanged": true}},
+            "serverInfo": {"name": "subscription_docs", "version": "1.0.0"}
+        }))
+        .expect("decode custom catalog initialize fixture");
+        let config_fingerprint = crate::config::server::capabilities::current_config_fingerprint(&pool, &server_id)
+            .await
+            .expect("load current fixture configuration fingerprint");
+        mcpmate_capability_store::SqliteCapabilityCatalog::new(pool.clone())
+            .commit_observation(mcpmate_capability_store::CapabilityObservation::new(
+                &server_id,
+                "subscription_docs",
+                config_fingerprint,
+                initialize_result,
+                vec![
+                    mcpmate_capability_store::KindObservation::new(
+                        mcpmate_capability_store::CapabilityKind::Resources,
+                        mcpmate_capability_store::DeclarationState::Supported,
+                        mcpmate_capability_store::InventoryState::Complete,
+                    ),
+                    mcpmate_capability_store::KindObservation::new(
+                        mcpmate_capability_store::CapabilityKind::ResourceTemplates,
+                        mcpmate_capability_store::DeclarationState::Supported,
+                        mcpmate_capability_store::InventoryState::Complete,
+                    ),
+                ],
+                vec![
+                    fixture_resource.clone(),
+                    fixture_template.clone(),
+                    conflicting_readme.clone(),
+                    conflicting_guide.clone(),
+                ],
+            ))
+            .await
+            .expect("commit immutable conflicting Resource catalog records");
+        let template_ref = fixture_template.ref_id.to_string();
         crate::config::profile::add_resource_template_to_profile(&pool, &profile_id, &server_id, &template_ref, true)
             .await
             .expect("add template to profile");
-        let capability_id: String =
-            sqlx::query_scalar("SELECT capability_id FROM capability_ref_current WHERE ref_id = ?")
-                .bind(&template_ref)
-                .fetch_one(&pool)
-                .await
-                .expect("load current subscription template version");
-        let external_template = crate::core::capability::resource_uri::encode_resource_template(
-            "subscription_docs",
-            "fixture://documents/{path}",
-        )
-        .expect("encode published subscription template");
-        for consumer_id in ["hosted-client", "unify-client"] {
-            let config_mode = if consumer_id == "hosted-client" {
-                "hosted"
-            } else {
-                "unify"
+        let capability_id = fixture_template.capability_id.to_string();
+        let external_template = fixture_template.external_key.clone();
+        for consumer_id in [
+            "hosted-client",
+            "unify-client",
+            "direct-client",
+            "unify-duplicate-client",
+        ] {
+            let config_mode = match consumer_id {
+                "hosted-client" => "hosted",
+                "direct-client" => "transparent",
+                _ => "unify",
             };
             sqlx::query(
                 r#"
@@ -2468,18 +2579,30 @@ mod tests {
             .execute(&pool)
             .await
             .expect("insert subscription Consumer");
-            let manifest = mcpmate_capability_store::SurfaceManifest::compile(
-                consumer_id,
-                vec![mcpmate_capability_store::SurfaceManifestEntryInput::new(
-                    template_ref.parse().expect("parse subscription template ref"),
-                    capability_id
-                        .parse()
-                        .expect("parse subscription template capability id"),
+            let mut entries = vec![mcpmate_capability_store::SurfaceManifestEntryInput::new(
+                template_ref.parse().expect("parse subscription template ref"),
+                capability_id
+                    .parse()
+                    .expect("parse subscription template capability id"),
+                mcpmate_capability_store::CapabilityKind::ResourceTemplates,
+                external_template.clone(),
+            )];
+            if consumer_id == "unify-duplicate-client" {
+                entries.push(mcpmate_capability_store::SurfaceManifestEntryInput::new(
+                    conflicting_readme.ref_id.clone(),
+                    conflicting_readme.capability_id.clone(),
+                    mcpmate_capability_store::CapabilityKind::Resources,
+                    conflicting_readme.external_key.clone(),
+                ));
+                entries.push(mcpmate_capability_store::SurfaceManifestEntryInput::new(
+                    conflicting_guide.ref_id.clone(),
+                    conflicting_guide.capability_id.clone(),
                     mcpmate_capability_store::CapabilityKind::ResourceTemplates,
-                    external_template.clone(),
-                )],
-            )
-            .expect("compile subscription Surface manifest");
+                    conflicting_guide.external_key.clone(),
+                ));
+            }
+            let manifest = mcpmate_capability_store::SurfaceManifest::compile(consumer_id, entries)
+                .expect("compile subscription Surface manifest");
             let store = mcpmate_capability_store::SqliteSurfaceStore::new(pool.clone());
             let mut transaction = pool.begin().await.expect("begin Surface publication");
             store
@@ -2516,6 +2639,33 @@ mod tests {
         let mut server = ProxyServer::new(Arc::new(Config::default()));
         server.database = Some(database);
         (temp_dir, pool, server, server_id, profile_id)
+    }
+
+    async fn bind_resource_client(
+        server: &ProxyServer,
+        client_id: &str,
+        session_id: &str,
+        config_mode: &str,
+        unify_workspace: Option<crate::clients::models::UnifyDirectExposureConfig>,
+    ) -> rmcp::service::RequestContext<rmcp::RoleServer> {
+        let client = ClientContext {
+            client_id: client_id.to_string(),
+            session_id: Some(session_id.to_string()),
+            profile_id: None,
+            config_mode: Some(config_mode.to_string()),
+            unify_workspace,
+            surface_fingerprint: None,
+            transport: ClientTransport::StreamableHttp,
+            source: ClientIdentitySource::ManagedQuery,
+            observed_client_info: None,
+        };
+        server
+            .client_context_resolver
+            .bind_session(session_id, &client)
+            .await
+            .expect("bind Resource Consumer");
+        let (context, _client_service, _server_service) = subscription_request_context(client_id, session_id).await;
+        context
     }
 
     #[tokio::test]
@@ -2916,25 +3066,8 @@ mod tests {
             }],
             ..Default::default()
         };
-        let client = ClientContext {
-            client_id: "unify-client".to_string(),
-            session_id: Some(session_id.to_string()),
-            profile_id: None,
-            config_mode: Some("unify".to_string()),
-            unify_workspace: Some(workspace),
-            surface_fingerprint: None,
-            transport: ClientTransport::StreamableHttp,
-            source: ClientIdentitySource::ManagedQuery,
-            observed_client_info: None,
-        };
-        server
-            .client_context_resolver
-            .bind_session(session_id, &client)
-            .await
-            .expect("bind unify client");
-        let (context, _client_service, _server_service) =
-            subscription_request_context("unify-client", session_id).await;
-        install_subscription_resource_connection(&server, &server_id).await;
+        let context = bind_resource_client(&server, "unify-client", session_id, "unify", Some(workspace)).await;
+        let _resource_list_calls = install_subscription_resource_connection(&server, &server_id).await;
 
         let selected = crate::core::capability::resource_uri::encode_resource_template(
             "subscription_docs",
@@ -2980,6 +3113,398 @@ mod tests {
                 .await
                 .is_err()
         );
+        crate::core::capability::resolver::remove_by_id(&server_id).await;
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn broker_only_standard_resource_read_uses_current_catalog_route_without_upstream_list() {
+        let (_temp_dir, _pool, server, server_id, _profile_id) = create_subscription_test_server().await;
+        let session_id = "broker-only-standard-read";
+        let context = bind_resource_client(
+            &server,
+            "unify-client",
+            session_id,
+            "unify",
+            Some(crate::clients::models::UnifyDirectExposureConfig {
+                route_mode: crate::clients::models::UnifyRouteMode::BrokerOnly,
+                ..Default::default()
+            }),
+        )
+        .await;
+        let resource_list_calls = install_subscription_resource_connection(&server, &server_id).await;
+        let canonical_uri = crate::core::capability::resource_uri::encode_resource_uri(
+            "subscription_docs",
+            "fixture://documents/guide.md",
+        )
+        .expect("encode cataloged listed Resource URI");
+
+        let result = crate::core::proxy::server::resources::read_resource(
+            &server,
+            ReadResourceRequestParams::new(canonical_uri.clone()),
+            context,
+        )
+        .await
+        .expect("read BrokerOnly canonical Resource through the standard handler");
+
+        assert_eq!(resource_list_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(result.contents.len(), 1);
+        match &result.contents[0] {
+            rmcp::model::ResourceContents::TextResourceContents { uri, text, .. } => {
+                assert_eq!(uri, &canonical_uri);
+                assert_eq!(text, "read:fixture://documents/guide.md");
+            }
+            rmcp::model::ResourceContents::BlobResourceContents { .. } => panic!("expected text resource"),
+            _ => panic!("expected known resource contents"),
+        }
+
+        crate::core::capability::resolver::remove_by_id(&server_id).await;
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn broker_only_standard_resource_read_returns_catalog_incomplete_error_data() {
+        let (_temp_dir, pool, server, server_id, _profile_id) = create_subscription_test_server().await;
+        let context = bind_resource_client(
+            &server,
+            "unify-client",
+            "broker-only-catalog-error",
+            "unify",
+            Some(crate::clients::models::UnifyDirectExposureConfig {
+                route_mode: crate::clients::models::UnifyRouteMode::BrokerOnly,
+                ..Default::default()
+            }),
+        )
+        .await;
+        server
+            .database
+            .as_ref()
+            .expect("database")
+            .capability_cache
+            .invalidate_server(&server_id)
+            .await;
+        sqlx::query("UPDATE capability_server_snapshots SET snapshot_state = 'invalidated' WHERE server_id = ?")
+            .bind(&server_id)
+            .execute(&pool)
+            .await
+            .expect("invalidate trusted resource catalog");
+
+        let error = crate::core::proxy::server::resources::read_resource(
+            &server,
+            ReadResourceRequestParams::new(
+                crate::core::capability::resource_uri::encode_resource_uri(
+                    "subscription_docs",
+                    "fixture://documents/guide.md",
+                )
+                .expect("encode cataloged listed Resource URI"),
+            ),
+            context,
+        )
+        .await
+        .expect_err("missing catalog authority must fail standard Broker read");
+
+        assert_eq!(error.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
+        assert_eq!(
+            error.data,
+            Some(serde_json::json!({"error_code": "catalog_incomplete", "retry_eligible": true}))
+        );
+        crate::core::capability::resolver::remove_by_id(&server_id).await;
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn broker_only_standard_resource_read_keeps_corrupt_persisted_template_internal() {
+        let (_temp_dir, pool, server, server_id, _profile_id) = create_subscription_test_server().await;
+        let context = bind_resource_client(
+            &server,
+            "unify-client",
+            "broker-only-corrupt-template",
+            "unify",
+            Some(Default::default()),
+        )
+        .await;
+        sqlx::query(
+            "UPDATE server_resource_templates SET uri_template = 'fixture://documents/{path', unique_name = 'mcpmate://resources/template/subscription_docs/fixture/broker/{path}' WHERE uri_template = 'fixture://documents/{path}'",
+        )
+            .execute(&pool)
+            .await
+            .expect("corrupt persisted Broker template");
+
+        let error = crate::core::proxy::server::resources::read_resource(
+            &server,
+            ReadResourceRequestParams::new("mcpmate://resources/template/subscription_docs/fixture/broker/guide.md"),
+            context,
+        )
+        .await
+        .expect_err("corrupt persisted template must fail the standard Broker read");
+
+        assert_eq!(error.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
+        crate::core::capability::resolver::remove_by_id(&server_id).await;
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn broker_only_standard_resource_read_rejects_non_utf8_canonical_template_argument() {
+        let (_temp_dir, pool, server, server_id, _profile_id) = create_subscription_test_server().await;
+        let context = bind_resource_client(
+            &server,
+            "unify-client",
+            "broker-only-non-utf8-template-argument",
+            "unify",
+            Some(Default::default()),
+        )
+        .await;
+        sqlx::query(
+            "UPDATE server_resource_templates SET unique_name = 'mcpmate://resources/template/subscription_docs/fixture/broker/{path}' WHERE uri_template = 'fixture://documents/{path}'",
+        )
+        .execute(&pool)
+        .await
+        .expect("move persisted Broker template outside Active Surface");
+        let error = crate::core::proxy::server::resources::read_resource(
+            &server,
+            ReadResourceRequestParams::new("mcpmate://resources/template/subscription_docs/fixture/broker/%FF"),
+            context,
+        )
+        .await
+        .expect_err("non-UTF-8 canonical argument must fail standard Broker read");
+
+        assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        crate::core::capability::resolver::remove_by_id(&server_id).await;
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn non_unify_standard_resource_read_does_not_enter_broker_resolution() {
+        let (_temp_dir, _pool, server, server_id, _profile_id) = create_subscription_test_server().await;
+        let context = bind_resource_client(&server, "hosted-client", "hosted-standard-read", "hosted", None).await;
+
+        let error = crate::core::proxy::server::resources::read_resource(
+            &server,
+            ReadResourceRequestParams::new(
+                crate::core::capability::resource_uri::encode_resource_uri(
+                    "subscription_docs",
+                    "fixture://documents/guide.md",
+                )
+                .expect("encode cataloged listed Resource URI"),
+            ),
+            context,
+        )
+        .await
+        .expect_err("non-Unify Consumer must not read a Broker-only Resource");
+
+        assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        crate::core::capability::resolver::remove_by_id(&server_id).await;
+    }
+
+    fn assert_markdown(
+        result: rmcp::model::ReadResourceResponse,
+        expected_uri: &str,
+        expected_heading: &str,
+    ) {
+        let rmcp::model::ReadResourceResponse::Complete(result) = result else {
+            panic!("expected complete built-in Resource read");
+        };
+        assert_eq!(result.contents.len(), 1);
+        match &result.contents[0] {
+            rmcp::model::ResourceContents::TextResourceContents {
+                uri, mime_type, text, ..
+            } => {
+                assert_eq!(uri, expected_uri);
+                assert_eq!(mime_type.as_deref(), Some("text/markdown"));
+                assert!(
+                    text.contains(expected_heading),
+                    "built-in guide content must be distinct Markdown"
+                );
+            }
+            rmcp::model::ResourceContents::BlobResourceContents { .. } => panic!("expected Markdown text resource"),
+            _ => panic!("expected known resource contents"),
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn unify_builtin_resource_guide_is_listed_readable_and_hidden_from_hosted() {
+        let (_temp_dir, _pool, server, server_id, _profile_id) = create_subscription_test_server().await;
+        let unify_context =
+            bind_resource_client(&server, "unify-client", "builtin-resource-guide-unify", "unify", None).await;
+
+        let unify_resources = rmcp::ServerHandler::list_resources(&server, None, unify_context.clone())
+            .await
+            .expect("list Unify resources");
+        assert!(
+            unify_resources
+                .resources
+                .iter()
+                .any(|item| item.uri == "mcpmate://resources/mcpmate/readme"),
+            "the empty Resource Surface first page must include the built-in Readme"
+        );
+
+        let unify_templates = rmcp::ServerHandler::list_resource_templates(&server, None, unify_context.clone())
+            .await
+            .expect("list Unify Resource Templates");
+        assert!(
+            unify_templates
+                .resource_templates
+                .iter()
+                .any(|item| item.uri_template == "mcpmate://resources/template/mcpmate/guide/{topic}"),
+            "the BrokerOnly Resource Template first page must include the built-in guide"
+        );
+
+        let duplicate_context = bind_resource_client(
+            &server,
+            "unify-duplicate-client",
+            "builtin-resource-guide-duplicate",
+            "unify",
+            None,
+        )
+        .await;
+        let duplicate_client = server
+            .resolve_bound_client_context(&duplicate_context)
+            .await
+            .expect("resolve duplicate Consumer");
+        let duplicate_surface = server
+            .load_active_surface(&duplicate_client)
+            .await
+            .expect("load duplicate Consumer Surface");
+        assert!(duplicate_surface.entries.iter().any(|entry| {
+            entry.kind == mcpmate_capability_store::CapabilityKind::Resources
+                && entry.external_key == "mcpmate://resources/mcpmate/readme"
+        }));
+        assert!(duplicate_surface.entries.iter().any(|entry| {
+            entry.kind == mcpmate_capability_store::CapabilityKind::ResourceTemplates
+                && entry.external_key == "mcpmate://resources/template/mcpmate/guide/{topic}"
+        }));
+
+        let duplicate_resources = rmcp::ServerHandler::list_resources(&server, None, duplicate_context.clone())
+            .await
+            .expect("list Unify resources with conflicting active Surface entry");
+        let duplicate_readmes: Vec<_> = duplicate_resources
+            .resources
+            .iter()
+            .filter(|item| item.uri == "mcpmate://resources/mcpmate/readme")
+            .collect();
+        assert_eq!(duplicate_readmes.len(), 1);
+        assert_eq!(duplicate_readmes[0].name, "Readme");
+        assert_eq!(
+            duplicate_readmes[0].description.as_deref(),
+            Some("MCPMate resource workflow overview")
+        );
+        assert_eq!(duplicate_readmes[0].mime_type.as_deref(), Some("text/markdown"));
+
+        let duplicate_templates =
+            rmcp::ServerHandler::list_resource_templates(&server, None, duplicate_context.clone())
+                .await
+                .expect("list Unify Resource Templates with conflicting active Surface entry");
+        let duplicate_guides: Vec<_> = duplicate_templates
+            .resource_templates
+            .iter()
+            .filter(|item| item.uri_template == "mcpmate://resources/template/mcpmate/guide/{topic}")
+            .collect();
+        assert_eq!(duplicate_guides.len(), 1);
+        assert_eq!(duplicate_guides[0].name, "MCPMate Resource Guide");
+        assert_eq!(
+            duplicate_guides[0].description.as_deref(),
+            Some("Read a stable MCPMate resource workflow guide by topic")
+        );
+        assert_eq!(duplicate_guides[0].mime_type.as_deref(), Some("text/markdown"));
+
+        assert_markdown(
+            rmcp::ServerHandler::read_resource(
+                &server,
+                ReadResourceRequestParams::new("mcpmate://resources/mcpmate/readme"),
+                duplicate_context.clone(),
+            )
+            .await
+            .expect("read built-in Readme before a conflicting active Surface route"),
+            "mcpmate://resources/mcpmate/readme",
+            "# MCPMate Resource Readme",
+        );
+        assert_markdown(
+            rmcp::ServerHandler::read_resource(
+                &server,
+                ReadResourceRequestParams::new("mcpmate://resources/template/mcpmate/guide/read"),
+                duplicate_context,
+            )
+            .await
+            .expect("read built-in guide before a conflicting active Surface template route"),
+            "mcpmate://resources/template/mcpmate/guide/read",
+            "# Standard Read",
+        );
+
+        assert_markdown(
+            rmcp::ServerHandler::read_resource(
+                &server,
+                ReadResourceRequestParams::new("mcpmate://resources/mcpmate/readme"),
+                unify_context.clone(),
+            )
+            .await
+            .expect("read built-in Readme"),
+            "mcpmate://resources/mcpmate/readme",
+            "# MCPMate Resource Readme",
+        );
+        assert_markdown(
+            rmcp::ServerHandler::read_resource(
+                &server,
+                ReadResourceRequestParams::new("mcpmate://resources/template/mcpmate/guide/read"),
+                unify_context,
+            )
+            .await
+            .expect("read built-in guide topic"),
+            "mcpmate://resources/template/mcpmate/guide/read",
+            "# Standard Read",
+        );
+
+        let hosted_context = bind_resource_client(
+            &server,
+            "hosted-client",
+            "builtin-resource-guide-hosted",
+            "hosted",
+            None,
+        )
+        .await;
+        let hosted_resources = rmcp::ServerHandler::list_resources(&server, None, hosted_context.clone())
+            .await
+            .expect("list Hosted resources");
+        assert!(
+            !hosted_resources
+                .resources
+                .iter()
+                .any(|item| item.uri.contains("/mcpmate/readme"))
+        );
+        let hosted_error = rmcp::ServerHandler::read_resource(
+            &server,
+            ReadResourceRequestParams::new("mcpmate://resources/mcpmate/readme"),
+            hosted_context.clone(),
+        )
+        .await
+        .expect_err("Hosted Consumer must not read the Unify built-in Readme");
+        assert_eq!(hosted_error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        let hosted_templates = rmcp::ServerHandler::list_resource_templates(&server, None, hosted_context)
+            .await
+            .expect("list Hosted Resource Templates");
+        assert!(
+            !hosted_templates
+                .resource_templates
+                .iter()
+                .any(|item| item.uri_template.contains("/mcpmate/guide/"))
+        );
+
+        let direct_context = bind_resource_client(
+            &server,
+            "direct-client",
+            "builtin-resource-guide-direct",
+            "transparent",
+            None,
+        )
+        .await;
+        rmcp::ServerHandler::read_resource(
+            &server,
+            ReadResourceRequestParams::new("mcpmate://resources/mcpmate/readme"),
+            direct_context,
+        )
+        .await
+        .expect_err("Direct Consumer must not read the Unify built-in Readme");
+
         crate::core::capability::resolver::remove_by_id(&server_id).await;
     }
 

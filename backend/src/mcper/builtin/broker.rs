@@ -65,8 +65,30 @@ fn ensure_catalog_result_is_authoritative(
     Ok(())
 }
 
-fn is_catalog_authority_error(error: &anyhow::Error) -> bool {
+pub(crate) fn is_catalog_authority_error(error: &anyhow::Error) -> bool {
     error.downcast_ref::<AggregateListCompletionError>().is_some()
+        || error.downcast_ref::<CatalogAuthorityReadError>().is_some()
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("Trusted resource catalog is unavailable for server '{server_name}' ({server_id}): {source}")]
+struct CatalogAuthorityReadError {
+    server_id: String,
+    server_name: String,
+    #[source]
+    source: anyhow::Error,
+}
+
+fn catalog_authority_error_for_route(
+    server_id: &str,
+    server_name: &str,
+    source: anyhow::Error,
+) -> anyhow::Error {
+    anyhow::Error::new(CatalogAuthorityReadError {
+        server_id: server_id.to_string(),
+        server_name: server_name.to_string(),
+        source,
+    })
 }
 
 /// Structured error response for UCAN tools, designed for LLM parsing and recovery.
@@ -191,16 +213,16 @@ impl UcanError {
         }
     }
 
-    pub fn resource_arguments_not_supported(capability_name: &str) -> Self {
+    pub fn resource_standard_read_required(capability_kind: &str) -> Self {
         Self {
-            error_code: "resource_arguments_not_supported".to_string(),
+            error_code: "resource_standard_read_required".to_string(),
             message: format!(
-                "Resource '{}' does not accept call arguments.",
-                capability_name
+                "{} targets must be read through standard resources/read.",
+                capitalize_kind(capability_kind)
             ),
-            recovery_hint: "Call mcpmate_ucan_call again with capability_kind=resource and arguments={}. If you started from a template, resolve it via mcpmate_ucan_details first.".to_string(),
+            recovery_hint: standard_read_recovery_hint(),
             alternatives: Vec::new(),
-            retry_eligible: true,
+            retry_eligible: false,
         }
     }
 
@@ -238,20 +260,6 @@ impl UcanError {
             recovery_hint: "The operation took longer than the configured timeout. Consider increasing MCPMATE_TOOL_CALL_TIMEOUT_SECS environment variable, or check if the upstream server is responsive.".to_string(),
             alternatives: Vec::new(),
             retry_eligible: true,
-        }
-    }
-
-    /// Creates a resource_template_not_invocable error.
-    pub fn resource_template_not_invocable(template_name: &str) -> Self {
-        Self {
-            error_code: "resource_template_not_invocable".to_string(),
-            message: format!(
-                "Resource template '{}' cannot be invoked directly.",
-                template_name
-            ),
-            recovery_hint: "Use mcpmate_ucan_details to inspect the canonical URI template, expand its RFC 6570 variables, then call the resulting URI with capability_kind=resource.".to_string(),
-            alternatives: Vec::new(),
-            retry_eligible: false,
         }
     }
 
@@ -484,7 +492,7 @@ fn default_catalog_stale_hint() -> String {
 }
 
 fn default_error_recovery_hint() -> String {
-    "If a call fails, verify capability_name and capability_kind from the surface directory, inspect details with detail_level=full, then retry with corrected arguments.".to_string()
+    "Recovery path: verify capability_name and capability_kind from mcpmate_ucan_catalog, inspect Details with detail_level=full, then retry Tool or Prompt with corrected arguments. For Resource or ResourceTemplate, use Details to obtain or expand the concrete canonical URI, then invoke resources/read.".to_string()
 }
 
 fn default_profile_get_description() -> String {
@@ -554,17 +562,14 @@ fn default_workflow_hints_prompt() -> Vec<String> {
 }
 
 fn default_workflow_hints_resource() -> Vec<String> {
-    vec![
-        "Inspect resource details first to confirm URI intent, then call via mcpmate_ucan_call without arguments."
-            .to_string(),
-    ]
+    vec!["Inspect resource details first, then invoke resources/read with the canonical URI.".to_string()]
 }
 
 fn default_workflow_hints_resource_template() -> Vec<String> {
     vec![
-        "Resource templates are not directly invocable.".to_string(),
-        "Expand the canonical template variables, then call the resulting URI with capability_kind=resource."
+        "Inspect resource template details first, then expand its RFC 6570 variables to a concrete canonical URI."
             .to_string(),
+        "Invoke resources/read with the concrete canonical URI.".to_string(),
     ]
 }
 
@@ -1138,16 +1143,16 @@ impl BrokerService {
             let source = get_enrichment(&entry.server_id);
             SurfaceDirectoryItem {
                 capability_name: entry.resource.uri.to_string(),
-                    capability_kind: SurfaceKind::Resource,
-                    summary: compact_description(extract_description_from_value(&entry.resource).as_deref()),
-                    action: "inspect_first",
-                    next_step: "details",
-                    server_id: entry.server_id,
-                    server_name: entry.server_name,
-                    interaction_mode: "application_context",
-                    detail_hint: "Inspect resource details first, then call mcpmate_ucan_call with capability_kind=resource and arguments={}",
-                    source,
-                }
+                capability_kind: SurfaceKind::Resource,
+                summary: compact_description(extract_description_from_value(&entry.resource).as_deref()),
+                action: "inspect_first",
+                next_step: "details",
+                server_id: entry.server_id,
+                server_name: entry.server_name,
+                interaction_mode: "application_context",
+                detail_hint: "Inspect resource details, then invoke resources/read with the canonical URI.",
+                source,
+            }
         }));
 
         summaries.extend(
@@ -1162,7 +1167,7 @@ impl BrokerService {
                     server_id: entry.server_id,
                     server_name: entry.server_name,
                     interaction_mode: "application_context_template",
-                    detail_hint: "Inspect the canonical URI template, expand its RFC 6570 variables, then call the resulting URI as a resource.",
+                    detail_hint: "Inspect the canonical URI template, expand its RFC 6570 variables, then invoke resources/read with the concrete URI.",
                     source,
                 }
             }),
@@ -1374,6 +1379,7 @@ impl BrokerService {
         detail_level: UcanDetailLevel,
     ) -> Result<CallToolResult> {
         let prompt_config = self.ucan_prompt_config().await;
+        let mut resource_link = None;
         let workflow_hints = match capability_kind {
             SurfaceKind::Tool => prompt_config.workflow_hints.tool.clone(),
             SurfaceKind::Prompt => prompt_config.workflow_hints.prompt.clone(),
@@ -1460,6 +1466,7 @@ impl BrokerService {
                         let related = self
                             .find_related_surface_items(context, &resource.server_id, capability_name, capability_kind)
                             .await;
+                        resource_link = Some(resource.resource.clone());
                         SurfaceDetailsResponse {
                             capability_kind,
                             capability_name: resource.resource.uri.to_string(),
@@ -1474,9 +1481,9 @@ impl BrokerService {
                             call_requirements: CallRequirements {
                                 accepts_arguments: false,
                                 required_arguments: Vec::new(),
-                                call_ready_without_arguments: true,
+                                call_ready_without_arguments: false,
                             },
-                            error_recovery_hint: prompt_config.error_recovery_hint.clone(),
+                            error_recovery_hint: standard_read_recovery_hint(),
                         }
                     }
                     None => {
@@ -1520,7 +1527,7 @@ impl BrokerService {
                                     required_arguments: Vec::new(),
                                     call_ready_without_arguments: false,
                                 },
-                                error_recovery_hint: prompt_config.error_recovery_hint.clone(),
+                                error_recovery_hint: standard_read_recovery_hint(),
                             }
                         }
                         None => {
@@ -1614,9 +1621,13 @@ impl BrokerService {
             }
         };
 
-        Ok(CallToolResult::success(vec![ContentBlock::text(
+        let mut content = vec![ContentBlock::text(
             serde_json::to_string_pretty(&response).context("Failed to serialize Unify tool details")?,
-        )]))
+        )];
+        if let Some(resource) = resource_link {
+            content.push(ContentBlock::resource_link(resource));
+        }
+        Ok(CallToolResult::success(content))
     }
 
     async fn find_related_surface_items(
@@ -1711,25 +1722,9 @@ impl BrokerService {
         match capability_kind {
             SurfaceKind::Tool => self.broker_tool_call_inner(context, capability_name, arguments).await,
             SurfaceKind::Prompt => self.broker_prompt_call(context, capability_name, arguments).await,
-            SurfaceKind::Resource => self.broker_resource_read(context, capability_name, arguments).await,
+            SurfaceKind::Resource => Ok(UcanError::resource_standard_read_required("resource").to_call_tool_result()),
             SurfaceKind::ResourceTemplate => {
-                match self.find_visible_resource_template(context, capability_name).await {
-                    Err(error) if is_catalog_authority_error(&error) => {
-                        return Ok(UcanError::catalog_incomplete().to_call_tool_result());
-                    }
-                    Err(error) => return Err(error),
-                    Ok(None) => {
-                        let surface_names = self.collect_surface_names_for_kind(context, capability_kind).await?;
-                        return Ok(UcanError::capability_not_found(
-                            "resource_template",
-                            capability_name,
-                            &surface_names,
-                        )
-                        .to_call_tool_result());
-                    }
-                    Ok(Some(_)) => {}
-                }
-                Ok(UcanError::resource_template_not_invocable(capability_name).to_call_tool_result())
+                Ok(UcanError::resource_standard_read_required("resource_template").to_call_tool_result())
             }
             SurfaceKind::Profile => {
                 if !profile_capabilities_visible(context) {
@@ -1901,10 +1896,17 @@ impl BrokerService {
         &self,
         context: &ClientBuiltinContext,
     ) -> Result<UcanCatalogScope> {
-        let client_context = context.as_client_context();
+        self.resolve_ucan_catalog_scope_for_client(&context.as_client_context())
+            .await
+    }
+
+    async fn resolve_ucan_catalog_scope_for_client(
+        &self,
+        client_context: &ClientContext,
+    ) -> Result<UcanCatalogScope> {
         let visibility = ProfileVisibilityService::new(Some(self.database.clone()), None);
         let snapshot = visibility
-            .resolve_snapshot_for_client(&client_context)
+            .resolve_snapshot_for_client(client_context)
             .await
             .context("Failed to resolve UCan visibility snapshot")?;
         let visible_server_ids = snapshot.server_ids.iter().cloned().collect::<HashSet<_>>();
@@ -1917,12 +1919,143 @@ impl BrokerService {
             .collect();
 
         Ok(UcanCatalogScope {
-            client_context,
+            client_context: client_context.clone(),
             snapshot,
             visible_server_ids,
             enabled_servers,
             eligible_server_ids,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn resolve_current_broker_resource_route(
+        &self,
+        context: &ClientBuiltinContext,
+        external_uri: &str,
+    ) -> Result<Option<crate::core::capability::resource_registry::ResolvedResourceRoute>> {
+        self.resolve_current_broker_resource_route_for_client(&context.as_client_context(), external_uri)
+            .await
+    }
+
+    pub(crate) async fn resolve_current_broker_resource_route_for_client(
+        &self,
+        client_context: &ClientContext,
+        external_uri: &str,
+    ) -> Result<Option<crate::core::capability::resource_registry::ResolvedResourceRoute>> {
+        let route =
+            crate::core::capability::resource_registry::resolve_resource_route(&self.database.pool, external_uri)
+                .await
+                .with_context(|| format!("Failed to resolve canonical resource URI '{external_uri}'"))?;
+        if matches!(
+            &route.source,
+            crate::core::capability::resource_registry::ResourceRouteSource::Issued
+        ) {
+            return Ok(None);
+        }
+
+        let scope = self.resolve_ucan_catalog_scope_for_client(client_context).await?;
+        if !scope.visible_server_ids.contains(&route.server_id)
+            || !scope
+                .enabled_servers
+                .iter()
+                .any(|(server_id, _, _)| server_id == &route.server_id)
+        {
+            return Ok(None);
+        }
+        if crate::core::proxy::server::unify_directly_exposed_resource_route_allowed(
+            client_context.unify_workspace.as_ref(),
+            &scope.eligible_server_ids,
+            &route.server_id,
+            &route,
+        ) {
+            return Ok(None);
+        }
+
+        let capability = match &route.source {
+            crate::core::capability::resource_registry::ResourceRouteSource::Listed => {
+                crate::core::capability::CapabilityType::Resources
+            }
+            crate::core::capability::resource_registry::ResourceRouteSource::Template { .. } => {
+                crate::core::capability::CapabilityType::ResourceTemplates
+            }
+            crate::core::capability::resource_registry::ResourceRouteSource::Issued => unreachable!(),
+        };
+        let ctx = crate::core::capability::runtime::ListCtx {
+            capability,
+            server_id: route.server_id.clone(),
+            refresh: Some(crate::core::capability::runtime::RefreshStrategy::CacheFirst),
+            operation_timeout: crate::core::transport::timeout_policy::DEFAULT_CAPABILITY_OPERATION_TIMEOUT,
+            validation_session: None,
+            runtime_identity: scope.client_context.runtime_identity(),
+            connection_selection: scope.client_context.connection_selection(route.server_id.clone()),
+            visibility_snapshot: Some(Arc::new(scope.snapshot)),
+            name_domain: crate::core::capability::runtime::NameDomain::External,
+        };
+        let catalog = match crate::core::capability::read_service::CapabilityReadService::from_runtime(
+            self.database.clone(),
+            self.connection_pool.clone(),
+        )
+        .catalog_only(&ctx)
+        .await
+        {
+            Ok(Some(catalog)) => catalog,
+            Ok(None) => {
+                return Err(catalog_authority_error_for_route(
+                    &route.server_id,
+                    &route.server_name,
+                    anyhow!("trusted catalog snapshot is unavailable"),
+                ));
+            }
+            Err(error) => {
+                return Err(catalog_authority_error_for_route(
+                    &route.server_id,
+                    &route.server_name,
+                    anyhow::Error::new(error),
+                ));
+            }
+        };
+
+        let current = match (&route.source, catalog.items) {
+            (crate::core::capability::resource_registry::ResourceRouteSource::Listed, items) => {
+                let resources = items.into_resources().ok_or_else(|| {
+                    anyhow!(
+                        "Resource catalog returned a different capability kind for server '{}'",
+                        route.server_id
+                    )
+                })?;
+                resources
+                    .iter()
+                    .any(|resource| resource.uri.as_str() == route.external_uri.as_str())
+            }
+            (
+                crate::core::capability::resource_registry::ResourceRouteSource::Template { upstream_template, .. },
+                items,
+            ) => {
+                let templates = items.into_resource_templates().ok_or_else(|| {
+                    anyhow!(
+                        "Resource template catalog returned a different capability kind for server '{}'",
+                        route.server_id
+                    )
+                })?;
+                let mut current = false;
+                for template in templates {
+                    let raw_template = crate::core::proxy::server::resolve_direct_surface_value(
+                        NamingKind::ResourceTemplate,
+                        &route.server_id,
+                        template.uri_template.as_ref(),
+                    )
+                    .await?;
+                    if raw_template == *upstream_template {
+                        current = true;
+                        break;
+                    }
+                }
+                current
+            }
+            (crate::core::capability::resource_registry::ResourceRouteSource::Issued, _) => unreachable!(),
+        };
+
+        Ok(current.then_some(route))
     }
 
     async fn visible_tools_listing(
@@ -2530,86 +2663,6 @@ impl BrokerService {
         }
     }
 
-    async fn broker_resource_read(
-        &self,
-        context: &ClientBuiltinContext,
-        resource_uri: &str,
-        arguments: serde_json::Map<String, serde_json::Value>,
-    ) -> Result<CallToolResult> {
-        let resource_entry = match self.find_visible_resource(context, resource_uri).await {
-            Err(error) if is_catalog_authority_error(&error) => {
-                return Ok(UcanError::catalog_incomplete().to_call_tool_result());
-            }
-            Err(error) => return Err(error),
-            Ok(None) => {
-                let surface_names = self
-                    .collect_surface_names_for_kind(context, SurfaceKind::Resource)
-                    .await?;
-                return Ok(
-                    UcanError::capability_not_found("resource", resource_uri, &surface_names).to_call_tool_result(),
-                );
-            }
-            Ok(Some(resource_entry)) => resource_entry,
-        };
-        if !arguments.is_empty() {
-            return Ok(UcanError::resource_arguments_not_supported(resource_uri).to_call_tool_result());
-        }
-        let client_context = context.as_client_context();
-        let visibility = ProfileVisibilityService::new(Some(self.database.clone()), None);
-        let snapshot = visibility
-            .resolve_snapshot_for_client(&client_context)
-            .await
-            .context("Failed to resolve Unify visibility snapshot")?;
-        if visibility
-            .assert_resource_allowed_with_snapshot(&snapshot, resource_uri)
-            .await
-            .is_err()
-        {
-            return Ok(UcanError::visibility_denied("resource", resource_uri).to_call_tool_result());
-        }
-
-        let route =
-            crate::core::capability::resource_registry::resolve_resource_route(&self.database.pool, resource_uri)
-                .await
-                .with_context(|| format!("Failed to resolve canonical resource URI '{}'", resource_uri))?;
-        let server_id = route.server_id.clone();
-        let upstream_resource_uri = route.upstream_uri.clone();
-
-        match crate::core::capability::facade::read_routed_resource(
-            &self.connection_pool,
-            &server_id,
-            &upstream_resource_uri,
-            client_context.connection_selection(server_id.clone()).as_ref(),
-        )
-        .await
-        {
-            Ok(mut result) => {
-                crate::core::capability::resource_registry::rewrite_read_resource_result(
-                    &self.database.pool,
-                    &route,
-                    &mut result,
-                )
-                .await?;
-                Ok(CallToolResult::success(vec![ContentBlock::text(
-                    serde_json::to_string_pretty(&result).context("Failed to serialize Unify resource result")?,
-                )]))
-            }
-            Err(e) => {
-                tracing::warn!(
-                    capability_kind = "resource",
-                    capability_name = resource_uri,
-                    server_id,
-                    server_name = resource_entry.server_name,
-                    error = %e,
-                    "Upstream capability invocation failed"
-                );
-                self.record_usage_evidence(&server_id, mcpmate_capability_store::CapabilityKind::Resources, &e)
-                    .await;
-                Ok(UcanError::upstream_error("resource", resource_uri).to_call_tool_result())
-            }
-        }
-    }
-
     async fn record_usage_evidence(
         &self,
         server_id: &str,
@@ -2789,7 +2842,7 @@ impl BuiltinService for BrokerService {
                             },
                             "arguments": {
                                 "type": "object",
-                                "description": "Arguments for tool/prompt surface items. Omit or pass {} for resources."
+                                "description": "Arguments for Tool or Prompt targets only. Resource and ResourceTemplate targets use a concrete canonical URI with resources/read."
                             }
                         },
                         "required": ["capability_kind", "capability_name"]
@@ -2907,10 +2960,10 @@ fn default_catalog_page_size() -> usize {
 
 fn default_ucan_prompt_config() -> UcanPromptConfig {
     UcanPromptConfig {
-        catalog_tool_description: "MCPMATE SURFACE DIRECTORY\nROLE: Discover the current MCP surface exposed to this client.\nUSE_WHEN: Before starting any task, call this first to find the most relevant surface item.\nRETURNS: A paginated surface directory with lightweight summaries.\nWORKFLOW: directory -> details -> call or select.\nRULES: Use the current page first. If you still have not found a good match, request the next page instead of expanding everything at once.\nExample: mcpmate_ucan_catalog(page=1, page_size=10) or mcpmate_ucan_catalog(page=1, page_size=10, kind_filter=[\"tool\"]) or mcpmate_ucan_catalog(page=1, page_size=10, search=\"github\")".to_string(),
-        details_tool_description: "MCPMATE SURFACE INSPECTOR\nROLE: Explain how to use one surface item selected from MCPMate's surface directory.\nUSE_WHEN: After directory, before call or profile selection.\nRETURNS: Summary or full details for the selected surface item.\nWORKFLOW: Use summary first for quick judgment. Use full only when you need complete metadata.\nRULES: Do not inspect unrelated surface items in full.\nExample: mcpmate_ucan_details(capability_kind=\"tool\", capability_name=\"github_search\", detail_level=\"summary\")".to_string(),
-        call_tool_description: "MCPMATE SURFACE CALLER\nROLE: Call one callable MCP surface item selected from MCPMate's surface directory.\nUSE_WHEN: Only after you already know which surface item to use.\nRETURNS: The execution result produced by the selected surface item.\nWORKFLOW: directory -> details -> call.\nRULES: Call only tool, prompt, or resource items you intentionally selected. Use details first when arguments or behavior are unclear.\nExample: mcpmate_ucan_call(capability_kind=\"tool\", capability_name=\"github_search\", arguments={\"query\":\"rust mcp\"})".to_string(),
-        catalog_usage: "Before starting any task, call mcpmate_ucan_catalog first. Pick the most relevant surface item from the current page. If the current page is not enough, request the next page instead of expanding everything at once. Then use mcpmate_ucan_details to inspect the selected surface item, and use mcpmate_ucan_call only after you understand how to use it.".to_string(),
+        catalog_tool_description: "MCPMATE SURFACE DIRECTORY\nROLE: Discover the current MCP surface exposed to this client.\nUSE_WHEN: Before starting any task, call this first to find the most relevant surface item.\nRETURNS: A paginated surface directory with lightweight summaries.\nWORKFLOW: directory -> details -> invoke, read, or select.\nRULES: Use the current page first. If you still have not found a good match, request the next page instead of expanding everything at once.\nExample: mcpmate_ucan_catalog(page=1, page_size=10) or mcpmate_ucan_catalog(page=1, page_size=10, kind_filter=[\"tool\"]) or mcpmate_ucan_catalog(page=1, page_size=10, search=\"github\")".to_string(),
+        details_tool_description: "MCPMATE SURFACE INSPECTOR\nROLE: Explain how to use one surface item selected from MCPMate's surface directory.\nUSE_WHEN: After directory, before invocation, standard resource read, or profile selection.\nRETURNS: Summary or full details for the selected surface item.\nWORKFLOW: Use summary first for quick judgment. Use full only when you need complete metadata.\nRULES: Do not inspect unrelated surface items in full.\nExample: mcpmate_ucan_details(capability_kind=\"tool\", capability_name=\"github_search\", detail_level=\"summary\")".to_string(),
+        call_tool_description: "MCPMATE SURFACE CALLER\nROLE: Call one Tool or Prompt selected from MCPMate's surface directory.\nUSE_WHEN: Only after you already know which callable surface item to use.\nRETURNS: The execution result produced by the selected surface item.\nWORKFLOW: directory -> details -> call for Tool or Prompt; use resources/read for Resource or ResourceTemplate targets.\nRULES: Do not use this tool to read resources. Use details first when arguments or behavior are unclear.\nExample: mcpmate_ucan_call(capability_kind=\"tool\", capability_name=\"github_search\", arguments={\"query\":\"rust mcp\"})".to_string(),
+        catalog_usage: "Use mcpmate_ucan_catalog to choose one surface item, then inspect it with mcpmate_ucan_details. Call Tool or Prompt with mcpmate_ucan_call. For Resource or ResourceTemplate, use Details to obtain or expand the concrete canonical URI, then invoke resources/read.".to_string(),
         catalog_stale_hint: default_catalog_stale_hint(),
         error_recovery_hint: default_error_recovery_hint(),
         catalog_format: vec![
@@ -3094,10 +3147,14 @@ fn resource_details_value(
     match detail_level {
         UcanDetailLevel::Summary => Ok(serde_json::json!({
             "description": extract_description_from_value(resource),
-            "mime_type": resource.mime_type,
-            "annotations": resource.annotations,
+            "uri": resource.uri,
+            "read_with": "resources/read",
         })),
-        UcanDetailLevel::Full => serde_json::to_value(resource).context("Serialize resource detail"),
+        UcanDetailLevel::Full => {
+            let mut details = serde_json::to_value(resource).context("Serialize resource detail")?;
+            details["read_with"] = serde_json::Value::String("resources/read".to_string());
+            Ok(details)
+        }
     }
 }
 
@@ -3109,13 +3166,21 @@ fn resource_template_details_value(
         UcanDetailLevel::Summary => Ok(serde_json::json!({
             "description": extract_description_from_value(resource_template),
             "uri_template": resource_template.uri_template,
-            "usage": "This template is not directly invocable. Expand its canonical RFC 6570 variables, then call the resulting URI with capability_kind=resource.",
+            "read_with": "resources/read",
         })),
-        UcanDetailLevel::Full => Ok(serde_json::json!({
-            "template": serde_json::to_value(resource_template).context("Serialize resource template detail")?,
-            "usage": "Expand this canonical URI template and call the resulting URI with capability_kind=resource."
-        })),
+        UcanDetailLevel::Full => {
+            let mut details = serde_json::to_value(resource_template).context("Serialize resource template detail")?;
+            details["read_with"] = serde_json::Value::String("resources/read".to_string());
+            details["instruction"] = serde_json::Value::String(
+                "Expand RFC 6570 variables to a concrete canonical URI, then invoke resources/read.".to_string(),
+            );
+            Ok(details)
+        }
     }
+}
+
+fn standard_read_recovery_hint() -> String {
+    "Use mcpmate_ucan_catalog to select the target, inspect it with mcpmate_ucan_details, expand RFC 6570 variables for a resource template, then invoke resources/read with the concrete canonical URI.".to_string()
 }
 
 fn extract_argument_tips_from_tool(tool: &Tool) -> Vec<ArgumentTip> {
@@ -3220,11 +3285,28 @@ mod tests {
         CapabilitySource, UnifyDirectExposureConfig, UnifyDirectPromptSurface, UnifyDirectResourceSurface,
         UnifyDirectToolSurface, UnifyRouteMode,
     };
-    use rmcp::model::{Prompt, Resource, ResourceTemplate, Tool};
+    use crate::common::profile::ProfileType;
+    use crate::config::{
+        database::Database,
+        models::{Profile, Server, ServerTransportDraft},
+        server::upsert_server_definition,
+    };
+    use crate::core::{
+        capability::resource_registry::issue_resource_route,
+        models::Config,
+        pool::{CapSyncFlags, UpstreamConnectionPool},
+    };
+    use crate::mcper::builtin::registry::BuiltinService;
+    use rmcp::model::{
+        Annotations, CallToolRequestParams, ContentBlock, Icon, MetaObject, Prompt, Resource, ResourceTemplate, Tool,
+    };
+    use sqlx::sqlite::SqlitePoolOptions;
     use std::collections::HashSet;
+    use std::path::PathBuf;
     use std::sync::{Arc, Mutex as StdMutex};
     use std::time::Duration;
     use tempfile::tempdir;
+    use tokio::sync::Mutex;
 
     static ENV_LOCK: StdMutex<()> = StdMutex::new(());
 
@@ -3241,6 +3323,142 @@ mod tests {
             custom_profile_id: None,
             unify_workspace: None,
         }
+    }
+
+    async fn resolver_fixture(
+        resources: Vec<Resource>,
+        templates: Vec<ResourceTemplate>,
+        workspace: Option<UnifyDirectExposureConfig>,
+    ) -> (super::BrokerService, ClientBuiltinContext, Arc<Database>) {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect resolver database");
+        crate::test_helpers::prepare_config_database(&pool).await;
+        crate::config::server::init::initialize_server_tables(&pool)
+            .await
+            .expect("initialize server tables");
+        crate::config::client::init::initialize_client_table(&pool)
+            .await
+            .expect("initialize client table");
+        crate::config::profile::init::initialize_profile_tables(&pool)
+            .await
+            .expect("initialize profile tables");
+        crate::config::database::initialize_capability_catalog(&pool)
+            .await
+            .expect("initialize catalog");
+        crate::core::capability::naming::initialize(pool.clone());
+
+        let mut server = Server::new_stdio("docs".to_string(), Some("fixture-command".to_string()));
+        server.id = Some("server-a".to_string());
+        upsert_server_definition(
+            &pool,
+            &server,
+            &ServerTransportDraft::Stdio {
+                command: Some("fixture-command".to_string()),
+                args: Vec::new(),
+                env: Default::default(),
+            },
+        )
+        .await
+        .expect("insert resolver server");
+        sqlx::query("UPDATE server_config SET unify_direct_exposure_eligible = 1 WHERE id = 'server-a'")
+            .execute(&pool)
+            .await
+            .expect("enable direct exposure fixture");
+        crate::config::server::capabilities::commit_protocol_items_for_kinds(
+            &pool,
+            "server-a",
+            "docs",
+            Some(serde_json::from_value(serde_json::json!({"protocolVersion":"2025-11-25","capabilities":{"tools":{"listChanged":true}},"serverInfo":{"name":"docs","version":"1.0.0"}})).expect("build resolver initialize")),
+            Vec::new(),
+            resources,
+            Vec::new(),
+            templates,
+            CapSyncFlags::ALL,
+        )
+        .await
+        .expect("commit resolver catalog");
+
+        let database = Arc::new(Database {
+            pool,
+            path: PathBuf::new(),
+            capability_cache: Arc::new(mcpmate_capability_store::DerivedCapabilityCache::default()),
+        });
+        let broker = super::BrokerService::new(
+            database.clone(),
+            Arc::new(Mutex::new(UpstreamConnectionPool::new(
+                Arc::new(Config::default()),
+                Some(database.clone()),
+            ))),
+        );
+        let mut context = test_client_context(Some("unify"), CapabilitySource::Profiles);
+        context.unify_workspace = workspace;
+        (broker, context, database)
+    }
+
+    async fn call_ucan_with_context(
+        broker: &super::BrokerService,
+        context: &ClientBuiltinContext,
+        tool_name: &'static str,
+        arguments: serde_json::Value,
+    ) -> rmcp::model::CallToolResult {
+        let request = CallToolRequestParams::new(tool_name)
+            .with_arguments(serde_json::from_value(arguments).expect("serialize UCAN call arguments"));
+        broker
+            .call_tool_with_context(&request, Some(context))
+            .await
+            .expect("call UCAN tool")
+    }
+
+    async fn details_with_context(
+        broker: &super::BrokerService,
+        context: &ClientBuiltinContext,
+        capability_kind: &str,
+        capability_name: &str,
+        detail_level: &str,
+    ) -> rmcp::model::CallToolResult {
+        call_ucan_with_context(
+            broker,
+            context,
+            super::MCPMATE_UCAN_DETAILS_TOOL,
+            serde_json::json!({
+                "capability_kind": capability_kind,
+                "capability_name": capability_name,
+                "detail_level": detail_level,
+            }),
+        )
+        .await
+    }
+
+    fn text_response(result: &rmcp::model::CallToolResult) -> serde_json::Value {
+        let ContentBlock::Text(text) = &result.content[0] else {
+            panic!("expected UCAN text envelope");
+        };
+        serde_json::from_str(&text.text).expect("parse UCAN text envelope")
+    }
+
+    fn assert_exact_details_envelope(response: &serde_json::Value) {
+        let object = response.as_object().expect("details envelope");
+        assert_eq!(object.len(), 11);
+        assert!(
+            [
+                "argument_tips",
+                "call_requirements",
+                "capability_kind",
+                "capability_name",
+                "detail_level",
+                "details",
+                "error_recovery_hint",
+                "related_capabilities",
+                "server_id",
+                "server_name",
+                "workflow_hints",
+            ]
+            .into_iter()
+            .all(|key| object.contains_key(key))
+        );
     }
 
     #[test]
@@ -3313,6 +3531,427 @@ mod tests {
             None,
             CapabilitySource::Custom
         )));
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn resolver_reads_listed_and_template_routes_from_catalog_only() {
+        let (broker, context, _) = resolver_fixture(
+            vec![Resource::new("file:///guide.md", "Guide")],
+            vec![ResourceTemplate::new("file:///guides/{name}.md", "Guides")],
+            None,
+        )
+        .await;
+
+        let listed = broker
+            .resolve_current_broker_resource_route(&context, "mcpmate://resources/docs/file/guide.md")
+            .await
+            .expect("resolve listed catalog route")
+            .expect("listed route remains current");
+        assert_eq!(listed.upstream_uri, "file:///guide.md");
+        let template = broker
+            .resolve_current_broker_resource_route(&context, "mcpmate://resources/template/docs/file/guides/rust.md")
+            .await
+            .expect("resolve template catalog route")
+            .expect("template route remains current");
+        assert_eq!(template.upstream_uri, "file:///guides/rust.md");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn resource_details_emit_minimal_standard_read_metadata_and_canonical_link() {
+        let resource = Resource::new("file:///guide.md", "Guide")
+            .with_title("Guide title")
+            .with_description("Project architecture document")
+            .with_mime_type("text/markdown")
+            .with_size(42)
+            .with_icons(vec![Icon::new("https://example.test/guide.svg")])
+            .with_meta(MetaObject(
+                serde_json::json!({"origin": "fixture"})
+                    .as_object()
+                    .expect("fixture metadata")
+                    .clone(),
+            ))
+            .with_annotations(Annotations::default().with_priority(0.75));
+        let (broker, context, _) = resolver_fixture(vec![resource], Vec::new(), None).await;
+        let canonical_uri = "mcpmate://resources/docs/file/guide.md";
+        let expected_resource = serde_json::json!({
+            "uri": canonical_uri,
+            "name": "Guide",
+            "title": "Guide title",
+            "description": "Project architecture document",
+            "mimeType": "text/markdown",
+            "size": 42, "icons": [{"src": "https://example.test/guide.svg"}],
+            "_meta": {"origin": "fixture"},
+            "annotations": {"priority": 0.75},
+        });
+
+        let summary = details_with_context(&broker, &context, "resource", canonical_uri, "summary").await;
+        let full = details_with_context(&broker, &context, "resource", canonical_uri, "full").await;
+        let summary_json = text_response(&summary);
+        let full_json = text_response(&full);
+        assert_exact_details_envelope(&summary_json);
+        assert_exact_details_envelope(&full_json);
+        assert!(
+            summary_json["workflow_hints"][0]
+                .as_str()
+                .is_some_and(|value| value.contains("resources/read"))
+        );
+        assert!(
+            summary_json["error_recovery_hint"]
+                .as_str()
+                .is_some_and(|value| value.contains("resources/read"))
+        );
+        assert_eq!(
+            summary_json["details"],
+            serde_json::json!({
+                "description": "Project architecture document",
+                "uri": canonical_uri,
+                "read_with": "resources/read",
+            })
+        );
+        assert_eq!(summary_json["argument_tips"], serde_json::json!([]));
+        let requirements = &summary_json["call_requirements"];
+        assert_eq!(requirements["accepts_arguments"], false);
+        assert_eq!(requirements["required_arguments"], serde_json::json!([]));
+        assert_eq!(requirements["call_ready_without_arguments"], false);
+        let mut expected_full = expected_resource.clone();
+        expected_full["read_with"] = serde_json::json!("resources/read");
+        assert_eq!(full_json["details"], expected_full);
+        for result in [&summary, &full] {
+            assert_eq!(result.content.len(), 2);
+            let ContentBlock::ResourceLink(link) = &result.content[1] else {
+                panic!("expected ResourceLink after details envelope");
+            };
+            assert_eq!(
+                serde_json::to_value(link).expect("serialize ResourceLink"),
+                expected_resource
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn resource_template_details_use_uri_template_as_the_only_parameter_contract() {
+        let template = ResourceTemplate::new("file:///guides/{name}.md", "Guides")
+            .with_title("Guide template")
+            .with_description("Read a guide by name")
+            .with_mime_type("text/markdown")
+            .with_icons(vec![Icon::new("https://example.test/guides.svg")])
+            .with_meta(MetaObject(
+                serde_json::json!({"origin": "fixture"})
+                    .as_object()
+                    .expect("fixture metadata")
+                    .clone(),
+            ))
+            .with_annotations(Annotations::default().with_priority(0.5));
+        let (broker, context, _) = resolver_fixture(Vec::new(), vec![template], None).await;
+        let canonical_template = "mcpmate://resources/template/docs/file/guides/{name}.md";
+        let expected_template = serde_json::json!({
+            "uriTemplate": canonical_template,
+            "name": "Guides",
+            "title": "Guide template",
+            "description": "Read a guide by name",
+            "mimeType": "text/markdown",
+            "icons": [{"src": "https://example.test/guides.svg"}],
+            "_meta": {"origin": "fixture"},
+            "annotations": {"priority": 0.5},
+        });
+
+        let summary = details_with_context(&broker, &context, "resource_template", canonical_template, "summary").await;
+        let full = details_with_context(&broker, &context, "resource_template", canonical_template, "full").await;
+        let summary_json = text_response(&summary);
+        let full_json = text_response(&full);
+        assert_eq!([summary.content.len(), full.content.len()], [1, 1]);
+        assert_exact_details_envelope(&summary_json);
+        assert_exact_details_envelope(&full_json);
+        assert_eq!(
+            summary_json["details"],
+            serde_json::json!({
+                "description": "Read a guide by name",
+                "uri_template": canonical_template,
+                "read_with": "resources/read",
+            })
+        );
+        assert_eq!(summary_json["argument_tips"], serde_json::json!([]));
+        assert_eq!(summary_json["call_requirements"]["accepts_arguments"], false);
+        assert_eq!(summary_json["call_requirements"]["call_ready_without_arguments"], false);
+
+        let mut expected_full = expected_template;
+        expected_full["read_with"] = serde_json::json!("resources/read");
+        expected_full["instruction"] =
+            serde_json::json!("Expand RFC 6570 variables to a concrete canonical URI, then invoke resources/read.");
+        assert_eq!(full_json["details"], expected_full);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn call_tool_schema_reserves_arguments_for_tool_and_prompt() {
+        let arguments = resolver_fixture(Vec::new(), Vec::new(), None)
+            .await
+            .0
+            .tools()
+            .into_iter()
+            .find(|tool| tool.name == super::MCPMATE_UCAN_CALL_TOOL)
+            .expect("public call tool")
+            .schema_as_json_value()["properties"]["arguments"]
+            .clone();
+
+        assert_eq!(
+            arguments,
+            serde_json::json!({
+                "type": "object",
+                "description": "Arguments for Tool or Prompt targets only. Resource and ResourceTemplate targets use a concrete canonical URI with resources/read.",
+            })
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn resource_call_rejects_before_catalog_resolution() {
+        let (broker, context, _) = resolver_fixture(Vec::new(), Vec::new(), None).await;
+        let resource = call_ucan_with_context(
+            &broker,
+            &context,
+            super::MCPMATE_UCAN_CALL_TOOL,
+            serde_json::json!({"capability_kind": "resource", "capability_name": "mcpmate://resources/unknown"}),
+        )
+        .await;
+        let template = call_ucan_with_context(
+            &broker,
+            &context,
+            super::MCPMATE_UCAN_CALL_TOOL,
+            serde_json::json!({"capability_kind": "resource_template", "capability_name": "mcpmate://resources/unknown"}),
+        )
+        .await;
+        assert!(
+            text_response(&resource)["recovery_hint"]
+                .as_str()
+                .is_some_and(|value| value.contains("resources/read"))
+        );
+        for result in [&resource, &template] {
+            let error = text_response(result);
+            assert_eq!(result.is_error, Some(true));
+            assert_eq!(error["error_code"], "resource_standard_read_required");
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn resolver_rejects_issued_disabled_and_direct_routes() {
+        let direct = UnifyDirectExposureConfig {
+            route_mode: UnifyRouteMode::CapabilityLevel,
+            selected_resource_surfaces: vec![UnifyDirectResourceSurface {
+                server_id: "server-a".to_string(),
+                resource_uri: "file:///guide.md".to_string(),
+            }],
+            ..Default::default()
+        };
+        let (broker, context, database) = resolver_fixture(
+            vec![Resource::new("file:///guide.md", "Guide")],
+            Vec::new(),
+            Some(direct),
+        )
+        .await;
+        assert!(
+            broker
+                .resolve_current_broker_resource_route(&context, "mcpmate://resources/docs/file/guide.md")
+                .await
+                .expect("direct route resolves")
+                .is_none()
+        );
+
+        let mut broker_only = context.clone();
+        broker_only.unify_workspace.as_mut().expect("workspace").route_mode = UnifyRouteMode::BrokerOnly;
+        assert!(
+            broker
+                .resolve_current_broker_resource_route(&broker_only, "mcpmate://resources/docs/file/guide.md")
+                .await
+                .expect("broker-only route resolves")
+                .is_some()
+        );
+
+        let issued = issue_resource_route(&database.pool, "server-a", "docs", "file:///issued.md")
+            .await
+            .expect("issue resource route");
+        assert!(
+            broker
+                .resolve_current_broker_resource_route(&broker_only, &issued)
+                .await
+                .expect("issued route resolves")
+                .is_none()
+        );
+
+        database.capability_cache.invalidate_server("server-a").await;
+        sqlx::query("DELETE FROM capability_server_snapshots WHERE server_id = 'server-a'")
+            .execute(&database.pool)
+            .await
+            .expect("remove resolver catalog");
+        let missing_catalog = broker
+            .resolve_current_broker_resource_route(&broker_only, "mcpmate://resources/docs/file/guide.md")
+            .await
+            .expect_err("missing catalog is non-authoritative");
+        assert!(super::is_catalog_authority_error(&missing_catalog));
+
+        sqlx::query("UPDATE server_config SET enabled = 0 WHERE id = 'server-a'")
+            .execute(&database.pool)
+            .await
+            .expect("disable resolver server");
+        assert!(
+            broker
+                .resolve_current_broker_resource_route(&broker_only, "mcpmate://resources/docs/file/guide.md")
+                .await
+                .expect("disabled route resolves")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn resolver_returns_none_for_stale_listed_registry_route() {
+        let (broker, context, database) =
+            resolver_fixture(vec![Resource::new("file:///guide.md", "Guide")], Vec::new(), None).await;
+        sqlx::query("UPDATE server_resources SET unique_uri = 'mcpmate://resources/docs/file/stale.md' WHERE server_id = 'server-a'")
+            .execute(&database.pool)
+            .await
+            .expect("make listed registry route stale");
+
+        assert!(
+            broker
+                .resolve_current_broker_resource_route(&context, "mcpmate://resources/docs/file/stale.md")
+                .await
+                .expect("stale listed route resolves")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn resolver_returns_none_for_invisible_resource_and_template() {
+        let (broker, mut context, database) = resolver_fixture(
+            vec![
+                Resource::new("file:///allowed.md", "Allowed"),
+                Resource::new("file:///hidden.md", "Hidden"),
+            ],
+            vec![
+                ResourceTemplate::new("file:///allowed/{name}.md", "Allowed"),
+                ResourceTemplate::new("file:///hidden/{name}.md", "Hidden"),
+            ],
+            None,
+        )
+        .await;
+        let profile_id = crate::test_helpers::insert_profile(
+            &database.pool,
+            &Profile::new("filtered".to_string(), ProfileType::Scenario),
+        )
+        .await;
+        for (kind, origin) in [
+            ("resources", "file:///allowed.md"),
+            ("resource_templates", "file:///allowed/{name}.md"),
+        ] {
+            sqlx::query(
+                "INSERT INTO profile_capability_refs (profile_id, ref_id, enabled) SELECT ?, ref_id, 1 FROM capability_refs WHERE server_id = 'server-a' AND kind = ? AND origin_key = ?",
+            )
+            .bind(&profile_id)
+            .bind(kind)
+            .bind(origin)
+            .execute(&database.pool)
+            .await
+            .expect("allow selected capability");
+        }
+        sqlx::query(
+            "INSERT INTO client (id, name, identifier, capability_source, selected_profile_ids) VALUES ('client-filtered', 'client-1', 'client-1', 'profiles', ?)",
+        )
+        .bind(serde_json::to_string(&vec![profile_id]).expect("serialize selected profile"))
+        .execute(&database.pool)
+        .await
+        .expect("configure filtered resolver client");
+        context.config_mode = None;
+
+        for external_uri in [
+            "mcpmate://resources/docs/file/hidden.md",
+            "mcpmate://resources/template/docs/file/hidden/rust.md",
+        ] {
+            assert!(
+                broker
+                    .resolve_current_broker_resource_route(&context, external_uri)
+                    .await
+                    .expect("invisible capability route resolves")
+                    .is_none()
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn resolver_keeps_invalid_and_ambiguous_routes_as_errors() {
+        let (broker, context, database) = resolver_fixture(Vec::new(), Vec::new(), None).await;
+        for external_uri in ["not a uri", "mcpmate://resources/docs/file/missing.md"] {
+            assert!(
+                broker
+                    .resolve_current_broker_resource_route(&context, external_uri)
+                    .await
+                    .is_err()
+            );
+        }
+        for (id, template, unique_name) in [
+            (
+                "template-a",
+                "file:///guides/{name}.md",
+                "mcpmate://resources/template/docs/file/guides/{name}.md",
+            ),
+            (
+                "template-b",
+                "file:///guides/{slug}.md",
+                "mcpmate://resources/template/docs/file/guides/{slug}.md",
+            ),
+        ] {
+            sqlx::query(
+                "INSERT INTO server_resource_templates (id, server_id, server_name, uri_template, unique_name, name) VALUES (?, 'server-a', 'docs', ?, ?, ?)",
+            )
+            .bind(id)
+            .bind(template)
+            .bind(unique_name)
+            .bind(id)
+            .execute(&database.pool)
+            .await
+            .expect("insert ambiguous resolver template");
+        }
+        let error = broker
+            .resolve_current_broker_resource_route(&context, "mcpmate://resources/template/docs/file/guides/rust.md")
+            .await
+            .expect_err("overlapping templates are ambiguous");
+        assert!(error.chain().any(|cause| cause.to_string().contains("ambiguous")));
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn resolver_wraps_real_catalog_read_errors_with_their_source() {
+        let (broker, context, database) =
+            resolver_fixture(vec![Resource::new("file:///guide.md", "Guide")], Vec::new(), None).await;
+        sqlx::query("UPDATE capability_server_snapshots SET record_format_version = 99 WHERE server_id = 'server-a'")
+            .execute(&database.pool)
+            .await
+            .expect("corrupt resolver catalog format");
+
+        let error = broker
+            .resolve_current_broker_resource_route(&context, "mcpmate://resources/docs/file/guide.md")
+            .await
+            .expect_err("catalog read failure is not a missing route");
+        assert!(super::is_catalog_authority_error(&error));
+        assert!(
+            error
+                .chain()
+                .any(|cause| cause.to_string().contains("unsupported record format version 99"))
+        );
+    }
+
+    #[test]
+    fn catalog_read_failure_remains_catalog_authority_error() {
+        let route =
+            super::catalog_authority_error_for_route("server-a", "docs", anyhow::anyhow!("catalog query failed"));
+        assert!(super::is_catalog_authority_error(&route));
+        assert!(route.chain().any(|cause| cause.to_string() == "catalog query failed"));
     }
 
     #[test]
@@ -3480,15 +4119,6 @@ mod tests {
     }
 
     #[test]
-    fn test_error_resource_arguments_not_supported() {
-        let error = UcanError::resource_arguments_not_supported("filesystem://root");
-
-        assert_eq!(error.error_code, "resource_arguments_not_supported");
-        assert!(error.message.contains("does not accept call arguments"));
-        assert!(error.retry_eligible);
-    }
-
-    #[test]
     fn test_error_upstream_error() {
         let error = UcanError::upstream_error("tool", "my_tool");
 
@@ -3507,16 +4137,6 @@ mod tests {
         assert!(error.message.contains("60 seconds"));
         assert!(error.retry_eligible);
         assert!(error.recovery_hint.contains("MCPMATE_TOOL_CALL_TIMEOUT_SECS"));
-    }
-
-    #[test]
-    fn test_error_resource_template_not_invocable() {
-        let error = UcanError::resource_template_not_invocable("file:///{path}");
-
-        assert_eq!(error.error_code, "resource_template_not_invocable");
-        assert!(error.message.contains("file:///{path}"));
-        assert!(!error.retry_eligible);
-        assert!(error.recovery_hint.contains("capability_kind=resource"));
     }
 
     #[test]
@@ -4069,6 +4689,10 @@ mod tests {
         let content = std::fs::read_to_string(&path).expect("read ucan config");
         let value: serde_json::Value = json5::from_str(&content).expect("parse json5");
         assert!(value.is_object(), "ucan.json5 root must be object");
+        let bundled = super::load_ucan_prompt_config_blocking().expect("load bundled prompt config");
+        let fallback = super::default_ucan_prompt_config();
+        assert_eq!(bundled.catalog_usage, fallback.catalog_usage);
+        assert_eq!(bundled.error_recovery_hint, fallback.error_recovery_hint);
     }
 
     #[test]
@@ -4575,14 +5199,18 @@ mod tests {
         let template = ResourceTemplate::new("file:///{path}", "file_template").with_description("File template");
 
         let summary = resource_template_details_value(&template, UcanDetailLevel::Summary).expect("summary details");
-        assert!(summary.get("uri_template").is_some());
-        assert!(summary.get("usage").is_some());
-        let usage = summary.get("usage").and_then(|v| v.as_str()).expect("usage string");
-        assert!(usage.contains("not directly invocable"));
+        assert_eq!(summary["uri_template"], "file:///{path}");
+        assert_eq!(summary["read_with"], "resources/read");
+        assert!(summary.get("usage").is_none());
 
         let full = resource_template_details_value(&template, UcanDetailLevel::Full).expect("full details");
-        assert!(full.get("template").is_some());
-        assert!(full.get("usage").is_some());
+        assert_eq!(full["uriTemplate"], "file:///{path}");
+        assert_eq!(full["read_with"], "resources/read");
+        assert!(
+            full["instruction"]
+                .as_str()
+                .is_some_and(|value| value.contains("RFC 6570"))
+        );
     }
 
     #[test]
@@ -4736,14 +5364,10 @@ mod tests {
         );
 
         let resource_hints = default_workflow_hints_resource();
-        assert!(resource_hints[0].contains("without arguments"));
+        assert!(resource_hints[0].contains("resources/read"));
 
         let template_hints = default_workflow_hints_resource_template();
-        assert!(
-            template_hints
-                .iter()
-                .any(|hint| hint.contains("not directly invocable"))
-        );
+        assert!(template_hints.iter().any(|hint| hint.contains("resources/read")));
     }
 
     #[test]
