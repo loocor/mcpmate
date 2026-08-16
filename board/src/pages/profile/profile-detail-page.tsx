@@ -15,6 +15,7 @@ import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { capabilityRecordMatchesSearch } from "../../lib/capability-search";
 import { capabilityKey, splitCapabilityKey } from "../../lib/capability-keys";
 import { capabilityKindLabel } from "../../lib/capability-kind-label";
+import { formatWorkflowToolBindingCount } from "../../lib/profile-workflow-metrics";
 import { useCapabilityKindFilters } from "../../hooks/use-capability-kind-filters";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
 import { CachedAvatar } from "../../components/cached-avatar";
@@ -610,7 +611,11 @@ export function ProfileDetailPage() {
 		`profiles:badges.${isWorkflowProfile ? "workflow" : "capability"}`,
 	);
 	const workflowUnsetLabel = "-";
-	const { data: workflowSpecification } = useQuery({
+	const {
+		data: workflowSpecification,
+		isLoading: isLoadingWorkflowSpecification,
+		isError: isWorkflowSpecificationError,
+	} = useQuery({
 		queryKey: ["workflowSpecification", profileId],
 		queryFn: () => configSuitsApi.getWorkflowSpecification(profileId!),
 		enabled: Boolean(profileId) && isWorkflowProfile,
@@ -1115,6 +1120,11 @@ export function ProfileDetailPage() {
 		(r: ConfigSuitResource) => r.enabled,
 	);
 	const enabledPrompts = prompts.filter((p: ConfigSuitPrompt) => p.enabled);
+	const workflowToolsValue = formatWorkflowToolBindingCount(
+		workflowSpecification?.tool_binding_count,
+		isLoadingWorkflowSpecification,
+		isWorkflowSpecificationError,
+	);
 	// For profile counts, available = total in this profile (not global state)
 	const availableServersInProfile = servers;
 	const profileSurfaceMetrics: ProfileSurfaceMetric[] = [
@@ -1126,7 +1136,9 @@ export function ProfileDetailPage() {
 		{
 			id: "tools",
 			label: capabilityKindLabel(t, "tools"),
-			value: `${enabledTools.length}/${tools.length}`,
+			value: isWorkflowProfile
+				? workflowToolsValue
+				: `${enabledTools.length}/${tools.length}`,
 		},
 		{
 			id: "resources",

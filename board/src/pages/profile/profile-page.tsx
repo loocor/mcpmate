@@ -59,6 +59,7 @@ import {
 import { useUrlFilter, useUrlView } from "../../lib/hooks/use-url-state";
 import { notifyError, notifySuccess } from "../../lib/notify";
 import { profileSyncErrorTranslationKey } from "../../lib/profile-sync-error";
+import { formatWorkflowToolBindingCount } from "../../lib/profile-workflow-metrics";
 import { useAppStore } from "../../lib/store";
 import { getProfileReviewCount } from "../../lib/surface-reviews";
 import type {
@@ -84,6 +85,7 @@ type SuitStats = {
 	totalServers: number;
 	enabledServers: number;
 	totalSteps: number | null;
+	workflowToolBindingCount: number | null;
 	totalTools: number;
 	enabledTools: number;
 	totalResources: number;
@@ -418,6 +420,10 @@ export function ProfilePage() {
 					workflowRes.status === "fulfilled" && workflowRes.value
 						? workflowRes.value.steps.length
 						: null;
+				const workflowToolBindingCount =
+					workflowRes.status === "fulfilled" && workflowRes.value
+						? workflowRes.value.tool_binding_count
+						: null;
 				if (workflowRes.status === "rejected") {
 					console.error(
 						"Failed to fetch workflow step stats",
@@ -437,6 +443,7 @@ export function ProfilePage() {
 					totalServers: servers.length,
 					enabledServers: servers.filter((server) => server.enabled).length,
 					totalSteps,
+					workflowToolBindingCount,
 					totalTools: tools.length,
 					enabledTools: tools.filter((tool) => tool.enabled).length,
 					totalResources: resources.length,
@@ -597,12 +604,26 @@ export function ProfilePage() {
 			stats?.enabledByComponentId ?? new Map<string, boolean>();
 		return { stats, statsLoading, formatCount, enabledByComponentId };
 	};
+	const formatToolsValue = (
+		suit: ConfigSuit,
+		stats: SuitStats | undefined,
+		statsLoading: boolean,
+		formatCount: (enabled?: number, total?: number) => string,
+	) =>
+		suit.profile_mode === "workflow"
+			? formatWorkflowToolBindingCount(
+					stats?.workflowToolBindingCount,
+					statsLoading,
+					stats?.workflowToolBindingCount === null,
+				)
+			: formatCount(stats?.enabledTools, stats?.totalTools);
 
 	const isTogglePending =
 		activateSuitMutation.isPending || deactivateSuitMutation.isPending;
 
 	const renderSuitListItem = (suit: ConfigSuit) => {
-		const { stats, formatCount } = getSuitStatsForSuitId(suit.id);
+		const { stats, formatCount, statsLoading } = getSuitStatsForSuitId(suit.id);
+		const toolsValue = formatToolsValue(suit, stats, statsLoading, formatCount);
 		const displayName = formatSuitDisplayName(suit.name, suit.id, t);
 		const avatarInitial = displayName.charAt(0).toUpperCase() || "P";
 		const profileModeLabel = t(
@@ -659,7 +680,7 @@ export function ProfilePage() {
 					</span>,
 					<span key="tools">
 						{t("profiles:badges.tools", { defaultValue: "Tools" })}:{" "}
-						{formatCount(stats?.enabledTools, stats?.totalTools)}
+						{toolsValue}
 					</span>,
 					<span key="resources">
 						{t("profiles:badges.resources", { defaultValue: "Resources" })}:{" "}
@@ -693,6 +714,7 @@ export function ProfilePage() {
 	const renderSuitCard = (suit: ConfigSuit) => {
 		const { stats, formatCount, enabledByComponentId, statsLoading } =
 			getSuitStatsForSuitId(suit.id);
+		const toolsValue = formatToolsValue(suit, stats, statsLoading, formatCount);
 		const displayName = formatSuitDisplayName(suit.name, suit.id, t);
 		const avatarInitial = displayName.charAt(0).toUpperCase() || "P";
 		const suitRole = suit.role ?? "user";
@@ -718,7 +740,7 @@ export function ProfilePage() {
 				},
 			{
 				label: t("profiles:badges.tools", { defaultValue: "Tools" }),
-				value: formatCount(stats?.enabledTools, stats?.totalTools),
+				value: toolsValue,
 			},
 			{
 				label: t("profiles:badges.resources", { defaultValue: "Resources" }),

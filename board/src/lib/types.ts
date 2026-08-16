@@ -992,6 +992,7 @@ export interface WorkflowSpecification {
   specification_revision: number | null;
   validation_notes: string | null;
   avoid_rules: string | null;
+  tool_binding_count: number;
   steps: WorkflowStep[];
 }
 

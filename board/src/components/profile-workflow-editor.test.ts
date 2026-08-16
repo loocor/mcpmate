@@ -70,6 +70,7 @@ describe("Workflow Profile editor", () => {
 			specification_revision: 3,
 			validation_notes: null,
 			avoid_rules: null,
+			tool_binding_count: 1,
 			steps: [
 				{
 					title: "First",

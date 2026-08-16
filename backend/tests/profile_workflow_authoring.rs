@@ -238,6 +238,7 @@ async fn workflow_specification_is_ordered_cas_aware_and_never_publishes_a_surfa
     assert_eq!(empty.specification_revision, None);
     assert_eq!(empty.validation_notes, None);
     assert_eq!(empty.avoid_rules, None);
+    assert_eq!(empty.tool_binding_count, 0);
     assert!(empty.steps.is_empty());
     let saved = service
         .save(WorkflowSpecificationSaveCommand {
@@ -269,6 +270,7 @@ async fn workflow_specification_is_ordered_cas_aware_and_never_publishes_a_surfa
     assert_eq!(saved.steps[0].bindings[1].ref_id, ref_ids[1]);
     assert_eq!(saved.steps[0].bindings[1].binding_policy, WorkflowBindingPolicy::Direct);
     assert_eq!(saved.steps[1].bindings[0].binding_policy, WorkflowBindingPolicy::Direct);
+    assert_eq!(saved.tool_binding_count, 3);
     let persisted_policies: Vec<String> = sqlx::query_scalar(
         "SELECT binding_policy FROM workflow_profile_step_bindings WHERE profile_id = ? ORDER BY step_index, binding_index",
     )
@@ -364,6 +366,16 @@ async fn workflow_specification_is_ordered_cas_aware_and_never_publishes_a_surfa
         .expect_err("binding outside the Profile capability boundary must fail");
     assert!(matches!(invalid, WorkflowSpecificationError::InvalidBinding { .. }));
     assert_eq!(service.view(&profile_id).await.unwrap().specification_revision, Some(1));
+    sqlx::query("UPDATE capability_refs SET kind = 'resources' WHERE ref_id = ?")
+        .bind(&ref_ids[1])
+        .execute(&pool)
+        .await
+        .expect("change one fixture capability to a resource");
+    let viewed = service
+        .view(&profile_id)
+        .await
+        .expect("load workflow specification with mixed capability kinds");
+    assert_eq!(viewed.tool_binding_count, 2);
 
     service
         .delete(&profile_id, 1)

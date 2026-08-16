@@ -63,6 +63,7 @@ pub struct WorkflowSpecification {
     pub specification_revision: Option<i64>,
     pub validation_notes: Option<String>,
     pub avoid_rules: Option<String>,
+    pub tool_binding_count: i64,
     pub steps: Vec<WorkflowStep>,
 }
 
@@ -286,6 +287,7 @@ struct StoredWorkflowSpecification {
     specification_revision: i64,
     validation_notes: Option<String>,
     avoid_rules: Option<String>,
+    tool_binding_count: i64,
     steps: Vec<StoredWorkflowStep>,
 }
 
@@ -296,6 +298,7 @@ impl WorkflowSpecification {
             specification_revision: None,
             validation_notes: None,
             avoid_rules: None,
+            tool_binding_count: 0,
             steps: Vec::new(),
         }
     }
@@ -522,6 +525,15 @@ async fn load_specification(
     .bind(profile_id)
     .fetch_all(&mut **transaction)
     .await?;
+    let tool_binding_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)
+         FROM workflow_profile_step_bindings binding
+         JOIN capability_refs capability ON capability.ref_id = binding.ref_id
+         WHERE binding.profile_id = ? AND capability.kind = 'tools'",
+    )
+    .bind(profile_id)
+    .fetch_one(&mut **transaction)
+    .await?;
     let mut steps: BTreeMap<i64, StoredWorkflowStep> = BTreeMap::new();
     for row in rows {
         let step = steps.entry(row.step_index).or_insert_with(|| StoredWorkflowStep {
@@ -552,6 +564,7 @@ async fn load_specification(
         specification_revision,
         validation_notes,
         avoid_rules,
+        tool_binding_count,
         steps: steps.into_values().collect(),
     }))
 }
@@ -563,6 +576,7 @@ impl From<StoredWorkflowSpecification> for WorkflowSpecification {
             specification_revision: Some(specification.specification_revision),
             validation_notes: specification.validation_notes,
             avoid_rules: specification.avoid_rules,
+            tool_binding_count: specification.tool_binding_count,
             steps: specification
                 .steps
                 .into_iter()
