@@ -2149,7 +2149,7 @@ mod tests {
         server_id: &str,
     ) {
         sqlx::query(
-            "INSERT INTO profile (id, name, description, type, is_active, is_default, multi_select, priority) VALUES (?, ?, '', 'shared', 1, 1, 1, 0)",
+            "INSERT INTO profile (id, name, description, type, is_active, is_default, priority) VALUES (?, ?, '', 'shared', 1, 1, 0)",
         )
         .bind(profile_id)
         .bind(format!("Profile {profile_id}"))
@@ -2299,7 +2299,7 @@ mod tests {
         let pool = capability_store_pool().await;
         insert_active_profile_attached_to(&pool, "profile-attached", "server-a").await;
         sqlx::query(
-            "INSERT INTO profile (id, name, description, type, is_active, is_default, multi_select, priority) VALUES ('profile-unrelated', 'Profile Unrelated', '', 'shared', 1, 0, 1, 1)",
+            "INSERT INTO profile (id, name, description, type, is_active, is_default, priority) VALUES ('profile-unrelated', 'Profile Unrelated', '', 'shared', 1, 0, 1)",
         )
         .execute(&pool)
         .await

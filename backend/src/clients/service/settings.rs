@@ -2575,9 +2575,9 @@ impl ClientConfigService {
         sqlx::query(
             r#"
             INSERT INTO profile (
-                id, name, description, type, role, multi_select,
+                id, name, description, type, role,
                 priority, is_active, is_default
-            ) VALUES (?, ?, ?, 'host_app', 'user', 0, 0, 0, 0)
+            ) VALUES (?, ?, ?, 'host_app', 'user', 0, 0, 0)
             "#,
         )
         .bind(&prepared.id)

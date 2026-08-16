@@ -60,6 +60,71 @@ describe("Profile authoring API", () => {
 		});
 	});
 
+	test("maps Workflow specification save and preview to their dedicated APIs", async () => {
+		const requests: Array<{ url: string; init?: RequestInit }> = [];
+		globalThis.fetch = async (input, init) => {
+			requests.push({ url: String(input), init });
+			if (String(input).includes("/preview")) {
+				return Response.json({
+					success: true,
+					data: {
+						preview: {
+							profile_id: "profile-workflow",
+							specification_revision: 1,
+							validation_notes: null,
+							avoid_rules: null,
+							steps: [],
+							valid: true,
+						},
+					},
+				});
+			}
+			return Response.json({
+				success: true,
+				data: {
+					specification: {
+						profile_id: "profile-workflow",
+						specification_revision: 1,
+						validation_notes: null,
+						avoid_rules: null,
+						tool_binding_count: 1,
+						steps: [],
+					},
+				},
+			});
+		};
+
+		await configSuitsApi.saveWorkflowSpecification({
+			profile_id: "profile-workflow",
+			expected_specification_revision: null,
+			validation_notes: "Confirm source coverage.",
+			avoid_rules: null,
+			steps: [
+				{
+					title: "Collect",
+					description: null,
+					bindings: [{ ref_id: "capability-a", binding_policy: "meta_on_demand" }],
+				},
+			],
+		});
+		const preview = await configSuitsApi.getWorkflowSpecificationPreview("profile-workflow");
+
+		expect(new URL(requests[0]!.url, "http://localhost").pathname).toBe(
+			"/api/mcp/profile/workflow/specification/save",
+		);
+		expect(JSON.parse(String(requests[0]!.init?.body))).toMatchObject({
+			profile_id: "profile-workflow",
+			expected_specification_revision: null,
+			validation_notes: "Confirm source coverage.",
+			avoid_rules: null,
+			steps: [{ bindings: [{ ref_id: "capability-a", binding_policy: "meta_on_demand" }] }],
+		});
+		expect(new URL(requests[1]!.url, "http://localhost").pathname).toBe(
+			"/api/mcp/profile/workflow/specification/preview",
+		);
+		expect(preview.valid).toBeTrue();
+	});
+
 	test("maps every Profile writer to its generation-aware request shape", async () => {
 		const requests: Array<{ url: string; body: unknown }> = [];
 		globalThis.fetch = async (input, init) => {
@@ -149,7 +214,6 @@ describe("Profile authoring API", () => {
 							name: "Profile A",
 							description: null,
 							profile_type: "shared",
-							multi_select: true,
 							priority: 50,
 							is_active: true,
 							is_default: false,
@@ -169,7 +233,6 @@ describe("Profile authoring API", () => {
 						name: "Profile A",
 						description: null,
 						profile_type: "shared",
-						multi_select: true,
 						priority: 50,
 						is_active: true,
 						is_default: false,
@@ -199,7 +262,6 @@ describe("Profile authoring API", () => {
 			name: "Profile A",
 			description: null,
 			profile_type: "shared",
-			multi_select: true,
 			priority: 50,
 			is_active: true,
 			is_default: false,
@@ -234,7 +296,6 @@ describe("Profile authoring API", () => {
 							id: "profile-a",
 							name: "Profile A",
 							profile_type: "shared",
-							multi_select: true,
 							priority: 50,
 							is_active: true,
 							is_default: false,
@@ -253,7 +314,6 @@ describe("Profile authoring API", () => {
 						id: "profile-a",
 						name: "Profile A",
 						profile_type: "shared",
-						multi_select: true,
 						priority: 50,
 						is_active: true,
 						is_default: false,
@@ -328,7 +388,6 @@ describe("Profile authoring API", () => {
 							id: "profile-a",
 							name: "Profile A",
 							profile_type: "shared",
-							multi_select: true,
 							priority: 50,
 							is_active: true,
 							is_default: false,
@@ -346,7 +405,6 @@ describe("Profile authoring API", () => {
 						id: "profile-a",
 						name: "Profile A",
 						profile_type: "shared",
-						multi_select: true,
 						priority: 50,
 						is_active: true,
 						is_default: false,

@@ -928,14 +928,16 @@ export interface ConfigSuit {
   name: string;
   description?: string;
   suit_type: string;
-  multi_select: boolean;
   priority: number;
   is_active: boolean;
   is_default: boolean;
   authoring_generation: number;
   role?: string;
   allowed_operations: string[];
+  profile_mode?: ProfileMode;
 }
+
+export type ProfileMode = "capability" | "workflow";
 
 export interface ConfigSuitListResponse {
   suits: ConfigSuit[];
@@ -949,6 +951,7 @@ export interface ApiConflictDetails {
 export interface ProfileAuthoringView {
   profile: ConfigSuit;
   server_ids: string[];
+  profile_mode?: ProfileMode;
 }
 
 export interface ProfileAuthoringSaveRequest {
@@ -957,16 +960,68 @@ export interface ProfileAuthoringSaveRequest {
   name: string;
   description: string | null;
   profile_type: string;
-  multi_select: boolean;
   priority: number;
   is_active: boolean;
   is_default: boolean;
   server_ids: string[];
   clone_from_id: string | null;
+  profile_mode?: ProfileMode;
+  workflow_specification?: WorkflowSpecificationSaveRequest;
 }
 
 export interface ProfileAuthoringSaveResponse {
   profile: ConfigSuit;
+  profile_mode?: ProfileMode;
+}
+
+export type WorkflowBindingPolicy = "meta_on_demand" | "direct";
+export type WorkflowBindingValidation = "valid" | "drifted" | "unavailable";
+
+export interface WorkflowBinding {
+  ref_id: string;
+  binding_policy: WorkflowBindingPolicy;
+}
+
+export interface WorkflowStep {
+  title: string;
+  description: string | null;
+  bindings: WorkflowBinding[];
+}
+
+export interface WorkflowSpecification {
+  profile_id: string;
+  specification_revision: number | null;
+  validation_notes: string | null;
+  avoid_rules: string | null;
+  tool_binding_count: number;
+  steps: WorkflowStep[];
+}
+
+export interface WorkflowSpecificationSaveRequest {
+  profile_id: string;
+  expected_specification_revision: number | null;
+  validation_notes: string | null;
+  avoid_rules: string | null;
+  steps: WorkflowStep[];
+}
+
+export interface WorkflowBindingPreview extends WorkflowBinding {
+  validation: WorkflowBindingValidation;
+}
+
+export interface WorkflowPreviewStep {
+  title: string;
+  description: string | null;
+  bindings: WorkflowBindingPreview[];
+}
+
+export interface WorkflowSpecificationPreview {
+  profile_id: string;
+  specification_revision: number | null;
+  validation_notes: string | null;
+  avoid_rules: string | null;
+  steps: WorkflowPreviewStep[];
+  valid: boolean;
 }
 
 export interface ConfigSuitServer {

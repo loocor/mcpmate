@@ -7,7 +7,7 @@ export default function ProfileDetailOverviewZH() {
 	return (
 		<DocLayout meta={{ title: "详情概览", description: "先读懂配置集状态与约束，再进入细粒度能力控制" }}>
 			<P>
-				<code>/profiles/:profileId</code> 的概览标签是最适合做判断的地方。它集中展示状态、类型、多选策略、优先级以及刷新、编辑、默认、启停、删除等动作。
+				<code>/profiles/:profileId</code> 的概览标签是最适合做判断的地方。它集中展示状态、模式、类型、优先级以及刷新、编辑、默认、启停、删除等动作。
 			</P>
 			<DocScreenshot
 				lightSrc="/screenshot/profiles-light.png"

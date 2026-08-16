@@ -14,7 +14,6 @@ function profile(name: string, authoringGeneration: number) {
 		name,
 		description: null,
 		profile_type: "shared",
-		multi_select: true,
 		priority: 50,
 		is_active: true,
 		is_default: false,

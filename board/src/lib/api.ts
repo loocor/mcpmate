@@ -47,6 +47,10 @@ import type {
 	ConfigSuitServersResponse,
 	ConfigSuitTool,
 	ConfigSuitToolsResponse,
+	ProfileMode,
+	WorkflowSpecification,
+	WorkflowSpecificationPreview,
+	WorkflowSpecificationSaveRequest,
 	InspectorSessionCloseData,
 	InspectorSessionOpenData,
 	InspectorToolCallCancelData,
@@ -497,13 +501,13 @@ interface ProfileApiRow {
 	name: string;
 	description?: string | null;
 	profile_type?: string;
-	multi_select?: boolean;
 	priority?: number;
 	is_active?: boolean;
 	is_default?: boolean;
 	role?: string | null;
 	allowed_operations?: string[];
 	authoring_generation: number;
+	profile_mode?: ProfileMode;
 }
 
 function profileRowToConfigSuit(p: ProfileApiRow): ConfigSuit {
@@ -512,13 +516,13 @@ function profileRowToConfigSuit(p: ProfileApiRow): ConfigSuit {
 		name: p.name,
 		description: p.description ?? undefined,
 		suit_type: p.profile_type ?? "",
-		multi_select: p.multi_select ?? false,
 		priority: p.priority ?? 0,
 		is_active: p.is_active ?? false,
 		is_default: p.is_default ?? false,
 		authoring_generation: p.authoring_generation,
 		role: p.role ?? undefined,
 		allowed_operations: p.allowed_operations ?? [],
+		profile_mode: p.profile_mode,
 	};
 }
 
@@ -2628,19 +2632,26 @@ export const configSuitsApi = {
 	getAuthoringView: async (id: string): Promise<ProfileAuthoringView> => {
 		const query = new URLSearchParams({ id });
 		const response = await fetchApi<
-			ApiWrapper<{ profile: ProfileApiRow; server_ids: string[] }>
+		ApiWrapper<{
+			profile: ProfileApiRow;
+			server_ids: string[];
+			profile_mode?: ProfileMode;
+		}>
 		>(`/api/mcp/profile/authoring/view?${query}`);
 		const data = extractApiData(response);
 		return {
 			profile: profileRowToConfigSuit(data.profile),
 			server_ids: data.server_ids,
+			profile_mode: data.profile_mode,
 		};
 	},
 
 	saveAuthoring: async (
 		request: ProfileAuthoringSaveRequest,
 	): Promise<ProfileAuthoringSaveResponse> => {
-		const response = await fetchApi<ApiWrapper<{ profile: ProfileApiRow }>>(
+		const response = await fetchApi<
+			ApiWrapper<{ profile: ProfileApiRow; profile_mode?: ProfileMode }>
+		>(
 			"/api/mcp/profile/authoring/save",
 			{
 				method: "POST",
@@ -2648,7 +2659,43 @@ export const configSuitsApi = {
 			},
 		);
 		const data = extractApiData(response);
-		return { profile: profileRowToConfigSuit(data.profile) };
+		return {
+			profile: profileRowToConfigSuit(data.profile),
+			profile_mode: data.profile_mode,
+		};
+	},
+
+	getWorkflowSpecification: async (
+		profileId: string,
+	): Promise<WorkflowSpecification> => {
+		const query = new URLSearchParams({ id: profileId });
+		const response = await fetchApi<ApiWrapper<{ specification: WorkflowSpecification }>>(
+			`/api/mcp/profile/workflow/specification/view?${query}`,
+		);
+		return extractApiData(response).specification;
+	},
+
+	saveWorkflowSpecification: async (
+		request: WorkflowSpecificationSaveRequest,
+	): Promise<WorkflowSpecification> => {
+		const response = await fetchApi<ApiWrapper<{ specification: WorkflowSpecification }>>(
+			"/api/mcp/profile/workflow/specification/save",
+			{
+				method: "POST",
+				body: JSON.stringify(request),
+			},
+		);
+		return extractApiData(response).specification;
+	},
+
+	getWorkflowSpecificationPreview: async (
+		profileId: string,
+	): Promise<WorkflowSpecificationPreview> => {
+		const query = new URLSearchParams({ id: profileId });
+		const response = await fetchApi<
+			ApiWrapper<{ preview: WorkflowSpecificationPreview }>
+		>(`/api/mcp/profile/workflow/specification/preview?${query}`);
+		return extractApiData(response).preview;
 	},
 
 	deleteSuit: async (
@@ -2966,7 +3013,6 @@ export async function addServersToProfile(
 		name: profile.name,
 		description: profile.description ?? null,
 		profile_type: profile.suit_type,
-		multi_select: profile.multi_select,
 		priority: profile.priority,
 		is_active: profile.is_active,
 		is_default: profile.is_default,

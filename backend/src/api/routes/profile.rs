@@ -15,7 +15,9 @@ use crate::api::models::profile::{
     ProfileComponentManageReq, ProfileDeleteReq, ProfileDetailsReq, ProfileDetailsResp, ProfileIdReq, ProfileListReq,
     ProfileListResp, ProfileManageReq, ProfileManageResp, ProfilePromptsListResp, ProfileResourceTemplatesListResp,
     ProfileResourcesListResp, ProfileServerManageReq, ProfileServerManageResp, ProfileServersListResp,
-    ProfileToolsListResp,
+    ProfileToolsListResp, WorkflowSpecificationDeleteReq, WorkflowSpecificationDeleteResp,
+    WorkflowSpecificationPreviewResp, WorkflowSpecificationSaveReq, WorkflowSpecificationSaveResp,
+    WorkflowSpecificationViewResp,
 };
 use crate::api::models::resp::ProfileApiErrorResp;
 use crate::api::models::token_estimate::{CapabilityTokenLedgerResponse, TokenEstimateQuery, TokenEstimateResponse};
@@ -36,6 +38,34 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
         .api_route(
             "/mcp/profile/authoring/save",
             post_with(profile_authoring_save_aide, profile_authoring_save_contract_docs),
+        )
+        .api_route(
+            "/mcp/profile/workflow/specification/view",
+            get_with(
+                workflow_specification_view_aide,
+                workflow_specification_view_contract_docs,
+            ),
+        )
+        .api_route(
+            "/mcp/profile/workflow/specification/save",
+            post_with(
+                workflow_specification_save_aide,
+                workflow_specification_save_contract_docs,
+            ),
+        )
+        .api_route(
+            "/mcp/profile/workflow/specification/delete",
+            delete_with(
+                workflow_specification_delete_aide,
+                workflow_specification_delete_contract_docs,
+            ),
+        )
+        .api_route(
+            "/mcp/profile/workflow/specification/preview",
+            get_with(
+                workflow_specification_preview_aide,
+                workflow_specification_preview_contract_docs,
+            ),
         )
         .api_route(
             "/mcp/profile/delete",
@@ -127,6 +157,34 @@ aide_wrapper_payload!(
     ProfileAuthoringSaveReq,
     ProfileAuthoringSaveResp,
     "Atomically create or update Profile authoring state"
+);
+
+aide_wrapper_query!(
+    profile::workflow_specification_view,
+    ProfileIdReq,
+    WorkflowSpecificationViewResp,
+    "Load a Workflow Profile specification"
+);
+
+aide_wrapper_payload!(
+    profile::workflow_specification_save,
+    WorkflowSpecificationSaveReq,
+    WorkflowSpecificationSaveResp,
+    "Create or update a Workflow Profile specification"
+);
+
+aide_wrapper_payload!(
+    profile::workflow_specification_delete,
+    WorkflowSpecificationDeleteReq,
+    WorkflowSpecificationDeleteResp,
+    "Delete a Workflow Profile specification"
+);
+
+aide_wrapper_query!(
+    profile::workflow_specification_preview,
+    ProfileIdReq,
+    WorkflowSpecificationPreviewResp,
+    "Preview a Workflow Profile specification without publishing an MCP surface"
 );
 
 aide_wrapper_payload!(
@@ -229,6 +287,30 @@ fn profile_authoring_save_contract_docs(
     op: aide::transform::TransformOperation
 ) -> aide::transform::TransformOperation {
     with_profile_conflict(profile_authoring_save_docs(op))
+}
+
+fn workflow_specification_view_contract_docs(
+    op: aide::transform::TransformOperation
+) -> aide::transform::TransformOperation {
+    with_profile_not_found(workflow_specification_view_docs(op))
+}
+
+fn workflow_specification_save_contract_docs(
+    op: aide::transform::TransformOperation
+) -> aide::transform::TransformOperation {
+    with_profile_conflict(workflow_specification_save_docs(op))
+}
+
+fn workflow_specification_delete_contract_docs(
+    op: aide::transform::TransformOperation
+) -> aide::transform::TransformOperation {
+    with_profile_conflict(workflow_specification_delete_docs(op))
+}
+
+fn workflow_specification_preview_contract_docs(
+    op: aide::transform::TransformOperation
+) -> aide::transform::TransformOperation {
+    with_profile_not_found(workflow_specification_preview_docs(op))
 }
 
 fn profile_delete_contract_docs(op: aide::transform::TransformOperation) -> aide::transform::TransformOperation {

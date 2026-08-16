@@ -1072,11 +1072,11 @@ async fn delete_requires_current_profile_authoring_generation() {
 }
 
 #[tokio::test]
-async fn activation_advances_target_and_automatically_deactivated_authoring_generations() {
+async fn activation_keeps_existing_profiles_active_and_advances_only_the_target_generation() {
     let (pool, _) = fixture().await;
     sqlx::query(
-        "INSERT INTO profile (id, name, description, type, role, is_active, multi_select)
-         VALUES ('profile-b', 'Profile B', '', 'shared', 'user', 0, 0)",
+        "INSERT INTO profile (id, name, description, type, role, is_active)
+         VALUES ('profile-b', 'Profile B', '', 'shared', 'user', 0)",
     )
     .execute(&pool)
     .await
@@ -1098,7 +1098,7 @@ async fn activation_advances_target_and_automatically_deactivated_authoring_gene
             .unwrap();
     assert_eq!(
         generations,
-        vec![("profile-a".to_string(), false, 1), ("profile-b".to_string(), true, 1),]
+        vec![("profile-a".to_string(), true, 0), ("profile-b".to_string(), true, 1),]
     );
 
     ProfileSurfaceManagement::set_profiles_active(
@@ -1121,13 +1121,9 @@ async fn activation_advances_target_and_automatically_deactivated_authoring_gene
 #[tokio::test]
 async fn batch_activation_validates_once_and_advances_each_profile_once() {
     let (pool, _) = fixture().await;
-    sqlx::query("UPDATE profile SET multi_select = 0 WHERE id = 'profile-a'")
-        .execute(&pool)
-        .await
-        .unwrap();
     sqlx::query(
-        "INSERT INTO profile (id, name, description, type, role, is_active, multi_select)
-         VALUES ('profile-b', 'Profile B', '', 'shared', 'user', 1, 0)",
+        "INSERT INTO profile (id, name, description, type, role, is_active)
+         VALUES ('profile-b', 'Profile B', '', 'shared', 'user', 1)",
     )
     .execute(&pool)
     .await
@@ -1151,7 +1147,7 @@ async fn batch_activation_validates_once_and_advances_each_profile_once() {
             .unwrap();
     assert_eq!(
         profiles,
-        vec![("profile-a".to_string(), false, 1), ("profile-b".to_string(), true, 1)]
+        vec![("profile-a".to_string(), true, 1), ("profile-b".to_string(), true, 1)]
     );
 }
 
@@ -1159,8 +1155,8 @@ async fn batch_activation_validates_once_and_advances_each_profile_once() {
 async fn batch_activation_reports_the_non_first_stale_profile() {
     let (pool, _) = fixture().await;
     sqlx::query(
-        "INSERT INTO profile (id, name, description, type, role, is_active, multi_select, authoring_generation)
-         VALUES ('profile-b', 'Profile B', '', 'shared', 'user', 0, 1, 2)",
+        "INSERT INTO profile (id, name, description, type, role, is_active, authoring_generation)
+         VALUES ('profile-b', 'Profile B', '', 'shared', 'user', 0, 2)",
     )
     .execute(&pool)
     .await

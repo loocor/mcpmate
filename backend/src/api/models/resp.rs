@@ -55,7 +55,7 @@ impl ResponseConverter {
         // Add allowed operations based on current state
         if profile.is_active && !is_default_anchor {
             allowed_operations.push("deactivate".to_string());
-        } else if !profile.is_active {
+        } else if !profile.is_active && profile.profile_mode != crate::config::models::ProfileMode::Workflow {
             allowed_operations.push("activate".to_string());
         }
 
@@ -71,11 +71,11 @@ impl ResponseConverter {
             description: profile.description.clone(),
             profile_type: profile.profile_type_string(),
             role: profile.role.to_string(),
-            multi_select: profile.multi_select,
             priority: profile.priority,
             is_active: profile.is_active,
             is_default: profile.is_default,
             authoring_generation: profile.authoring_generation,
+            profile_mode: profile.profile_mode,
             allowed_operations,
         }
     }

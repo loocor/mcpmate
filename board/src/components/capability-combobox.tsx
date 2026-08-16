@@ -14,7 +14,12 @@ import { ChevronDown } from "lucide-react";
 import { shouldOfferCustomCapabilityValue } from "../lib/inspector-operation";
 import { cn } from "../lib/utils";
 
-export type CapabilityKind = "tool" | "prompt" | "resource" | "template";
+export type CapabilityKind =
+  | "tool"
+  | "prompt"
+  | "resource"
+  | "template"
+  | "capability";
 
 export interface CapabilityRecordLike {}
 
@@ -41,6 +46,7 @@ export interface CapabilityComboboxProps<T extends CapabilityRecordLike = Capabi
   getDescription?: (item: T) => string | undefined;
   allowCustomValue?: boolean;
   getCustomValueLabel?: (value: string) => string;
+  emptyLabel?: string;
 }
 
 export function CapabilityCombobox<T extends CapabilityRecordLike>(props: CapabilityComboboxProps<T>) {
@@ -66,6 +72,7 @@ export function CapabilityCombobox<T extends CapabilityRecordLike>(props: Capabi
     getDescription,
     allowCustomValue = false,
     getCustomValueLabel,
+    emptyLabel = "No results found.",
   } = props;
 
   const [open, setOpen] = React.useState(false);
@@ -101,13 +108,22 @@ export function CapabilityCombobox<T extends CapabilityRecordLike>(props: Capabi
     if (!value) return undefined;
     return items.find((it) => getKey(it) === value);
   }, [items, value, getKey]);
-
   const selectedLabel = selectedItem
     ? getLabel(selectedItem)
     : allowCustomValue
       ? value ?? ""
       : "";
   const selectedTrailing = selectedItem ? renderTriggerTrailing?.(selectedItem) : null;
+  const filteredItems = React.useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    if (!normalizedQuery) return items;
+
+    return items.filter((entry) =>
+      [getLabel(entry), getDescription?.(entry)].some((value) =>
+        value?.toLocaleLowerCase().includes(normalizedQuery),
+      ),
+    );
+  }, [getDescription, getLabel, items, query]);
   const listedValues = React.useMemo(
     () => items.flatMap((entry) => [getKey(entry), getLabel(entry)]),
     [getKey, getLabel, items],
@@ -168,7 +184,10 @@ export function CapabilityCombobox<T extends CapabilityRecordLike>(props: Capabi
         container={container}
         style={menuWidth ? { width: `${menuWidth}px` } : undefined}
       >
-        <Command className={menuBleed ? "rounded-none" : undefined}>
+        <Command
+          className={menuBleed ? "rounded-none" : undefined}
+          shouldFilter={false}
+        >
           <CommandInput
             placeholder={placeholder}
             value={query}
@@ -186,7 +205,7 @@ export function CapabilityCombobox<T extends CapabilityRecordLike>(props: Capabi
                 <span className="text-red-500 text-xs">{error}</span>
               </CommandEmpty>
             ) : (
-              <CommandEmpty>No results found.</CommandEmpty>
+              <CommandEmpty>{emptyLabel}</CommandEmpty>
             )}
             <CommandGroup
               className={cn(
@@ -221,7 +240,7 @@ export function CapabilityCombobox<T extends CapabilityRecordLike>(props: Capabi
                   </div>
                 </CommandItem>
               ) : null}
-              {items.map((entry, index) => {
+              {filteredItems.map((entry, index) => {
                 const key = getKey(entry) || `index:${index}`;
                 const label = getLabel(entry) || key;
                 const desc = getDescription?.(entry);
@@ -235,8 +254,8 @@ export function CapabilityCombobox<T extends CapabilityRecordLike>(props: Capabi
                       menuBleed ? "w-full rounded-none px-0" : "px-4",
                       menuItemClassName,
                     )}
-                    onSelect={(v) => {
-                      onChange(v, entry);
+                    onSelect={(nextValue) => {
+                      onChange(nextValue, entry);
                       setOpen(false);
                     }}
                   >

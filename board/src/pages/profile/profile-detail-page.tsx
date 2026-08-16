@@ -3,25 +3,19 @@ import {
 	Check,
 	Edit3,
 	Eye,
-	GripVertical,
 	Play,
 	RefreshCw,
 	Square,
 	Trash2,
 } from "lucide-react";
-import {
-	useCallback,
-	useEffect,
-	useMemo,
-	useState,
-	type PointerEvent as ReactPointerEvent,
-} from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { usePageTranslations } from "../../lib/i18n/usePageTranslations";
 import { capabilityRecordMatchesSearch } from "../../lib/capability-search";
 import { capabilityKey, splitCapabilityKey } from "../../lib/capability-keys";
 import { capabilityKindLabel } from "../../lib/capability-kind-label";
+import { formatWorkflowToolBindingCount } from "../../lib/profile-workflow-metrics";
 import { useCapabilityKindFilters } from "../../hooks/use-capability-kind-filters";
 import { useUrlTab } from "../../lib/hooks/use-url-state";
 import { CachedAvatar } from "../../components/cached-avatar";
@@ -46,6 +40,16 @@ import {
 } from "../../components/capsule-stripe-list";
 import { CapsuleStripeRowBody } from "../../components/capsule-stripe-row";
 import { ProfileFormDrawer } from "../../components/profile-form-drawer";
+import { ResizableSplitPane } from "../../components/resizable-split-pane";
+import {
+	ProfileSurfaceMetrics,
+	type ProfileSurfaceMetric,
+} from "../../components/profile-surface-metrics";
+import {
+	ProfileWorkflowEditor,
+	ProfileWorkflowMaterials,
+} from "../../components/profile-workflow-editor";
+import { buildWorkflowCapabilityOptions } from "../../lib/profile-workflow-specification";
 import { SurfaceReviewDialog } from "../../components/surface-review-dialog";
 import {
 	DETAIL_TAB_CONTENT_CLASS,
@@ -53,6 +57,10 @@ import {
 	DETAIL_OVERVIEW_STACK_CLASS,
 } from "../../components/detail-tab-content-class";
 import { ProfileTokenUsageChart } from "./components/profile-token-usage-chart";
+import {
+	resolveProfileDetailReviewTab,
+	resolveProfileDetailTab,
+} from "./profile-detail-tabs";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -67,12 +75,7 @@ import { Avatar, AvatarFallback } from "../../components/ui/avatar";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { ButtonGroup } from "../../components/ui/button-group";
-import {
-	Card,
-	CardContent,
-	CardHeader,
-	CardTitle,
-} from "../../components/ui/card";
+import { Card, CardContent } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import {
 	Select,
@@ -122,7 +125,12 @@ import type {
 } from "../../lib/types";
 import type { CapabilityRecord } from "../../types/capabilities";
 
-const PROFILE_DETAIL_TABS = ["overview", "capabilities"];
+const PROFILE_DETAIL_TABS = [
+	"overview",
+	"workflow",
+	"materials",
+	"capabilities",
+];
 
 const ALL_CAPABILITY_SERVERS_ID = "__all_servers__";
 
@@ -210,12 +218,6 @@ type ProfileGlobalServerSummary = {
 const compactSelectTriggerClass =
 	"relative h-9 w-full min-w-9 px-2 pr-8 [&>span]:min-w-0 [&>span]:truncate [&>svg]:pointer-events-none [&>svg]:absolute [&>svg]:right-2.5 [&>svg]:top-1/2 [&>svg]:-translate-y-1/2";
 
-const formatProfileTypeLabel = (value?: string | null) =>
-	value
-		?.split(/[\s_]+/)
-		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-		.join(" ") ?? "";
-
 export function ProfileDetailPage() {
 	const { t, i18n } = useTranslation();
 	usePageTranslations("profiles");
@@ -259,6 +261,7 @@ export function ProfileDetailPage() {
 	const mode = searchParams.get("mode");
 	const reviewItemId = searchParams.get("review_item");
 	const reviewRefId = searchParams.get("ref_id");
+	const hasExplicitTab = searchParams.has("tab");
 
 	const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
 	const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -269,7 +272,6 @@ export function ProfileDetailPage() {
 	>("all");
 	const [selectedCapabilityServerId, setSelectedCapabilityServerId] =
 		useState<string>(ALL_CAPABILITY_SERVERS_ID);
-	const [serverColumnWidth, setServerColumnWidth] = useState(300);
 	const [capabilityQuery, setCapabilityQuery] = useState("");
 	const [capabilityServerFilters, setCapabilityServerFilters] = useState<
 		string[]
@@ -287,11 +289,18 @@ export function ProfileDetailPage() {
 	>("all");
 	useEffect(() => {
 		if (!reviewItemId) return;
-		setActiveTab("capabilities");
+		const reviewTab = resolveProfileDetailReviewTab(
+			activeTab,
+			true,
+			hasExplicitTab,
+		);
+		if (reviewTab !== activeTab) {
+			setActiveTab(reviewTab);
+		}
 		if (reviewRefId) {
 			setCapabilityQuery(reviewRefId);
 		}
-	}, [reviewItemId, reviewRefId, setActiveTab]);
+	}, [activeTab, hasExplicitTab, reviewItemId, reviewRefId, setActiveTab]);
 	const { bulkModeDescription } = useBulkSelectionLabels();
 	const serverBulk = useBulkSelection<string>();
 	const capabilityBulk = useBulkSelection<string>();
@@ -434,9 +443,9 @@ export function ProfileDetailPage() {
 			}
 			if (grouped.resources.length) {
 				const response = queryClient.getQueryData<ConfigSuitResourcesResponse>([
-						"configSuitResources",
-						profileId,
-					]);
+					"configSuitResources",
+					profileId,
+				]);
 				revisionSources.push({
 					selectedIds: grouped.resources,
 					items: response?.resources ?? [],
@@ -446,9 +455,9 @@ export function ProfileDetailPage() {
 			}
 			if (grouped.prompts.length) {
 				const response = queryClient.getQueryData<ConfigSuitPromptsResponse>([
-						"configSuitPrompts",
-						profileId,
-					]);
+					"configSuitPrompts",
+					profileId,
+				]);
 				revisionSources.push({
 					selectedIds: grouped.prompts,
 					items: response?.prompts ?? [],
@@ -457,7 +466,8 @@ export function ProfileDetailPage() {
 				authoringGenerations.push(response?.authoring_generation);
 			}
 			if (grouped.templates.length) {
-				const response = queryClient.getQueryData<ConfigSuitResourceTemplatesResponse>([
+				const response =
+					queryClient.getQueryData<ConfigSuitResourceTemplatesResponse>([
 						"configSuitResourceTemplates",
 						profileId,
 					]);
@@ -469,7 +479,8 @@ export function ProfileDetailPage() {
 				authoringGenerations.push(response?.authoring_generation);
 			}
 			const revisionSet = requireSelectedCapabilityRevisionSet(revisionSources);
-			const authoringGeneration = requireMatchingAuthoringGeneration(authoringGenerations);
+			const authoringGeneration =
+				requireMatchingAuthoringGeneration(authoringGenerations);
 			await configSuitsApi.bulkCapabilities(
 				profileId!,
 				[
@@ -594,6 +605,36 @@ export function ProfileDetailPage() {
 		enabled: !!profileId,
 		retry: 1,
 	});
+	const isWorkflowProfile = suit?.profile_mode === "workflow";
+	const overviewSurfaceTab = isWorkflowProfile ? "workflow" : "capabilities";
+	const profileModeLabel = t(
+		`profiles:badges.${isWorkflowProfile ? "workflow" : "capability"}`,
+	);
+	const workflowUnsetLabel = "-";
+	const {
+		data: workflowSpecification,
+		isLoading: isLoadingWorkflowSpecification,
+		isError: isWorkflowSpecificationError,
+	} = useQuery({
+		queryKey: ["workflowSpecification", profileId],
+		queryFn: () => configSuitsApi.getWorkflowSpecification(profileId!),
+		enabled: Boolean(profileId) && isWorkflowProfile,
+		retry: false,
+	});
+
+	useEffect(() => {
+		if (!suit) {
+			return;
+		}
+
+		const resolvedTab = resolveProfileDetailTab(
+			activeTab,
+			suit.profile_mode,
+		);
+		if (resolvedTab !== activeTab) {
+			setActiveTab(resolvedTab);
+		}
+	}, [activeTab, setActiveTab, suit]);
 
 	// Fetch servers in suit
 	const {
@@ -703,8 +744,7 @@ export function ProfileDetailPage() {
 				profileId,
 				invalidateQueries: (predicate) =>
 					queryClient.invalidateQueries({
-						predicate: (query) =>
-							predicate(query.queryKey, query.state.data),
+						predicate: (query) => predicate(query.queryKey, query.state.data),
 					}),
 			});
 		},
@@ -810,19 +850,19 @@ export function ProfileDetailPage() {
 		}) => {
 			return enable
 				? configSuitsApi.enableServer(
-					profileId!,
-					serverId,
-					requireMatchingAuthoringGeneration([
-						serversResponse?.authoring_generation,
-					]),
-				)
+						profileId!,
+						serverId,
+						requireMatchingAuthoringGeneration([
+							serversResponse?.authoring_generation,
+						]),
+					)
 				: configSuitsApi.disableServer(
-					profileId!,
-					serverId,
-					requireMatchingAuthoringGeneration([
-						serversResponse?.authoring_generation,
-					]),
-				);
+						profileId!,
+						serverId,
+						requireMatchingAuthoringGeneration([
+							serversResponse?.authoring_generation,
+						]),
+					);
 		},
 		onSuccess: () => {
 			refreshProfileCapabilitySurface();
@@ -849,29 +889,29 @@ export function ProfileDetailPage() {
 		mutationFn: ({ toolId, enable }: { toolId: string; enable: boolean }) => {
 			return enable
 				? configSuitsApi.enableTool(
-					profileId!,
-					toolId,
-					requireMatchingAuthoringGeneration([
-						toolsResponse?.authoring_generation,
-					]),
-					requireCapabilityRevisionSet(
-						[toolId],
-						toolsResponse?.tools,
-						toolsResponse?.source_revision_set,
-					),
-				)
+						profileId!,
+						toolId,
+						requireMatchingAuthoringGeneration([
+							toolsResponse?.authoring_generation,
+						]),
+						requireCapabilityRevisionSet(
+							[toolId],
+							toolsResponse?.tools,
+							toolsResponse?.source_revision_set,
+						),
+					)
 				: configSuitsApi.disableTool(
-					profileId!,
-					toolId,
-					requireMatchingAuthoringGeneration([
-						toolsResponse?.authoring_generation,
-					]),
-					requireCapabilityRevisionSet(
-						[toolId],
-						toolsResponse?.tools,
-						toolsResponse?.source_revision_set,
-					),
-				);
+						profileId!,
+						toolId,
+						requireMatchingAuthoringGeneration([
+							toolsResponse?.authoring_generation,
+						]),
+						requireCapabilityRevisionSet(
+							[toolId],
+							toolsResponse?.tools,
+							toolsResponse?.source_revision_set,
+						),
+					);
 		},
 		onSuccess: () => {
 			refreshProfileCapabilitySurface();
@@ -904,29 +944,29 @@ export function ProfileDetailPage() {
 		}) => {
 			return enable
 				? configSuitsApi.enableResource(
-					profileId!,
-					resourceId,
-					requireMatchingAuthoringGeneration([
-						resourcesResponse?.authoring_generation,
-					]),
-					requireCapabilityRevisionSet(
-						[resourceId],
-						resourcesResponse?.resources,
-						resourcesResponse?.source_revision_set,
-					),
-				)
+						profileId!,
+						resourceId,
+						requireMatchingAuthoringGeneration([
+							resourcesResponse?.authoring_generation,
+						]),
+						requireCapabilityRevisionSet(
+							[resourceId],
+							resourcesResponse?.resources,
+							resourcesResponse?.source_revision_set,
+						),
+					)
 				: configSuitsApi.disableResource(
-					profileId!,
-					resourceId,
-					requireMatchingAuthoringGeneration([
-						resourcesResponse?.authoring_generation,
-					]),
-					requireCapabilityRevisionSet(
-						[resourceId],
-						resourcesResponse?.resources,
-						resourcesResponse?.source_revision_set,
-					),
-				);
+						profileId!,
+						resourceId,
+						requireMatchingAuthoringGeneration([
+							resourcesResponse?.authoring_generation,
+						]),
+						requireCapabilityRevisionSet(
+							[resourceId],
+							resourcesResponse?.resources,
+							resourcesResponse?.source_revision_set,
+						),
+					);
 		},
 		onSuccess: () => {
 			refreshProfileCapabilitySurface();
@@ -959,29 +999,29 @@ export function ProfileDetailPage() {
 		}) => {
 			return enable
 				? configSuitsApi.enablePrompt(
-					profileId!,
-					promptId,
-					requireMatchingAuthoringGeneration([
-						promptsResponse?.authoring_generation,
-					]),
-					requireCapabilityRevisionSet(
-						[promptId],
-						promptsResponse?.prompts,
-						promptsResponse?.source_revision_set,
-					),
-				)
+						profileId!,
+						promptId,
+						requireMatchingAuthoringGeneration([
+							promptsResponse?.authoring_generation,
+						]),
+						requireCapabilityRevisionSet(
+							[promptId],
+							promptsResponse?.prompts,
+							promptsResponse?.source_revision_set,
+						),
+					)
 				: configSuitsApi.disablePrompt(
-					profileId!,
-					promptId,
-					requireMatchingAuthoringGeneration([
-						promptsResponse?.authoring_generation,
-					]),
-					requireCapabilityRevisionSet(
-						[promptId],
-						promptsResponse?.prompts,
-						promptsResponse?.source_revision_set,
-					),
-				);
+						profileId!,
+						promptId,
+						requireMatchingAuthoringGeneration([
+							promptsResponse?.authoring_generation,
+						]),
+						requireCapabilityRevisionSet(
+							[promptId],
+							promptsResponse?.prompts,
+							promptsResponse?.source_revision_set,
+						),
+					);
 		},
 		onSuccess: () => {
 			refreshProfileCapabilitySurface();
@@ -1050,6 +1090,29 @@ export function ProfileDetailPage() {
 		() => (templatesResponse?.templates ?? []) as ConfigSuitResourceTemplate[],
 		[templatesResponse],
 	);
+	const workflowCapabilityCatalogQuery = useQuery({
+		queryKey: ["workflowCapabilityCatalog", profileId],
+		queryFn: async () => {
+			const { servers } = await serversApi.getAll();
+			const enabledServers = servers.filter(
+				(server) => server.globally_enabled ?? server.enabled,
+			);
+			const batches = await Promise.all(
+				enabledServers.map(async (server) => ({
+					server: { id: server.id, name: server.name },
+					lists: await serversApi.listAllCapabilities(server.id),
+				})),
+			);
+			return buildWorkflowCapabilityOptions(batches);
+		},
+		enabled: Boolean(profileId) && isWorkflowProfile,
+		staleTime: 30_000,
+		retry: 1,
+	});
+	const workflowCapabilities = useMemo(
+		() => workflowCapabilityCatalogQuery.data ?? [],
+		[workflowCapabilityCatalogQuery.data],
+	);
 
 	const enabledServers = servers.filter((s: ConfigSuitServer) => s.enabled);
 	const enabledTools = tools.filter((t: ConfigSuitTool) => t.enabled);
@@ -1057,6 +1120,37 @@ export function ProfileDetailPage() {
 		(r: ConfigSuitResource) => r.enabled,
 	);
 	const enabledPrompts = prompts.filter((p: ConfigSuitPrompt) => p.enabled);
+	const workflowToolsValue = formatWorkflowToolBindingCount(
+		workflowSpecification?.tool_binding_count,
+		isLoadingWorkflowSpecification,
+		isWorkflowSpecificationError,
+	);
+	// For profile counts, available = total in this profile (not global state)
+	const availableServersInProfile = servers;
+	const profileSurfaceMetrics: ProfileSurfaceMetric[] = [
+		{
+			id: "servers",
+			label: t("profiles:detail.labels.servers", { defaultValue: "Servers" }),
+			value: `${enabledServers.length}/${availableServersInProfile.length}`,
+		},
+		{
+			id: "tools",
+			label: capabilityKindLabel(t, "tools"),
+			value: isWorkflowProfile
+				? workflowToolsValue
+				: `${enabledTools.length}/${tools.length}`,
+		},
+		{
+			id: "resources",
+			label: capabilityKindLabel(t, "resources"),
+			value: `${enabledResources.length}/${resources.length}`,
+		},
+		{
+			id: "prompts",
+			label: capabilityKindLabel(t, "prompts"),
+			value: `${enabledPrompts.length}/${prompts.length}`,
+		},
+	];
 
 	const enabledByComponentId = useMemo(() => {
 		const m = new Map<string, boolean>();
@@ -1093,8 +1187,6 @@ export function ProfileDetailPage() {
 		staleTime: 30_000,
 	});
 	const globalServers = globalServersResp?.servers ?? [];
-	// For profile counts, available = total in this profile (not global state)
-	const availableServersInProfile = servers;
 
 	// Filtered datasets
 	const visibleServers = useMemo(
@@ -1259,10 +1351,10 @@ export function ProfileDetailPage() {
 		() =>
 			hasCapabilitySelection
 				? tools.filter(
-					(tool) =>
-						selectedCapabilityServerIds.has(tool.server_id) &&
-						capabilityStatusFilter(tool),
-				)
+						(tool) =>
+							selectedCapabilityServerIds.has(tool.server_id) &&
+							capabilityStatusFilter(tool),
+					)
 				: [],
 		[
 			capabilityStatusFilter,
@@ -1275,10 +1367,10 @@ export function ProfileDetailPage() {
 		() =>
 			hasCapabilitySelection
 				? resources.filter(
-					(resource) =>
-						selectedCapabilityServerIds.has(resource.server_id) &&
-						capabilityStatusFilter(resource),
-				)
+						(resource) =>
+							selectedCapabilityServerIds.has(resource.server_id) &&
+							capabilityStatusFilter(resource),
+					)
 				: [],
 		[
 			capabilityStatusFilter,
@@ -1291,10 +1383,10 @@ export function ProfileDetailPage() {
 		() =>
 			hasCapabilitySelection
 				? prompts.filter(
-					(prompt) =>
-						selectedCapabilityServerIds.has(prompt.server_id) &&
-						capabilityStatusFilter(prompt),
-				)
+						(prompt) =>
+							selectedCapabilityServerIds.has(prompt.server_id) &&
+							capabilityStatusFilter(prompt),
+					)
 				: [],
 		[
 			capabilityStatusFilter,
@@ -1307,10 +1399,10 @@ export function ProfileDetailPage() {
 		() =>
 			hasCapabilitySelection
 				? templates.filter(
-					(template) =>
-						selectedCapabilityServerIds.has(template.server_id) &&
-						capabilityStatusFilter(template),
-				)
+						(template) =>
+							selectedCapabilityServerIds.has(template.server_id) &&
+							capabilityStatusFilter(template),
+					)
 				: [],
 		[
 			capabilityStatusFilter,
@@ -1324,43 +1416,43 @@ export function ProfileDetailPage() {
 		() => [
 			...(capabilityKindMatches("tools")
 				? selectedServerTools
-					.filter((tool) =>
-						capabilityRecordMatchesSearch(
-							tool as CapabilityRecord,
-							capabilityQuery,
-						),
-					)
-					.map((tool) => capabilityKey("tools", tool.id))
+						.filter((tool) =>
+							capabilityRecordMatchesSearch(
+								tool as CapabilityRecord,
+								capabilityQuery,
+							),
+						)
+						.map((tool) => capabilityKey("tools", tool.id))
 				: []),
 			...(capabilityKindMatches("resources")
 				? selectedServerResources
-					.filter((resource) =>
-						capabilityRecordMatchesSearch(
-							resource as CapabilityRecord,
-							capabilityQuery,
-						),
-					)
-					.map((resource) => capabilityKey("resources", resource.id))
+						.filter((resource) =>
+							capabilityRecordMatchesSearch(
+								resource as CapabilityRecord,
+								capabilityQuery,
+							),
+						)
+						.map((resource) => capabilityKey("resources", resource.id))
 				: []),
 			...(capabilityKindMatches("prompts")
 				? selectedServerPrompts
-					.filter((prompt) =>
-						capabilityRecordMatchesSearch(
-							prompt as CapabilityRecord,
-							capabilityQuery,
-						),
-					)
-					.map((prompt) => capabilityKey("prompts", prompt.id))
+						.filter((prompt) =>
+							capabilityRecordMatchesSearch(
+								prompt as CapabilityRecord,
+								capabilityQuery,
+							),
+						)
+						.map((prompt) => capabilityKey("prompts", prompt.id))
 				: []),
 			...(capabilityKindMatches("templates")
 				? selectedServerTemplates
-					.filter((template) =>
-						capabilityRecordMatchesSearch(
-							template as CapabilityRecord,
-							capabilityQuery,
-						),
-					)
-					.map((template) => capabilityKey("templates", template.id))
+						.filter((template) =>
+							capabilityRecordMatchesSearch(
+								template as CapabilityRecord,
+								capabilityQuery,
+							),
+						)
+						.map((template) => capabilityKey("templates", template.id))
 				: []),
 		],
 		[
@@ -1459,29 +1551,29 @@ export function ProfileDetailPage() {
 		}) =>
 			enable
 				? configSuitsApi.enableResourceTemplate(
-					profileId!,
-					templateId,
-					requireMatchingAuthoringGeneration([
-						templatesResponse?.authoring_generation,
-					]),
-					requireCapabilityRevisionSet(
-						[templateId],
-						templatesResponse?.templates,
-						templatesResponse?.source_revision_set,
-					),
-				)
+						profileId!,
+						templateId,
+						requireMatchingAuthoringGeneration([
+							templatesResponse?.authoring_generation,
+						]),
+						requireCapabilityRevisionSet(
+							[templateId],
+							templatesResponse?.templates,
+							templatesResponse?.source_revision_set,
+						),
+					)
 				: configSuitsApi.disableResourceTemplate(
-					profileId!,
-					templateId,
-					requireMatchingAuthoringGeneration([
-						templatesResponse?.authoring_generation,
-					]),
-					requireCapabilityRevisionSet(
-						[templateId],
-						templatesResponse?.templates,
-						templatesResponse?.source_revision_set,
+						profileId!,
+						templateId,
+						requireMatchingAuthoringGeneration([
+							templatesResponse?.authoring_generation,
+						]),
+						requireCapabilityRevisionSet(
+							[templateId],
+							templatesResponse?.templates,
+							templatesResponse?.source_revision_set,
+						),
 					),
-				),
 		onSuccess: () => {
 			refreshProfileCapabilitySurface();
 			notifySuccess(
@@ -1501,25 +1593,6 @@ export function ProfileDetailPage() {
 			);
 		},
 	});
-
-	const handleCapabilityDividerPointerDown = useCallback(
-		(event: ReactPointerEvent<HTMLButtonElement>) => {
-			event.preventDefault();
-			const startX = event.clientX;
-			const startWidth = serverColumnWidth;
-			const handlePointerMove = (moveEvent: PointerEvent) => {
-				const nextWidth = startWidth + moveEvent.clientX - startX;
-				setServerColumnWidth(Math.min(460, Math.max(240, nextWidth)));
-			};
-			const handlePointerUp = () => {
-				window.removeEventListener("pointermove", handlePointerMove);
-				window.removeEventListener("pointerup", handlePointerUp);
-			};
-			window.addEventListener("pointermove", handlePointerMove);
-			window.addEventListener("pointerup", handlePointerUp);
-		},
-		[serverColumnWidth],
-	);
 
 	const loadProfileCapabilityDetails = useCallback(
 		async (
@@ -1631,7 +1704,7 @@ export function ProfileDetailPage() {
 										{toTitleCase(suit.name)}
 									</h2>
 									<Badge variant={suit.is_active ? "default" : "secondary"}>
-										{suit.suit_type}
+										{profileModeLabel}
 									</Badge>
 									{suit.is_active && (
 										<span className="flex items-center rounded-full bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400">
@@ -1703,11 +1776,23 @@ export function ProfileDetailPage() {
 									defaultValue: "Overview",
 								})}
 							</TabsTrigger>
-							<TabsTrigger value="capabilities">
-								{t("profiles:detail.tabs.capabilities", {
-									defaultValue: "Capabilities",
-								})}
-							</TabsTrigger>
+							{isWorkflowProfile && (
+								<>
+									<TabsTrigger value="workflow">
+										{t("profiles:detail.tabs.workflow")}
+									</TabsTrigger>
+									<TabsTrigger value="materials">
+										{t("profiles:detail.tabs.materials")}
+									</TabsTrigger>
+								</>
+							)}
+							{!isWorkflowProfile && (
+								<TabsTrigger value="capabilities">
+									{t("profiles:detail.tabs.capabilities", {
+										defaultValue: "Capabilities",
+									})}
+								</TabsTrigger>
+							)}
 						</TabsList>
 						<ButtonGroup className="ml-auto flex-shrink-0 flex-nowrap self-start">
 							<Button
@@ -1756,76 +1841,92 @@ export function ProfileDetailPage() {
 											</Button>
 										</div>
 									)}
-									<div className="flex flex-col gap-4">
-										<div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
-											<div className="flex flex-wrap items-start gap-4">
-												<Avatar className="text-sm">
-													<AvatarFallback>
-														{suit.name.slice(0, 1).toUpperCase()}
-													</AvatarFallback>
-												</Avatar>
-												<div className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-2 text-sm">
-													<span className="text-xs uppercase text-slate-500">
-														{t("profiles:detail.labels.status", {
-															defaultValue: "Status",
-														})}
-													</span>
-													<Badge
-														variant="secondary"
-														className={`justify-self-start border px-2.5 py-0.5 leading-none min-h-[1.5rem] ${suit.is_active
+									<div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
+										<div className="flex min-w-0 items-start gap-4">
+											<Avatar className="text-sm">
+												<AvatarFallback>
+													{suit.name.slice(0, 1).toUpperCase()}
+												</AvatarFallback>
+											</Avatar>
+											<div className="grid min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-2 text-sm">
+												<span className="hidden">
+													{t("profiles:detail.labels.status", {
+														defaultValue: "Status",
+													})}
+												</span>
+												<Badge
+													variant="secondary"
+													className={`hidden justify-self-start border px-2.5 py-0.5 leading-none min-h-[1.5rem] ${
+														suit.is_active
 															? "border-emerald-200 bg-emerald-100 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-400/50 dark:bg-emerald-500/20 dark:text-emerald-200"
 															: "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-300"
-															}`}
-													>
-														{suit.is_active
-															? t("profiles:detail.status.active", {
+													}`}
+												>
+													{suit.is_active
+														? t("profiles:detail.status.active", {
 																defaultValue: "Active",
 															})
-															: t("profiles:detail.status.inactive", {
+														: t("profiles:detail.status.inactive", {
 																defaultValue: "Inactive",
 															})}
-													</Badge>
+												</Badge>
 
-													<span className="text-xs uppercase text-slate-500">
-														{t("profiles:detail.labels.type", {
-															defaultValue: "Type",
-														})}
-													</span>
-													<span className="font-mono text-sm leading-tight">
-														{t(`profiles:suitTypes.${suit.suit_type}`, {
-															defaultValue: formatProfileTypeLabel(
-																suit.suit_type,
-															),
-														})}
-													</span>
+												<span className="text-xs uppercase text-slate-500">
+													{t("profiles:detail.labels.type", {
+														defaultValue: "Type",
+													})}
+												</span>
+												<span className="text-sm leading-tight">
+													{profileModeLabel}
+												</span>
 
-													<span className="text-xs uppercase text-slate-500">
-														{t("profiles:detail.labels.multiSelect", {
-															defaultValue: "Multi-select",
-														})}
-													</span>
-													<span className="text-sm leading-tight">
-														{suit.multi_select
-															? t("profiles:detail.status.yes", {
-																defaultValue: "Yes",
-															})
-															: t("profiles:detail.status.no", {
-																defaultValue: "No",
+												<span className="text-xs uppercase text-slate-500">
+													{t("profiles:detail.labels.priority", {
+														defaultValue: "Priority",
+													})}
+												</span>
+												<span className="font-mono text-sm leading-tight">
+													{suit.priority}
+												</span>
+
+												{isWorkflowProfile && (
+													<>
+														<span className="text-xs uppercase text-slate-500">
+															{t(
+																"profiles:detail.workflow.brief.validationNotes",
+															)}
+														</span>
+														<span className="min-w-0 truncate text-sm leading-tight text-slate-400 dark:text-slate-500">
+															{workflowSpecification?.validation_notes ?? workflowUnsetLabel}
+														</span>
+
+														<span className="text-xs uppercase text-slate-500">
+															{t("profiles:detail.workflow.brief.avoidRules")}
+														</span>
+														<span className="min-w-0 truncate text-sm leading-tight text-slate-400 dark:text-slate-500">
+															{workflowSpecification?.avoid_rules ?? workflowUnsetLabel}
+														</span>
+
+														<span className="text-xs uppercase text-slate-500">
+															{t("profiles:detail.labels.description", {
+																defaultValue: "Description",
 															})}
-													</span>
-
-													<span className="text-xs uppercase text-slate-500">
-														{t("profiles:detail.labels.priority", {
-															defaultValue: "Priority",
-														})}
-													</span>
-													<span className="font-mono text-sm leading-tight">
-														{suit.priority}
-													</span>
-												</div>
+														</span>
+														<span
+															className="min-w-0 line-clamp-3 text-sm leading-5"
+															title={suit.description || workflowUnsetLabel}
+														>
+															{suit.description || workflowUnsetLabel}
+														</span>
+													</>
+												)}
 											</div>
-											<ButtonGroup className="ml-auto flex-shrink-0 flex-nowrap self-start">
-												{suitRole === "user" && !isHostApp && !isCustomMode && (
+										</div>
+										{suitRole === "user" &&
+											!isHostApp &&
+											!isCustomMode &&
+											!isWorkflowProfile && (
+												<ButtonGroup className="ml-auto flex-shrink-0 flex-nowrap self-start">
 													<Button
 														variant="outline"
 														size="sm"
@@ -1844,105 +1945,28 @@ export function ProfileDetailPage() {
 														)}
 														{suit?.is_active
 															? t("profiles:detail.buttons.disable", {
-																defaultValue: "Disable",
-															})
+																	defaultValue: "Disable",
+																})
 															: t("profiles:detail.buttons.enable", {
-																defaultValue: "Enable",
-															})}
+																	defaultValue: "Enable",
+																})}
 													</Button>
-												)}
-											</ButtonGroup>
-										</div>
+												</ButtonGroup>
+											)}
 									</div>
 								</CardContent>
 							</Card>
 
-							<div
-								className={`grid grid-cols-2 md:grid-cols-4 gap-4 ${DETAIL_OVERVIEW_PINNED_SECTION_CLASS}`}
-							>
-								<Card className="h-full">
-									<CardHeader
-										className="pb-2 cursor-pointer"
-										onClick={() => setActiveTab("capabilities")}
-									>
-										<CardTitle className="text-sm">
-											{t("profiles:detail.labels.servers", {
-												defaultValue: "Servers",
-											})}
-										</CardTitle>
-									</CardHeader>
-									<CardContent>
-										<div className="text-2xl font-bold">
-											{enabledServers.length}/{availableServersInProfile.length}
-										</div>
-										<p className="text-xs text-muted-foreground">
-											{t("profiles:detail.overview.enabledAvailable", {
-												defaultValue: "enabled / available",
-											})}
-										</p>
-									</CardContent>
-								</Card>
-								<Card className="h-full">
-									<CardHeader
-										className="pb-2 cursor-pointer"
-										onClick={() => setActiveTab("capabilities")}
-									>
-										<CardTitle className="text-sm">
-											{capabilityKindLabel(t, "tools")}
-										</CardTitle>
-									</CardHeader>
-									<CardContent>
-										<div className="text-2xl font-bold">
-											{enabledTools.length}/{tools.length}
-										</div>
-										<p className="text-xs text-muted-foreground">
-											{t("profiles:detail.overview.enabledAvailable", {
-												defaultValue: "enabled / available",
-											})}
-										</p>
-									</CardContent>
-								</Card>
-								<Card className="h-full">
-									<CardHeader
-										className="pb-2 cursor-pointer"
-										onClick={() => setActiveTab("capabilities")}
-									>
-										<CardTitle className="text-sm">
-											{capabilityKindLabel(t, "resources")}
-										</CardTitle>
-									</CardHeader>
-									<CardContent>
-										<div className="text-2xl font-bold">
-											{enabledResources.length}/{resources.length}
-										</div>
-										<p className="text-xs text-muted-foreground">
-											{t("profiles:detail.overview.enabledAvailable", {
-												defaultValue: "enabled / available",
-											})}
-										</p>
-									</CardContent>
-								</Card>
-								<Card className="h-full">
-									<CardHeader
-										className="pb-2 cursor-pointer"
-										onClick={() => setActiveTab("capabilities")}
-									>
-										<CardTitle className="text-sm">
-											{capabilityKindLabel(t, "prompts")}
-										</CardTitle>
-									</CardHeader>
-									<CardContent>
-										<div className="text-2xl font-bold">
-											{enabledPrompts.length}/{prompts.length}
-										</div>
-										<p className="text-xs text-muted-foreground">
-											{t("profiles:detail.overview.enabledAvailable", {
-												defaultValue: "enabled / available",
-											})}
-										</p>
-									</CardContent>
-								</Card>
-							</div>
+							{!isWorkflowProfile && (
+								<ProfileSurfaceMetrics
+									metrics={profileSurfaceMetrics}
+									description={t("profiles:detail.overview.enabledAvailable", {
+										defaultValue: "enabled / available",
+									})}
+									onSelect={() => setActiveTab(overviewSurfaceTab)}
+									className={DETAIL_OVERVIEW_PINNED_SECTION_CLASS}
+								/>
+							)}
 							{showProfileLiveLogs ? (
 								<AuditLogsPanel
 									fillHeight
@@ -2013,472 +2037,519 @@ export function ProfileDetailPage() {
 						</div>
 					</TabsContent>
 
-					<TabsContent
-						value="capabilities"
-						className={DETAIL_TAB_CONTENT_CLASS}
-					>
-						<Card className={CAPABILITY_SCROLL_CARD_CLASS}>
-							<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
-								<div
-									className="grid min-h-0 flex-1 overflow-hidden"
-									style={{
-										gridTemplateColumns: `${serverColumnWidth}px 8px minmax(0, 1fr)`,
-									}}
-								>
-									<div className="flex min-h-0 flex-col">
-										<div className="shrink-0 p-3">
-											<BulkSelectionHeader
-												className="mb-3"
-												title={t("profiles:detail.labels.servers", {
-													defaultValue: "Servers",
-												})}
-												description={
-													serverBulk.isBulkMode
-														? bulkModeDescription(serverBulk.selectedCount)
-														: t(
-															"profiles:detail.descriptions.capabilityServers",
-															{
-																defaultValue:
-																	"Select a server to manage its profile capabilities.",
-															},
-														)
-												}
-												isBulkMode={serverBulk.isBulkMode}
-												onToggleBulkMode={serverBulk.toggleMode}
-												actions={serverBulkActions}
-											/>
-											<div className="grid min-w-0 grid-cols-[minmax(0,3fr)_minmax(2.25rem,1fr)] gap-2">
-												<Input
-													placeholder={t(
-														"profiles:detail.placeholders.searchServers",
-														{ defaultValue: "Search servers..." },
-													)}
-													value={serverQuery}
-													onChange={(e) => setServerQuery(e.target.value)}
-													className="h-9 min-w-0"
-												/>
-												<Select
-													value={serverStatus}
-													onValueChange={(v) =>
-														setServerStatus(v as "all" | "enabled" | "disabled")
+					{isWorkflowProfile && profileId && (
+						<TabsContent value="workflow" className={DETAIL_TAB_CONTENT_CLASS}>
+							<ProfileWorkflowEditor
+								profileId={profileId}
+								capabilities={workflowCapabilities}
+								capabilitiesLoading={
+									workflowCapabilityCatalogQuery.isLoading
+								}
+								capabilityMetrics={profileSurfaceMetrics.filter(
+									(metric) => metric.id !== "servers",
+								)}
+							/>
+						</TabsContent>
+					)}
+					{isWorkflowProfile && (
+						<TabsContent value="materials" className={DETAIL_TAB_CONTENT_CLASS}>
+							<ProfileWorkflowMaterials />
+						</TabsContent>
+					)}
+
+					{!isWorkflowProfile && (
+						<TabsContent
+							value="capabilities"
+							className={DETAIL_TAB_CONTENT_CLASS}
+						>
+							<Card className={CAPABILITY_SCROLL_CARD_CLASS}>
+								<CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
+									<ResizableSplitPane
+										dividerAriaLabel={t(
+											"profiles:detail.labels.resizeCapabilityColumns",
+											{ defaultValue: "Resize capability columns" },
+										)}
+									>
+										<div className="flex min-h-0 flex-col">
+											<div className="shrink-0 p-3">
+												<BulkSelectionHeader
+													className="mb-3"
+													title={t("profiles:detail.labels.servers", {
+														defaultValue: "Servers",
+													})}
+													description={
+														serverBulk.isBulkMode
+															? bulkModeDescription(serverBulk.selectedCount)
+															: t(
+																	"profiles:detail.descriptions.capabilityServers",
+																	{
+																		defaultValue:
+																			"Select a server to manage its profile capabilities.",
+																	},
+																)
 													}
-												>
-													<SelectTrigger
-														title={serverStatusLabel}
-														className={compactSelectTriggerClass}
-													>
-														<SelectValue
-															placeholder={t(
-																"profiles:detail.placeholders.status",
-																{ defaultValue: "Status" },
-															)}
-														/>
-													</SelectTrigger>
-													<SelectContent>
-														<SelectItem value="all">
-															{t("servers:detail.filters.status.all", {
-																defaultValue: "All",
-															})}
-														</SelectItem>
-														<SelectItem value="enabled">
-															{t("servers:detail.filters.status.enabled", {
-																defaultValue: "Enabled",
-															})}
-														</SelectItem>
-														<SelectItem value="disabled">
-															{t("servers:detail.filters.status.disabled", {
-																defaultValue: "Disabled",
-															})}
-														</SelectItem>
-													</SelectContent>
-												</Select>
-											</div>
-										</div>
-										<CardListScrollBody className="mx-3 mb-3 mt-0">
-											{isLoadingServers ? (
-												<div className="space-y-3">
-													{["s1", "s2", "s3"].map((id) => (
-														<div
-															key={`capabilities-server-skel-${id}`}
-															className="h-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-800"
-														/>
-													))}
-												</div>
-											) : visibleServers.length > 0 ? (
-												<CapsuleStripeList className="rounded-none border-0 overflow-visible">
-													<CapsuleStripeListItem
-														key={ALL_CAPABILITY_SERVERS_ID}
-														interactive
-														className={`group relative px-3 transition-colors ${isAllCapabilityServersSelected
-															? "bg-primary/10"
-															: ""
-															}`}
-														onClick={() =>
-															setSelectedCapabilityServerId(
-																ALL_CAPABILITY_SERVERS_ID,
+													isBulkMode={serverBulk.isBulkMode}
+													onToggleBulkMode={serverBulk.toggleMode}
+													actions={serverBulkActions}
+												/>
+												<div className="grid min-w-0 grid-cols-[minmax(0,3fr)_minmax(2.25rem,1fr)] gap-2">
+													<Input
+														placeholder={t(
+															"profiles:detail.placeholders.searchServers",
+															{ defaultValue: "Search servers..." },
+														)}
+														value={serverQuery}
+														onChange={(e) => setServerQuery(e.target.value)}
+														className="h-9 min-w-0"
+													/>
+													<Select
+														value={serverStatus}
+														onValueChange={(v) =>
+															setServerStatus(
+																v as "all" | "enabled" | "disabled",
 															)
 														}
-														onKeyDown={(event) => {
-															if (event.key === "Enter" || event.key === " ") {
-																event.preventDefault();
+													>
+														<SelectTrigger
+															title={serverStatusLabel}
+															className={compactSelectTriggerClass}
+														>
+															<SelectValue
+																placeholder={t(
+																	"profiles:detail.placeholders.status",
+																	{ defaultValue: "Status" },
+																)}
+															/>
+														</SelectTrigger>
+														<SelectContent>
+															<SelectItem value="all">
+																{t("servers:detail.filters.status.all", {
+																	defaultValue: "All",
+																})}
+															</SelectItem>
+															<SelectItem value="enabled">
+																{t("servers:detail.filters.status.enabled", {
+																	defaultValue: "Enabled",
+																})}
+															</SelectItem>
+															<SelectItem value="disabled">
+																{t("servers:detail.filters.status.disabled", {
+																	defaultValue: "Disabled",
+																})}
+															</SelectItem>
+														</SelectContent>
+													</Select>
+												</div>
+											</div>
+											<CardListScrollBody className="mx-3 mb-3 mt-0">
+												{isLoadingServers ? (
+													<div className="space-y-3">
+														{["s1", "s2", "s3"].map((id) => (
+															<div
+																key={`capabilities-server-skel-${id}`}
+																className="h-16 animate-pulse rounded-md bg-slate-200 dark:bg-slate-800"
+															/>
+														))}
+													</div>
+												) : visibleServers.length > 0 ? (
+													<CapsuleStripeList className="rounded-none border-0 overflow-visible">
+														<CapsuleStripeListItem
+															key={ALL_CAPABILITY_SERVERS_ID}
+															interactive
+															className={`group relative px-3 transition-colors ${
+																isAllCapabilityServersSelected
+																	? "bg-primary/10"
+																	: ""
+															}`}
+															onClick={() =>
 																setSelectedCapabilityServerId(
 																	ALL_CAPABILITY_SERVERS_ID,
-																);
+																)
 															}
-														}}
-													>
-														<CapsuleStripeRowBody
-															lead={
-																<div className="flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white text-[10px] font-semibold uppercase text-slate-600 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300">
-																	{t("profiles:detail.labels.allServersShort", {
-																		defaultValue: "All",
-																	})}
-																</div>
-															}
-															trailing={
-																<Badge variant="outline">
-																	{visibleServers.length}
-																</Badge>
-															}
-														>
-															<div className="min-w-0">
-																<div
-																	className="truncate font-medium text-slate-900 dark:text-slate-100"
-																	title={t(
-																		"profiles:detail.labels.allServers",
-																		{
-																			defaultValue: "All servers",
-																		},
-																	)}
-																>
-																	{t("profiles:detail.labels.allServers", {
-																		defaultValue: "All servers",
-																	})}
-																</div>
-																<div
-																	className="mt-1 truncate text-xs text-slate-500"
-																	title={`${visibleServerCapabilityCounts.enabled}/${visibleServerCapabilityCounts.total} ${t(
-																		"profiles:detail.labels.enabledCapabilities",
-																		{
-																			defaultValue: "enabled capabilities",
-																		},
-																	)}`}
-																>
-																	{visibleServerCapabilityCounts.enabled}/
-																	{visibleServerCapabilityCounts.total}{" "}
-																	{t(
-																		"profiles:detail.labels.enabledCapabilities",
-																		{
-																			defaultValue: "enabled capabilities",
-																		},
-																	)}
-																</div>
-															</div>
-														</CapsuleStripeRowBody>
-													</CapsuleStripeListItem>
-													{visibleServers.map((server) => {
-														const global = (
-															globalServers as ProfileGlobalServerSummary[]
-														).find((gs) => gs.name === server.name);
-														const globalIcon = global?.icons?.[0]?.src;
-														const iconAlt =
-															global?.name || server.name || server.id;
-														const avatarFallback = (
-															server.name ||
-															server.id ||
-															"S"
-														)
-															.slice(0, 1)
-															.toUpperCase();
-														const counts = capabilityCountsByServerId.get(
-															server.id,
-														) ?? {
-															enabled: 0,
-															prompts: 0,
-															resources: 0,
-															templates: 0,
-															tools: 0,
-															total: 0,
-														};
-														const isSelected =
-															selectedCapabilityServer?.id === server.id;
-														const bulkSelected =
-															serverBulk.isBulkMode &&
-															serverBulk.selectedIdSet.has(server.id);
-														let serverItemStateClass = "";
-														if (isSelected) {
-															serverItemStateClass = "bg-primary/10";
-														} else if (bulkSelected) {
-															serverItemStateClass = "bg-accent/40";
-														}
-														const serverLeadClassName = serverBulk.isBulkMode
-															? "flex items-center gap-3"
-															: "flex items-center gap-0";
-
-														return (
-															<CapsuleStripeListItem
-																key={server.id}
-																interactive
-																className={`group relative px-3 transition-colors ${serverItemStateClass}`}
-																onClick={() =>
-																	setSelectedCapabilityServerId(server.id)
+															onKeyDown={(event) => {
+																if (
+																	event.key === "Enter" ||
+																	event.key === " "
+																) {
+																	event.preventDefault();
+																	setSelectedCapabilityServerId(
+																		ALL_CAPABILITY_SERVERS_ID,
+																	);
 																}
-																onKeyDown={(event) => {
-																	if (
-																		event.key === "Enter" ||
-																		event.key === " "
-																	) {
-																		event.preventDefault();
-																		setSelectedCapabilityServerId(server.id);
-																	}
-																}}
+															}}
+														>
+															<CapsuleStripeRowBody
+																lead={
+																<div className="flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 bg-white text-xs font-semibold uppercase text-slate-600 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300">
+																		{t(
+																			"profiles:detail.labels.allServersShort",
+																			{
+																				defaultValue: "All",
+																			},
+																		)}
+																	</div>
+																}
+																trailing={
+																	<Badge variant="outline">
+																		{visibleServers.length}
+																	</Badge>
+																}
 															>
-																<CapsuleStripeRowBody
-																	lead={
-																		<div className={serverLeadClassName}>
-																			<BulkSelectionCheckbox
-																				visible={serverBulk.isBulkMode}
-																				checked={bulkSelected}
-																				onToggle={() =>
-																					serverBulk.toggleItem(server.id)
-																				}
-																				ariaLabel={t(
-																					"profiles:detail.bulk.selectItem",
+																<div className="min-w-0">
+																	<div
+																		className="truncate font-medium text-slate-900 dark:text-slate-100"
+																		title={t(
+																			"profiles:detail.labels.allServers",
+																			{
+																				defaultValue: "All servers",
+																			},
+																		)}
+																	>
+																		{t("profiles:detail.labels.allServers", {
+																			defaultValue: "All servers",
+																		})}
+																	</div>
+																	<div
+																		className="mt-1 truncate text-xs text-slate-500"
+																		title={`${visibleServerCapabilityCounts.enabled}/${visibleServerCapabilityCounts.total} ${t(
+																			"profiles:detail.labels.enabledCapabilities",
+																			{
+																				defaultValue: "enabled capabilities",
+																			},
+																		)}`}
+																	>
+																		{visibleServerCapabilityCounts.enabled}/
+																		{visibleServerCapabilityCounts.total}{" "}
+																		{t(
+																			"profiles:detail.labels.enabledCapabilities",
+																			{
+																				defaultValue: "enabled capabilities",
+																			},
+																		)}
+																	</div>
+																</div>
+															</CapsuleStripeRowBody>
+														</CapsuleStripeListItem>
+														{visibleServers.map((server) => {
+															const global = (
+																globalServers as ProfileGlobalServerSummary[]
+															).find((gs) => gs.name === server.name);
+															const globalIcon = global?.icons?.[0]?.src;
+															const iconAlt =
+																global?.name || server.name || server.id;
+															const avatarFallback = (
+																server.name ||
+																server.id ||
+																"S"
+															)
+																.slice(0, 1)
+																.toUpperCase();
+															const counts = capabilityCountsByServerId.get(
+																server.id,
+															) ?? {
+																enabled: 0,
+																prompts: 0,
+																resources: 0,
+																templates: 0,
+																tools: 0,
+																total: 0,
+															};
+															const isSelected =
+																selectedCapabilityServer?.id === server.id;
+															const bulkSelected =
+																serverBulk.isBulkMode &&
+																serverBulk.selectedIdSet.has(server.id);
+															let serverItemStateClass = "";
+															if (isSelected) {
+																serverItemStateClass = "bg-primary/10";
+															} else if (bulkSelected) {
+																serverItemStateClass = "bg-accent/40";
+															}
+															const serverLeadClassName = serverBulk.isBulkMode
+																? "flex items-center gap-3"
+																: "flex items-center gap-0";
+															const serverAvatarClassName = isSelected
+																? "border-primary bg-primary text-primary-foreground"
+																: "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900/40";
+															const serverTitleClassName = isSelected
+																? "truncate font-medium text-primary"
+																: "truncate font-medium text-slate-900 dark:text-slate-100";
+
+															return (
+																<CapsuleStripeListItem
+																	key={server.id}
+																	interactive
+																	className={`group relative px-3 transition-colors ${serverItemStateClass}`}
+																	onClick={() =>
+																		setSelectedCapabilityServerId(server.id)
+																	}
+																	onKeyDown={(event) => {
+																		if (
+																			event.key === "Enter" ||
+																			event.key === " "
+																		) {
+																			event.preventDefault();
+																			setSelectedCapabilityServerId(server.id);
+																		}
+																	}}
+																>
+																	<CapsuleStripeRowBody
+																		lead={
+																			<div className={serverLeadClassName}>
+																				<BulkSelectionCheckbox
+																					visible={serverBulk.isBulkMode}
+																					checked={bulkSelected}
+																					onToggle={() =>
+																						serverBulk.toggleItem(server.id)
+																					}
+																					ariaLabel={t(
+																						"profiles:detail.bulk.selectItem",
+																						{
+																							name: server.name,
+																							defaultValue: "Select {{name}}",
+																						},
+																					)}
+																				/>
+																				<CachedAvatar
+																					src={globalIcon}
+																					alt={
+																						iconAlt
+																							? `${iconAlt} icon`
+																							: undefined
+																					}
+																					fallback={avatarFallback}
+																					size="sm"
+																shape="rounded"
+																className={`border ${serverAvatarClassName}`}
+																fallbackClassName={
+																	isSelected ? "bg-primary text-primary-foreground" : undefined
+																}
+																imageClassName={
+																	isSelected ? "m-1 h-6 w-6 rounded-md" : undefined
+																}
+															/>
+																			</div>
+																		}
+																		trailing={
+																			<div className="flex w-[4.25rem] shrink-0 items-center justify-end gap-1">
+																				{!serverBulk.isBulkMode ? (
+																					<button
+																						type="button"
+																						className="flex h-7 w-7 shrink-0 items-center justify-center border-0 bg-transparent p-0 text-muted-foreground opacity-0 shadow-none transition-[color,opacity] hover:bg-transparent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60 group-hover:opacity-100"
+																						onClick={(event) => {
+																							event.stopPropagation();
+																							openServerDetail(server.id);
+																						}}
+																						aria-label={t(
+																							"profiles:detail.labels.browseServer",
+																							{ defaultValue: "Browse server" },
+																						)}
+																					>
+																						<Eye className="h-4 w-4" />
+																					</button>
+																				) : null}
+																				<Switch
+																					checked={server.enabled}
+																					onClick={(e) => e.stopPropagation()}
+																					onCheckedChange={(enabled) =>
+																						serverToggleMutation.mutate({
+																							serverId: server.id,
+																							enable: enabled,
+																						})
+																					}
+																					disabled={
+																						serverToggleMutation.isPending
+																					}
+																				/>
+																			</div>
+																		}
+																	>
+																		<div className="min-w-0">
+																			<div
+																className={serverTitleClassName}
+																				title={server.name}
+																			>
+																				{server.name}
+																			</div>
+																			<div
+																				className="mt-1 truncate text-xs text-slate-500"
+																				title={`${counts.enabled}/${counts.total} ${t(
+																					"profiles:detail.labels.enabledCapabilities",
 																					{
-																						name: server.name,
-																						defaultValue: "Select {{name}}",
+																						defaultValue:
+																							"enabled capabilities",
+																					},
+																				)}`}
+																			>
+																				{counts.enabled}/{counts.total}{" "}
+																				{t(
+																					"profiles:detail.labels.enabledCapabilities",
+																					{
+																						defaultValue:
+																							"enabled capabilities",
 																					},
 																				)}
-																			/>
-																			<CachedAvatar
-																				src={globalIcon}
-																				alt={
-																					iconAlt
-																						? `${iconAlt} icon`
-																						: undefined
-																				}
-																				fallback={avatarFallback}
-																				size="sm"
-																				shape="rounded"
-																				className="border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900/40"
-																			/>
+																			</div>
 																		</div>
-																	}
-																	trailing={
-																		<div className="flex w-[4.25rem] shrink-0 items-center justify-end gap-1">
-																			{!serverBulk.isBulkMode ? (
-																				<button
-																					type="button"
-																					className="flex h-7 w-7 shrink-0 items-center justify-center border-0 bg-transparent p-0 text-muted-foreground opacity-0 shadow-none transition-[color,opacity] hover:bg-transparent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60 group-hover:opacity-100"
-																					onClick={(event) => {
-																						event.stopPropagation();
-																						openServerDetail(server.id);
-																					}}
-																					aria-label={t(
-																						"profiles:detail.labels.browseServer",
-																						{ defaultValue: "Browse server" },
-																					)}
-																				>
-																					<Eye className="h-4 w-4" />
-																				</button>
-																			) : null}
-																			<Switch
-																				checked={server.enabled}
-																				onClick={(e) => e.stopPropagation()}
-																				onCheckedChange={(enabled) =>
-																					serverToggleMutation.mutate({
-																						serverId: server.id,
-																						enable: enabled,
-																					})
-																				}
-																				disabled={
-																					serverToggleMutation.isPending
-																				}
-																			/>
-																		</div>
-																	}
-																>
-																	<div className="min-w-0">
-																		<div
-																			className="truncate font-medium text-slate-900 dark:text-slate-100"
-																			title={server.name}
-																		>
-																			{server.name}
-																		</div>
-																		<div
-																			className="mt-1 truncate text-xs text-slate-500"
-																			title={`${counts.enabled}/${counts.total} ${t(
-																				"profiles:detail.labels.enabledCapabilities",
-																				{
-																					defaultValue: "enabled capabilities",
-																				},
-																			)}`}
-																		>
-																			{counts.enabled}/{counts.total}{" "}
-																			{t(
-																				"profiles:detail.labels.enabledCapabilities",
-																				{
-																					defaultValue: "enabled capabilities",
-																				},
-																			)}
-																		</div>
-																	</div>
-																</CapsuleStripeRowBody>
-															</CapsuleStripeListItem>
-														);
-													})}
-												</CapsuleStripeList>
-											) : (
-												<div className="flex min-h-full items-center justify-center px-4 py-8 text-center text-sm text-muted-foreground">
-													{t("profiles:detail.emptyStates.noServers", {
-														defaultValue: "No servers found in this profile",
-													})}
-												</div>
+																	</CapsuleStripeRowBody>
+																</CapsuleStripeListItem>
+															);
+														})}
+													</CapsuleStripeList>
+												) : (
+													<div className="flex min-h-full items-center justify-center px-4 py-8 text-center text-sm text-muted-foreground">
+														{t("profiles:detail.emptyStates.noServers", {
+															defaultValue: "No servers found in this profile",
+														})}
+													</div>
+												)}
+											</CardListScrollBody>
+										</div>
+
+										<CapabilityManagementPanel
+											title={
+												isAllCapabilityServersSelected
+													? t("profiles:detail.labels.allServers", {
+															defaultValue: "All servers",
+														})
+													: selectedCapabilityServer
+														? selectedCapabilityServer.name
+														: t("servers:detail.overview.labels.capabilities", {
+																defaultValue: "Capabilities",
+															})
+											}
+											description={
+												isAllCapabilityServersSelected
+													? t(
+															"profiles:detail.descriptions.allCapabilityGroups",
+															{
+																defaultValue:
+																	"Manage tools, resources, prompts, and resource templates across the visible servers.",
+															},
+														)
+													: selectedCapabilityServer
+														? t(
+																"profiles:detail.descriptions.capabilityGroups",
+																{
+																	defaultValue:
+																		"Manage tools, resources, prompts, and resource templates for the selected server.",
+																},
+															)
+														: t("profiles:detail.emptyStates.selectServer", {
+																defaultValue:
+																	"Select a server to inspect its capabilities.",
+															})
+											}
+											isBulkMode={capabilityBulk.isBulkMode}
+											onToggleBulkMode={capabilityBulk.toggleMode}
+											bulkActions={capabilityBulkActions}
+											searchValue={capabilityQuery}
+											onSearchChange={setCapabilityQuery}
+											searchPlaceholder={t(
+												"servers:wizard.preview.filterCapabilities",
+												{ defaultValue: "Filter capabilities..." },
 											)}
-										</CardListScrollBody>
-									</div>
-
-									<button
-										type="button"
-										aria-label={t(
-											"profiles:detail.labels.resizeCapabilityColumns",
-											{
-												defaultValue: "Resize capability columns",
-											},
-										)}
-										className="group flex cursor-col-resize items-center justify-center border-x border-border bg-muted/20 text-muted-foreground transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-										onPointerDown={handleCapabilityDividerPointerDown}
-									>
-										<GripVertical className="h-4 w-4 opacity-50 group-hover:opacity-80" />
-									</button>
-
-									<CapabilityManagementPanel
-										title={
-											isAllCapabilityServersSelected
-												? t("profiles:detail.labels.allServers", {
-													defaultValue: "All servers",
-												})
-												: selectedCapabilityServer
-													? selectedCapabilityServer.name
-													: t("servers:detail.overview.labels.capabilities", {
-														defaultValue: "Capabilities",
-													})
-										}
-										description={
-											isAllCapabilityServersSelected
-												? t("profiles:detail.descriptions.allCapabilityGroups", {
+											serverFilter={
+												isAllCapabilityServersSelected
+													? {
+															label: capabilityServerFilterLabel,
+															allLabel: t(
+																"profiles:detail.filters.server.all",
+																{
+																	defaultValue: "All Servers",
+																},
+															),
+															options: visibleServers.map((server) => ({
+																value: server.id,
+																label: server.name,
+																title: server.name,
+															})),
+															selectedValues: capabilityServerFilters,
+															onClear: () => setCapabilityServerFilters([]),
+															onToggle: toggleCapabilityServerFilter,
+														}
+													: undefined
+											}
+											kindFilter={{
+												label: capabilityKindFilterLabel,
+												allLabel: t("servers:detail.filters.kind.all", {
+													defaultValue: "All Types",
+												}),
+												options: capabilityKindFilterOptions,
+												selectedValues: capabilityKindFilters,
+												onClear: clearCapabilityKindFilters,
+												onToggle: (value, checked) =>
+													toggleCapabilityKindFilter(
+														value as CapabilityKind,
+														checked,
+													),
+											}}
+											statusFilter={{
+												label: capabilityStatusLabel,
+												value: capabilityStatus,
+												placeholder: t("profiles:detail.placeholders.status", {
+													defaultValue: "Status",
+												}),
+												options: [
+													{
+														value: "all",
+														label: t("servers:detail.filters.status.all", {
+															defaultValue: "All",
+														}),
+													},
+													{
+														value: "enabled",
+														label: t("servers:detail.filters.status.enabled", {
+															defaultValue: "Enabled",
+														}),
+													},
+													{
+														value: "disabled",
+														label: t("servers:detail.filters.status.disabled", {
+															defaultValue: "Disabled",
+														}),
+													},
+												],
+												onValueChange: (value) =>
+													setCapabilityStatus(
+														value as "all" | "enabled" | "disabled",
+													),
+											}}
+											hasSource={hasCapabilitySelection}
+											isLoading={
+												isLoadingTools ||
+												isLoadingResources ||
+												isLoadingPrompts ||
+												isLoadingTemplates
+											}
+											tools={selectedServerTools as CapabilityRecord[]}
+											resources={selectedServerResources as CapabilityRecord[]}
+											prompts={selectedServerPrompts as CapabilityRecord[]}
+											templates={selectedServerTemplates as CapabilityRecord[]}
+											kindFilters={capabilityKindFilters}
+											selectHintText={t(
+												"profiles:detail.emptyStates.selectServer",
+												{
 													defaultValue:
-														"Manage tools, resources, prompts, and resource templates across the visible servers.",
-												})
-												: selectedCapabilityServer
-													? t("profiles:detail.descriptions.capabilityGroups", {
-														defaultValue:
-															"Manage tools, resources, prompts, and resource templates for the selected server.",
-													})
-													: t("profiles:detail.emptyStates.selectServer", {
-														defaultValue:
-															"Select a server to inspect its capabilities.",
-													})
-										}
-										isBulkMode={capabilityBulk.isBulkMode}
-										onToggleBulkMode={capabilityBulk.toggleMode}
-										bulkActions={capabilityBulkActions}
-										searchValue={capabilityQuery}
-										onSearchChange={setCapabilityQuery}
-										searchPlaceholder={t(
-											"servers:wizard.preview.filterCapabilities",
-											{ defaultValue: "Filter capabilities..." },
-										)}
-										serverFilter={
-											isAllCapabilityServersSelected
-												? {
-													label: capabilityServerFilterLabel,
-													allLabel: t("profiles:detail.filters.server.all", {
-														defaultValue: "All Servers",
-													}),
-													options: visibleServers.map((server) => ({
-														value: server.id,
-														label: server.name,
-														title: server.name,
-													})),
-													selectedValues: capabilityServerFilters,
-													onClear: () => setCapabilityServerFilters([]),
-													onToggle: toggleCapabilityServerFilter,
-												}
-												: undefined
-										}
-										kindFilter={{
-											label: capabilityKindFilterLabel,
-											allLabel: t("servers:detail.filters.kind.all", {
-												defaultValue: "All Types",
-											}),
-											options: capabilityKindFilterOptions,
-											selectedValues: capabilityKindFilters,
-											onClear: clearCapabilityKindFilters,
-											onToggle: (value, checked) =>
-												toggleCapabilityKindFilter(
-													value as CapabilityKind,
-													checked,
-												),
-										}}
-										statusFilter={{
-											label: capabilityStatusLabel,
-											value: capabilityStatus,
-											placeholder: t("profiles:detail.placeholders.status", {
-												defaultValue: "Status",
-											}),
-											options: [
-												{
-													value: "all",
-													label: t("servers:detail.filters.status.all", {
-														defaultValue: "All",
-													}),
+														"Select a server to inspect its capabilities.",
 												},
+											)}
+											emptyText={t("servers:detail.capabilityList.emptyAll", {
+												defaultValue: "No capabilities from this server",
+											})}
+											emptySearchText={t(
+												"servers:detail.capabilityList.emptyAll",
 												{
-													value: "enabled",
-													label: t("servers:detail.filters.status.enabled", {
-														defaultValue: "Enabled",
-													}),
+													defaultValue: "No capabilities from this server",
 												},
-												{
-													value: "disabled",
-													label: t("servers:detail.filters.status.disabled", {
-														defaultValue: "Disabled",
-													}),
-												},
-											],
-											onValueChange: (value) =>
-												setCapabilityStatus(
-													value as "all" | "enabled" | "disabled",
-												),
-										}}
-										hasSource={hasCapabilitySelection}
-										isLoading={
-											isLoadingTools ||
-											isLoadingResources ||
-											isLoadingPrompts ||
-											isLoadingTemplates
-										}
-										tools={selectedServerTools as CapabilityRecord[]}
-										resources={selectedServerResources as CapabilityRecord[]}
-										prompts={selectedServerPrompts as CapabilityRecord[]}
-										templates={selectedServerTemplates as CapabilityRecord[]}
-										kindFilters={capabilityKindFilters}
-										selectHintText={t("profiles:detail.emptyStates.selectServer", {
-											defaultValue: "Select a server to inspect its capabilities.",
-										})}
-										emptyText={t("servers:detail.capabilityList.emptyAll", {
-											defaultValue: "No capabilities from this server",
-										})}
-										emptySearchText={t("servers:detail.capabilityList.emptyAll", {
-											defaultValue: "No capabilities from this server",
-										})}
-										renderFlatList={renderProfileFlatCapabilityList}
-									/>
-								</div>
-							</CardContent>
-						</Card>
-					</TabsContent>
+											)}
+											renderFlatList={renderProfileFlatCapabilityList}
+										/>
+									</ResizableSplitPane>
+								</CardContent>
+							</Card>
+						</TabsContent>
+					)}
 				</Tabs>
 			) : (
 				<Card>
@@ -2550,11 +2621,11 @@ export function ProfileDetailPage() {
 						>
 							{deleteSuitMutation.isPending
 								? t("profiles:detail.buttons.deleting", {
-									defaultValue: "Deleting...",
-								})
+										defaultValue: "Deleting...",
+									})
 								: t("profiles:detail.buttons.delete", {
-									defaultValue: "Delete",
-								})}
+										defaultValue: "Delete",
+									})}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>

@@ -14,7 +14,7 @@ export default function ProfileDetailOverview() {
 			<P>
 				The overview tab on <code>/profiles/:profileId</code> is the safest place to
 				understand what a profile controls before you touch individual servers or
-				capabilities. It summarizes status, type, multi-select behavior, priority,
+				capabilities. It summarizes status, type, priority,
 				and quick actions such as refresh, edit, default, enable, disable, or delete.
 			</P>
 

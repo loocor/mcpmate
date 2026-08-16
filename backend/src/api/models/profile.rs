@@ -5,6 +5,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+use crate::config::models::ProfileMode;
+use crate::core::profile::workflow::{WorkflowSpecification, WorkflowSpecificationPreview, WorkflowStepCommand};
+
 // Import the unified response macro
 use crate::macros::resp::api_resp;
 
@@ -398,8 +401,6 @@ pub struct ProfileData {
     pub profile_type: String,
     /// Role of the profile (user, default_anchor)
     pub role: String,
-    /// Whether multiple profile can be selected simultaneously
-    pub multi_select: bool,
     /// Priority of the profile (higher priority wins in case of conflicts)
     pub priority: i32,
     /// Whether the profile is currently active
@@ -408,6 +409,8 @@ pub struct ProfileData {
     pub is_default: bool,
     /// Monotonic Profile authoring generation.
     pub authoring_generation: i64,
+    /// Authoring mode (capability or workflow).
+    pub profile_mode: ProfileMode,
     /// Allowed operations on this profile
     pub allowed_operations: Vec<String>,
 }
@@ -416,6 +419,7 @@ pub struct ProfileData {
 pub struct ProfileAuthoringViewData {
     pub profile: ProfileData,
     pub server_ids: Vec<String>,
+    pub profile_mode: ProfileMode,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -425,17 +429,56 @@ pub struct ProfileAuthoringSaveReq {
     pub name: String,
     pub description: Option<String>,
     pub profile_type: String,
-    pub multi_select: bool,
     pub priority: i32,
     pub is_active: bool,
     pub is_default: bool,
     pub server_ids: Vec<String>,
     pub clone_from_id: Option<String>,
+    #[serde(default)]
+    pub profile_mode: Option<ProfileMode>,
+    #[serde(default)]
+    pub workflow_specification: Option<WorkflowSpecificationSaveReq>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ProfileAuthoringSaveData {
     pub profile: ProfileData,
+    pub profile_mode: ProfileMode,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct WorkflowSpecificationSaveReq {
+    pub profile_id: String,
+    pub expected_specification_revision: Option<i64>,
+    pub validation_notes: Option<String>,
+    pub avoid_rules: Option<String>,
+    pub steps: Vec<WorkflowStepCommand>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WorkflowSpecificationDeleteReq {
+    pub profile_id: String,
+    pub expected_specification_revision: i64,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct WorkflowSpecificationViewData {
+    pub specification: WorkflowSpecification,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct WorkflowSpecificationSaveData {
+    pub specification: WorkflowSpecification,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct WorkflowSpecificationDeleteData {
+    pub profile_id: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct WorkflowSpecificationPreviewData {
+    pub preview: WorkflowSpecificationPreview,
 }
 
 /// Operation response
@@ -583,6 +626,26 @@ api_resp!(
     ProfileAuthoringSaveResp,
     ProfileAuthoringSaveData,
     "Profile authoring save API response"
+);
+api_resp!(
+    WorkflowSpecificationViewResp,
+    WorkflowSpecificationViewData,
+    "Workflow specification view API response"
+);
+api_resp!(
+    WorkflowSpecificationSaveResp,
+    WorkflowSpecificationSaveData,
+    "Workflow specification save API response"
+);
+api_resp!(
+    WorkflowSpecificationDeleteResp,
+    WorkflowSpecificationDeleteData,
+    "Workflow specification delete API response"
+);
+api_resp!(
+    WorkflowSpecificationPreviewResp,
+    WorkflowSpecificationPreviewData,
+    "Workflow specification preview API response"
 );
 api_resp!(
     ProfileServersListResp,
