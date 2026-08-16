@@ -966,6 +966,7 @@ export interface ProfileAuthoringSaveRequest {
   server_ids: string[];
   clone_from_id: string | null;
   profile_mode?: ProfileMode;
+  workflow_specification?: WorkflowSpecificationSaveRequest;
 }
 
 export interface ProfileAuthoringSaveResponse {

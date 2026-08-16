@@ -180,7 +180,7 @@ export function ProfileFormDrawer({
 	onSuccess,
 	restrictProfileType,
 }: ProfileFormDrawerProps) {
-	const { t } = useTranslation();
+	const { t, i18n } = useTranslation();
 	usePageTranslations("profiles");
 	const queryClient = useQueryClient();
 	const navigate = useNavigate();
@@ -228,6 +228,7 @@ export function ProfileFormDrawer({
 		mode,
 		profileId: suit?.id ?? null,
 	});
+	const workflowRulesHydrationRef = useRef<string | null>(null);
 
 	const isHostAppProfile = restrictProfileType === "host_app" || suit?.suit_type === "host_app";
 	const isWorkflowProfile = formData.profile_mode === "workflow";
@@ -249,7 +250,7 @@ export function ProfileFormDrawer({
 				label: t("profiles:form.profileModes.workflow"),
 			},
 		],
-		[t],
+		[i18n.language, t],
 	);
 
 	const steps: Array<{ id: DrawerStep; label: string; hint: string }> = isHostAppProfile
@@ -260,7 +261,7 @@ export function ProfileFormDrawer({
 					hint: t("profiles:form.steps.hints.assign", { defaultValue: "Assign" }),
 				},
 			]
-		: isWorkflowEdit
+		: isWorkflowProfile
 			? [
 					{
 						id: "details",
@@ -273,14 +274,6 @@ export function ProfileFormDrawer({
 						hint: t("profiles:form.steps.hints.rules", { defaultValue: "Rules" }),
 					},
 				]
-			: isWorkflowProfile
-				? [
-						{
-							id: "details",
-							label: t("profiles:form.steps.profile", { defaultValue: "Profile" }),
-							hint: t("profiles:form.steps.hints.basics", { defaultValue: "Basics" }),
-						},
-					]
 			: [
 				{
 					id: "details",
@@ -331,10 +324,24 @@ export function ProfileFormDrawer({
 	}, [mode, suit, restrictProfileType, isHostAppProfile]);
 
 	useEffect(() => {
-		if (!workflowSpecificationQuery.data) return;
+		if (
+			!open ||
+			step !== "workflow-rules" ||
+			!suit?.id ||
+			!workflowSpecificationQuery.data
+		)
+			return;
+		if (workflowRulesHydrationRef.current === suit.id) return;
 		setValidationNotes(workflowSpecificationQuery.data.validation_notes ?? "");
 		setAvoidRules(workflowSpecificationQuery.data.avoid_rules ?? "");
-	}, [workflowSpecificationQuery.data]);
+		workflowRulesHydrationRef.current = suit.id;
+	}, [open, step, suit?.id, workflowSpecificationQuery.data]);
+
+	useEffect(() => {
+		if (!open) {
+			workflowRulesHydrationRef.current = null;
+		}
+	}, [open]);
 
 	// Overlay close handler (immediate, no delay)
 	const handleOverlayClose = useCallback(() => {
@@ -469,6 +476,12 @@ export function ProfileFormDrawer({
 				queryClient.invalidateQueries({
 					queryKey: ["profileAuthoringView", profileId],
 				});
+				queryClient.invalidateQueries({
+					queryKey: ["workflowSpecification", profileId],
+				});
+				queryClient.invalidateQueries({
+					queryKey: ["workflowSpecificationPreview", profileId],
+				});
 			}
 			notifySuccess(
 				mode === "create"
@@ -502,48 +515,6 @@ export function ProfileFormDrawer({
 		},
 	});
 
-	const workflowRulesMutation = useMutation({
-		mutationFn: () => {
-			if (!suit || !workflowSpecificationQuery.data) {
-				throw new Error("Workflow specification is not available");
-			}
-			return configSuitsApi.saveWorkflowSpecification({
-				profile_id: suit.id,
-				expected_specification_revision:
-					workflowSpecificationQuery.data.specification_revision,
-				validation_notes: validationNotes.trim() || null,
-				avoid_rules: avoidRules.trim() || null,
-				steps: workflowSpecificationQuery.data.steps,
-			});
-		},
-		onSuccess: (specification) => {
-			if (!suit || !authoringBaselineView) {
-				return;
-			}
-			queryClient.setQueryData(
-				["workflowSpecification", suit.id],
-				specification,
-			);
-			queryClient.invalidateQueries({
-				queryKey: ["workflowSpecificationPreview", suit.id],
-			});
-			authoringMutation.mutate(
-				buildProfileAuthoringSaveRequest({
-					mode: "edit",
-					profileId: suit.id,
-					draft: formData,
-					serverIds: selectedServerIds,
-					authoringView: authoringBaselineView,
-				}),
-			);
-		},
-		onError: (error: Error) =>
-			notifyError(
-				t("profiles:detail.workflow.messages.saveFailed"),
-				error.message,
-			),
-	});
-
 	// Handle form submission
 	const handleSubmit = (e: React.FormEvent) => {
 		e.preventDefault();
@@ -560,7 +531,7 @@ export function ProfileFormDrawer({
 			return;
 		}
 
-		if (step === "details" && isWorkflowEdit) {
+		if (step === "details" && isWorkflowProfile) {
 			setStep("workflow-rules");
 			return;
 		}
@@ -577,12 +548,36 @@ export function ProfileFormDrawer({
 			}
 			if (!workflowSpecificationQuery.data) {
 				notifyError(
-				t("profiles:detail.workflow.messages.saveFailed"),
-				t("profiles:detail.workflow.loading"),
-			);
+					t("profiles:detail.workflow.messages.saveFailed"),
+					t("profiles:detail.workflow.loading"),
+				);
 				return;
 			}
-			workflowRulesMutation.mutate();
+			if (!suit || !authoringBaselineView) {
+				notifyError(
+					t("profiles:detail.workflow.messages.saveFailed"),
+					t("profiles:detail.workflow.loading"),
+				);
+				return;
+			}
+			const request = buildProfileAuthoringSaveRequest({
+				mode: "edit",
+				profileId: suit.id,
+				draft: formData,
+				serverIds: selectedServerIds,
+				authoringView: authoringBaselineView,
+			});
+			authoringMutation.mutate({
+				...request,
+				workflow_specification: {
+					profile_id: suit.id,
+					expected_specification_revision:
+						workflowSpecificationQuery.data.specification_revision,
+					validation_notes: validationNotes.trim() || null,
+					avoid_rules: avoidRules.trim() || null,
+					steps: workflowSpecificationQuery.data.steps,
+				},
+			});
 			return;
 		}
 
@@ -630,9 +625,10 @@ export function ProfileFormDrawer({
 		}
 	};
 
-	const isMutating =
-		authoringMutation.isPending || workflowRulesMutation.isPending;
-	const detailsStepValid = isHostAppProfile || formData.name.trim().length > 0;
+	const isMutating = authoringMutation.isPending;
+	const detailsStepValid =
+		isHostAppProfile ||
+		(formData.name.trim().length > 0 && (!isWorkflowProfile || formData.description.trim().length > 0));
 
 	const allServers = useMemo(
 		() => allServersResponse?.servers ?? [],
@@ -720,7 +716,7 @@ export function ProfileFormDrawer({
 		(step === "servers" && isServersStepLoading);
 	const primaryLabel = isMutating
 		? t("profiles:form.buttons.saving", { defaultValue: "Saving..." })
-		: step === "details" && (!isWorkflowProfile || isWorkflowEdit)
+		: step === "details"
 			? t("profiles:form.buttons.next", { defaultValue: "Next" })
 			: mode === "create"
 				? t("profiles:form.buttons.create", { defaultValue: "Create Profile" })
@@ -1002,6 +998,7 @@ export function ProfileFormDrawer({
 										{t("profiles:form.fields.description", {
 											defaultValue: "Description",
 										})}
+										{isWorkflowProfile ? " *" : null}
 									</Label>
 									<Textarea
 										id={descriptionId}
@@ -1012,10 +1009,16 @@ export function ProfileFormDrawer({
 												description: e.target.value,
 											}))
 										}
-										placeholder={t(
-											"profiles:form.placeholders.profileDescription",
-											{ defaultValue: "Provide a short summary" },
-										)}
+										placeholder={
+											isWorkflowProfile
+												? t("profiles:form.placeholders.workflowDescription", {
+													defaultValue:
+														"Describe the workflow goal, expected outcome, and key constraints",
+												})
+												: t("profiles:form.placeholders.profileDescription", {
+													defaultValue: "Provide a short summary",
+												})
+										}
 										rows={3}
 										className="flex-1"
 									/>
@@ -1052,7 +1055,7 @@ export function ProfileFormDrawer({
 								{detailsModeContent}
 							</div>
 						)}
-						{step === "workflow-rules" && isWorkflowEdit && (
+		{step === "workflow-rules" && isWorkflowProfile && (
 							<div className="space-y-4">
 								<div className="flex items-start gap-4">
 									<Label

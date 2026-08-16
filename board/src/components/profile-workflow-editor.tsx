@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, Plus, ShieldCheck, Trash2, Undo2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -82,6 +82,7 @@ export function ProfileWorkflowEditor({
 	const [pendingRemovalStepIndex, setPendingRemovalStepIndex] = useState<
 		number | null
 	>(null);
+	const hydratedProfileIdRef = useRef<string | null>(null);
 
 	const specificationQuery = useQuery({
 		queryKey: ["workflowSpecification", profileId],
@@ -90,14 +91,20 @@ export function ProfileWorkflowEditor({
 	});
 
 	useEffect(() => {
-		if (specificationQuery.data) {
-			const nextSteps = workflowDraftFromSpecification(
-				specificationQuery.data,
-			);
-			setSteps(nextSteps);
-			setSelectedStepIndex(nextSteps.length > 0 ? 0 : null);
+		hydratedProfileIdRef.current = null;
+		setSteps([]);
+		setSelectedStepIndex(null);
+	}, [profileId]);
+
+	useEffect(() => {
+		if (!specificationQuery.data || hydratedProfileIdRef.current === profileId) {
+			return;
 		}
-	}, [specificationQuery.data]);
+		const nextSteps = workflowDraftFromSpecification(specificationQuery.data);
+		setSteps(nextSteps);
+		setSelectedStepIndex(nextSteps.length > 0 ? 0 : null);
+		hydratedProfileIdRef.current = profileId;
+	}, [profileId, specificationQuery.data]);
 
 	const saveMutation = useMutation({
 		mutationFn: (nextSteps: WorkflowStepDraft[]) =>
