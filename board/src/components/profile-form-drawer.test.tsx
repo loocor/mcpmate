@@ -25,7 +25,6 @@ const createRequest: ProfileAuthoringSaveRequest = {
 	name: "Focused work",
 	description: "Only the tools needed for focused work",
 	profile_type: "shared",
-	multi_select: true,
 	priority: 50,
 	is_active: true,
 	is_default: false,
@@ -38,7 +37,6 @@ const savedProfile = {
 	name: createRequest.name,
 	description: createRequest.description,
 	profile_type: createRequest.profile_type,
-	multi_select: createRequest.multi_select,
 	priority: createRequest.priority,
 	is_active: createRequest.is_active,
 	is_default: createRequest.is_default,
@@ -76,6 +74,28 @@ describe("ProfileFormDrawer authoring", () => {
 		expect(requests[0]?.url).toEndWith("/api/mcp/profile/authoring/save");
 		expect(requests[0]?.init?.method).toBe("POST");
 		expect(JSON.parse(String(requests[0]?.init?.body))).toEqual(createRequest);
+	});
+
+	test("creates a Workflow Profile as inactive and non-default", () => {
+		const request = authoringUi.buildProfileAuthoringSaveRequest({
+			mode: "create",
+			profileId: null,
+			draft: {
+				...createRequest,
+				suit_type: "shared",
+				clone_from_id: "none",
+				profile_mode: "workflow",
+				is_active: false,
+				is_default: false,
+			},
+			serverIds: ["server-a"],
+		});
+
+		expect(request).toMatchObject({
+			profile_mode: "workflow",
+			is_active: false,
+			is_default: false,
+		});
 	});
 
 	test("updates metadata servers activation and default with one request", async () => {
@@ -175,7 +195,6 @@ describe("ProfileFormDrawer authoring", () => {
 			name: "Unsaved local name",
 			description: "Unsaved local description",
 			suit_type: "shared",
-			multi_select: true,
 			priority: 50,
 			is_active: true,
 			is_default: false,
@@ -210,7 +229,6 @@ describe("ProfileFormDrawer authoring", () => {
 				name: "Unsaved local name",
 				description: "Unsaved local description",
 				suit_type: "shared",
-				multi_select: true,
 				priority: 50,
 				is_active: true,
 				is_default: false,

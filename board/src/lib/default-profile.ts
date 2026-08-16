@@ -8,7 +8,7 @@ import type { ConfigSuit } from "./types";
  *
  * The backend (see `backend/src/config/database.rs::init_default_profile`)
  * guarantees that exactly one profile carries this role, with
- * `is_default = true`, `is_active = true`, and `multi_select = true`. The
+ * `is_default = true` and `is_active = true`. The
  * role string is the canonical handle — the display name is mutable.
  */
 export const DEFAULT_ANCHOR_ROLE = "default_anchor";

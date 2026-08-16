@@ -40,6 +40,9 @@ export function ProfileSuitGridCard({
 		(state) => state.dashboardSettings.profileTokenEstimateMethod,
 	);
 	const tokenSource = useProfileTokenChartSource(suit.id, enabledByComponentId);
+	const profileModeLabel = t(
+		`profiles:badges.${suit.profile_mode === "workflow" ? "workflow" : "capability"}`,
+	);
 
 	return (
 		<EntityCard
@@ -81,9 +84,7 @@ export function ProfileSuitGridCard({
 			stats={statItems}
 			bottomLeft={
 				<Badge variant={suit.is_active ? "default" : "secondary"}>
-					{t(`profiles:suitTypes.${suit.suit_type}`, {
-						defaultValue: suit.suit_type,
-					})}
+					{profileModeLabel}
 				</Badge>
 			}
 			bottomRight={

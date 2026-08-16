@@ -3,6 +3,7 @@ import type {
 	ProfileAuthoringSaveRequest,
 	ProfileAuthoringSaveResponse,
 	ProfileAuthoringView,
+	ProfileMode,
 	ServerSummary,
 } from "./types";
 
@@ -43,11 +44,11 @@ export interface ProfileFormDraft {
 	name: string;
 	description: string;
 	suit_type: string;
-	multi_select: boolean;
 	priority: number;
 	is_active: boolean;
 	is_default: boolean;
 	clone_from_id: string;
+	profile_mode?: ProfileMode;
 }
 
 export interface ProfileAuthoringResetIdentity {
@@ -97,7 +98,6 @@ export function buildProfileAuthoringSaveRequest({
 		name: draft.name,
 		description: draft.description || null,
 		profile_type: draft.suit_type,
-		multi_select: draft.multi_select,
 		priority: draft.priority,
 		is_active: draft.is_active,
 		is_default: draft.is_default,
@@ -108,6 +108,9 @@ export function buildProfileAuthoringSaveRequest({
 			draft.clone_from_id !== "none"
 				? draft.clone_from_id
 				: null,
+		...(draft.profile_mode === "workflow"
+			? { profile_mode: "workflow" as const }
+			: {}),
 	};
 }
 
@@ -159,11 +162,11 @@ export function profileFormDraftFromAuthoringView(
 		name: view.profile.name,
 		description: view.profile.description || "",
 		suit_type: view.profile.suit_type,
-		multi_select: view.profile.multi_select,
 		priority: view.profile.priority,
 		is_active: view.profile.is_active,
 		is_default: view.profile.is_default,
 		clone_from_id: "none",
+		profile_mode: view.profile_mode ?? view.profile.profile_mode ?? "capability",
 	};
 }
 

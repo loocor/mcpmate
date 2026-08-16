@@ -30,10 +30,6 @@ import {
 } from "../lib/profile-authoring-ui";
 import type {
 	ConfigSuit,
-	ConfigSuitPrompt,
-	ConfigSuitResource,
-	ConfigSuitServer,
-	ConfigSuitTool,
 	ServerSummary,
 } from "../lib/types";
 import { Button } from "./ui/button";
@@ -58,18 +54,12 @@ import {
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { ScrollArea } from "./ui/scroll-area";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "./ui/select";
 import { Switch } from "./ui/switch";
 import { Textarea } from "./ui/textarea";
 import { Transfer, type TransferItem } from "./ui/transfer";
+import { Segment, type SegmentOption } from "./ui/segment";
 
-type DrawerStep = "details" | "servers";
+type DrawerStep = "details" | "workflow-rules" | "servers";
 
 const arraysEqual = (a: string[], b: string[]) => {
 	if (a.length !== b.length) {
@@ -173,12 +163,6 @@ export function ProfileServerTransfer({
 	);
 }
 
-const formatProfileTypeLabel = (value: string) =>
-	value
-		.split(/[\s_]+/)
-		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-		.join(" ");
-
 interface ProfileFormDrawerProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
@@ -206,26 +190,28 @@ export function ProfileFormDrawer({
 		name: "",
 		description: "",
 		suit_type: restrictProfileType || "shared",
-		multi_select: true,
 		priority: 50,
 		is_active: false,
 		is_default: false,
 		clone_from_id: "none",
+		profile_mode: "capability",
 	});
 
 	// Generate unique IDs for form elements
 	const nameId = useId();
 	const descriptionId = useId();
-	const multiSelectId = useId();
+	const validationNotesId = useId();
+	const avoidRulesId = useId();
 	const isActiveId = useId();
 	const isDefaultId = useId();
-	const cloneFromId = useId();
+	const profileModeId = useId();
 
 	const [step, setStep] = useState<DrawerStep>("details");
+	const [validationNotes, setValidationNotes] = useState("");
+	const [avoidRules, setAvoidRules] = useState("");
 	const [selectedServerIds, setSelectedServerIds] = useState<string[]>([]);
 	const [selectionInitialized, setSelectionInitialized] = useState(false);
-	const [serverSelectionTouched, setServerSelectionTouched] = useState(false);
-	const [cloneSelectionApplied, setCloneSelectionApplied] = useState(false);
+	const [, setServerSelectionTouched] = useState(false);
 	const [isClosing, setIsClosing] = useState(false);
 	const [conflictState, dispatchConflict] = useReducer(
 		reduceProfileAuthoringConflict,
@@ -244,6 +230,27 @@ export function ProfileFormDrawer({
 	});
 
 	const isHostAppProfile = restrictProfileType === "host_app" || suit?.suit_type === "host_app";
+	const isWorkflowProfile = formData.profile_mode === "workflow";
+	const isWorkflowEdit = mode === "edit" && isWorkflowProfile;
+	const workflowSpecificationQuery = useQuery({
+		queryKey: ["workflowSpecification", suit?.id],
+		queryFn: () => configSuitsApi.getWorkflowSpecification(suit!.id),
+		enabled: open && isWorkflowEdit && Boolean(suit?.id),
+		retry: false,
+	});
+	const profileModeOptions = useMemo<SegmentOption[]>(
+		() => [
+			{
+				value: "capability",
+				label: t("profiles:form.profileModes.capability"),
+			},
+			{
+				value: "workflow",
+				label: t("profiles:form.profileModes.workflow"),
+			},
+		],
+		[t],
+	);
 
 	const steps: Array<{ id: DrawerStep; label: string; hint: string }> = isHostAppProfile
 		? [
@@ -253,7 +260,28 @@ export function ProfileFormDrawer({
 					hint: t("profiles:form.steps.hints.assign", { defaultValue: "Assign" }),
 				},
 			]
-		: [
+		: isWorkflowEdit
+			? [
+					{
+						id: "details",
+						label: t("profiles:form.steps.profile", { defaultValue: "Profile" }),
+						hint: t("profiles:form.steps.hints.basics", { defaultValue: "Basics" }),
+					},
+					{
+						id: "workflow-rules",
+						label: t("profiles:form.steps.workflow", { defaultValue: "Workflow" }),
+						hint: t("profiles:form.steps.hints.rules", { defaultValue: "Rules" }),
+					},
+				]
+			: isWorkflowProfile
+				? [
+						{
+							id: "details",
+							label: t("profiles:form.steps.profile", { defaultValue: "Profile" }),
+							hint: t("profiles:form.steps.hints.basics", { defaultValue: "Basics" }),
+						},
+					]
+			: [
 				{
 					id: "details",
 					label: t("profiles:form.steps.profile", { defaultValue: "Profile" }),
@@ -269,9 +297,10 @@ export function ProfileFormDrawer({
 	// 完全重置所有状态的函数
 	const resetAllStates = useCallback(() => {
 		setStep(isHostAppProfile ? "servers" : "details");
+		setValidationNotes("");
+		setAvoidRules("");
 		setSelectionInitialized(false);
 		setServerSelectionTouched(false);
-		setCloneSelectionApplied(false);
 		setSelectedServerIds([]);
 		dispatchConflict({ type: "reset" });
 
@@ -280,11 +309,11 @@ export function ProfileFormDrawer({
 				name: suit.name,
 				description: suit.description || "",
 				suit_type: suit.suit_type,
-				multi_select: suit.multi_select,
 				priority: suit.priority,
 				is_active: suit.is_active,
 				is_default: suit.is_default,
 				clone_from_id: "none", // Not applicable in edit mode
+				profile_mode: suit.profile_mode,
 			});
 		} else {
 			// Create mode - reset to empty form
@@ -292,14 +321,20 @@ export function ProfileFormDrawer({
 				name: "",
 				description: "",
 				suit_type: restrictProfileType || "shared",
-				multi_select: true,
 				priority: 50,
 				is_active: false,
 				is_default: false,
 				clone_from_id: "none",
+				profile_mode: "capability",
 			});
 		}
 	}, [mode, suit, restrictProfileType, isHostAppProfile]);
+
+	useEffect(() => {
+		if (!workflowSpecificationQuery.data) return;
+		setValidationNotes(workflowSpecificationQuery.data.validation_notes ?? "");
+		setAvoidRules(workflowSpecificationQuery.data.avoid_rules ?? "");
+	}, [workflowSpecificationQuery.data]);
 
 	// Overlay close handler (immediate, no delay)
 	const handleOverlayClose = useCallback(() => {
@@ -391,57 +426,10 @@ export function ProfileFormDrawer({
 			staleTime: 15_000,
 		});
 
-	const availableSuits = useMemo(
-		() => suitsResponse?.suits ?? [],
+	const defaultSuitId = useMemo(
+		() => (suitsResponse?.suits ?? []).find((profile) => profile.is_default)?.id,
 		[suitsResponse],
 	);
-	const defaultSuitId = useMemo(
-		() => availableSuits.find((profile) => profile.is_default)?.id,
-		[availableSuits],
-	);
-
-	const cloneableSuits = useMemo(
-		() => availableSuits.filter((profile) => profile.suit_type === "shared"),
-		[availableSuits],
-	);
-	const clonePreviewEnabled = formData.clone_from_id !== "none";
-	const { data: cloneContent, isFetching: clonePreviewLoading } = useQuery<{
-		servers: ConfigSuitServer[];
-		tools: ConfigSuitTool[];
-		resources: ConfigSuitResource[];
-		prompts: ConfigSuitPrompt[];
-	}>({
-		queryKey: ["configSuitClonePreview", formData.clone_from_id],
-		queryFn: async () => {
-			const [serversResult, toolsResult, resourcesResult, promptsResult] =
-				await Promise.allSettled([
-					configSuitsApi.getServers(formData.clone_from_id),
-					configSuitsApi.getTools(formData.clone_from_id),
-					configSuitsApi.getResources(formData.clone_from_id),
-					configSuitsApi.getPrompts(formData.clone_from_id),
-				]);
-			return {
-				servers:
-					serversResult.status === "fulfilled"
-						? serversResult.value.servers || []
-						: [],
-				tools:
-					toolsResult.status === "fulfilled"
-						? toolsResult.value.tools || []
-						: [],
-				resources:
-					resourcesResult.status === "fulfilled"
-						? resourcesResult.value.resources || []
-						: [],
-				prompts:
-					promptsResult.status === "fulfilled"
-						? promptsResult.value.prompts || []
-						: [],
-			};
-		},
-		enabled: clonePreviewEnabled,
-		staleTime: 30_000,
-	});
 
 	useEffect(() => {
 		if (!open) {
@@ -460,34 +448,6 @@ export function ProfileFormDrawer({
 		}
 	}, [open, mode, selectionInitialized, authoringView]);
 
-	useEffect(() => {
-		if (!open || mode !== "create") {
-			return;
-		}
-		if (formData.clone_from_id === "none") {
-			setCloneSelectionApplied(false);
-			return;
-		}
-		if (!cloneContent || clonePreviewLoading) {
-			return;
-		}
-		if (serverSelectionTouched && cloneSelectionApplied) {
-			return;
-		}
-		const serverIds = (cloneContent.servers || [])
-			.filter((server) => server.enabled)
-			.map((server) => server.id);
-		setSelectedServerIds(serverIds);
-		setCloneSelectionApplied(true);
-	}, [
-		open,
-		mode,
-		formData.clone_from_id,
-		cloneContent,
-		clonePreviewLoading,
-		serverSelectionTouched,
-		cloneSelectionApplied,
-	]);
 
 	const authoringMutation = useMutation({
 		mutationFn: submitProfileAuthoring,
@@ -523,6 +483,9 @@ export function ProfileFormDrawer({
 						}),
 			);
 			closeDrawer();
+			if (mode === "create" && result.data.profile_mode === "workflow" && profileId) {
+				navigate(`/profiles/${encodeURIComponent(profileId)}?tab=workflow`);
+			}
 			onSuccess?.();
 		},
 		onError: (error: Error) => {
@@ -537,6 +500,48 @@ export function ProfileFormDrawer({
 				t(profileSyncErrorTranslationKey(error)),
 			);
 		},
+	});
+
+	const workflowRulesMutation = useMutation({
+		mutationFn: () => {
+			if (!suit || !workflowSpecificationQuery.data) {
+				throw new Error("Workflow specification is not available");
+			}
+			return configSuitsApi.saveWorkflowSpecification({
+				profile_id: suit.id,
+				expected_specification_revision:
+					workflowSpecificationQuery.data.specification_revision,
+				validation_notes: validationNotes.trim() || null,
+				avoid_rules: avoidRules.trim() || null,
+				steps: workflowSpecificationQuery.data.steps,
+			});
+		},
+		onSuccess: (specification) => {
+			if (!suit || !authoringBaselineView) {
+				return;
+			}
+			queryClient.setQueryData(
+				["workflowSpecification", suit.id],
+				specification,
+			);
+			queryClient.invalidateQueries({
+				queryKey: ["workflowSpecificationPreview", suit.id],
+			});
+			authoringMutation.mutate(
+				buildProfileAuthoringSaveRequest({
+					mode: "edit",
+					profileId: suit.id,
+					draft: formData,
+					serverIds: selectedServerIds,
+					authoringView: authoringBaselineView,
+				}),
+			);
+		},
+		onError: (error: Error) =>
+			notifyError(
+				t("profiles:detail.workflow.messages.saveFailed"),
+				error.message,
+			),
 	});
 
 	// Handle form submission
@@ -555,8 +560,29 @@ export function ProfileFormDrawer({
 			return;
 		}
 
-		if (step === "details") {
+		if (step === "details" && isWorkflowEdit) {
+			setStep("workflow-rules");
+			return;
+		}
+
+		if (step === "details" && !isWorkflowProfile) {
 			setStep("servers");
+			return;
+		}
+
+		if (step === "workflow-rules" && isWorkflowEdit) {
+			if (latestAuthoringView) {
+				dispatchConflict({ type: "saveRequested" });
+				return;
+			}
+			if (!workflowSpecificationQuery.data) {
+				notifyError(
+				t("profiles:detail.workflow.messages.saveFailed"),
+				t("profiles:detail.workflow.loading"),
+			);
+				return;
+			}
+			workflowRulesMutation.mutate();
 			return;
 		}
 
@@ -583,10 +609,11 @@ export function ProfileFormDrawer({
 				formData.name !== current.name ||
 				formData.description !== (current.description || "") ||
 				formData.suit_type !== current.suit_type ||
-				formData.multi_select !== current.multi_select ||
 				formData.priority !== current.priority ||
 				formData.is_active !== current.is_active ||
-				formData.is_default !== current.is_default;
+				formData.is_default !== current.is_default ||
+				formData.profile_mode !==
+					(authoringBaselineView.profile_mode ?? current.profile_mode ?? "capability");
 			if (!latestAuthoringView && !selectionChanged && !hasFieldUpdates) {
 				closeDrawer();
 				return;
@@ -603,7 +630,8 @@ export function ProfileFormDrawer({
 		}
 	};
 
-	const isMutating = authoringMutation.isPending;
+	const isMutating =
+		authoringMutation.isPending || workflowRulesMutation.isPending;
 	const detailsStepValid = isHostAppProfile || formData.name.trim().length > 0;
 
 	const allServers = useMemo(
@@ -692,7 +720,7 @@ export function ProfileFormDrawer({
 		(step === "servers" && isServersStepLoading);
 	const primaryLabel = isMutating
 		? t("profiles:form.buttons.saving", { defaultValue: "Saving..." })
-		: step === "details"
+		: step === "details" && (!isWorkflowProfile || isWorkflowEdit)
 			? t("profiles:form.buttons.next", { defaultValue: "Next" })
 			: mode === "create"
 				? t("profiles:form.buttons.create", { defaultValue: "Create Profile" })
@@ -711,130 +739,15 @@ export function ProfileFormDrawer({
 		}
 	}, [showDefaultToggle]);
 
-	const clonePreview = useMemo(() => {
-		if (formData.clone_from_id === "none") {
-			return null;
+	useEffect(() => {
+		if (isWorkflowProfile) {
+			setFormData((prev) =>
+				prev.is_active || prev.is_default
+					? { ...prev, is_active: false, is_default: false }
+					: prev,
+			);
 		}
-		const selected = cloneableSuits.find(
-			(profile) => profile.id === formData.clone_from_id,
-		);
-		if (!selected) {
-			return null;
-		}
-
-		const serverCount = cloneContent?.servers?.length ?? 0;
-		const toolCount = cloneContent?.tools?.length ?? 0;
-		const resourceCount = cloneContent?.resources?.length ?? 0;
-		const promptCount = cloneContent?.prompts?.length ?? 0;
-
-		const typeValue = selected.suit_type
-			? t(`profiles:suitTypes.${selected.suit_type}`, {
-					defaultValue: formatProfileTypeLabel(selected.suit_type),
-				})
-			: formatProfileTypeLabel(selected.suit_type ?? "");
-
-		const details = [
-			{
-				label: t("profiles:form.clonePreview.labels.type", {
-					defaultValue: "Type",
-				}),
-				value: typeValue,
-			},
-			{
-				label: t("profiles:form.clonePreview.labels.priority", {
-					defaultValue: "Priority",
-				}),
-				value: selected.priority ?? "—",
-			},
-			{
-				label: t("profiles:form.clonePreview.labels.multiSelect", {
-					defaultValue: "Multi-select",
-				}),
-				value: selected.multi_select
-					? t("yes", { defaultValue: "Yes" })
-					: t("no", { defaultValue: "No" }),
-			},
-			{
-				label: t("profiles:form.clonePreview.labels.status", {
-					defaultValue: "Status",
-				}),
-				value: selected.is_active
-					? t("profiles:form.clonePreview.values.active", {
-							defaultValue: "Active",
-						})
-					: t("profiles:form.clonePreview.values.inactive", {
-							defaultValue: "Inactive",
-						}),
-			},
-			{
-				label: t("profiles:form.clonePreview.labels.servers", {
-					defaultValue: "Servers",
-				}),
-				value: serverCount,
-			},
-			{
-				label: t("profiles:form.clonePreview.labels.tools", {
-					defaultValue: "Tools",
-				}),
-				value: toolCount,
-			},
-			{
-				label: t("profiles:form.clonePreview.labels.resources", {
-					defaultValue: "Resources",
-				}),
-				value: resourceCount,
-			},
-			{
-				label: t("profiles:form.clonePreview.labels.prompts", {
-					defaultValue: "Prompts",
-				}),
-				value: promptCount || "—",
-			},
-		];
-
-		return (
-			<div>
-				<div className="grid grid-cols-1 gap-2 text-sm md:grid-cols-2">
-					{details.map(({ label, value }) => (
-						<div
-							key={label}
-							className="flex items-center justify-between rounded-md bg-slate-100 px-3 py-2 text-sm font-medium text-slate-700 dark:bg-slate-900/60 dark:text-slate-200"
-						>
-							<span className="text-xs tracking-wide text-muted-foreground">
-								{label}
-							</span>
-							<span className="text-xs text-slate-900 dark:text-slate-100">
-								{value}
-							</span>
-						</div>
-					))}
-				</div>
-				{clonePreviewLoading && (
-					<p className="mt-3 text-xs text-muted-foreground">
-						{t("profiles:form.clonePreview.loading", {
-							defaultValue: "Loading capabilities…",
-						})}
-					</p>
-				)}
-			</div>
-		);
-	}, [
-		cloneableSuits,
-		cloneContent,
-		formData.clone_from_id,
-		clonePreviewLoading,
-		t,
-	]);
-
-	const selectedCloneProfile = useMemo(
-		() =>
-			formData.clone_from_id === "none"
-				? undefined
-				: cloneableSuits.find(
-						(profile) => profile.id === formData.clone_from_id,
-					),
-		[cloneableSuits, formData.clone_from_id],
-	);
+	}, [isWorkflowProfile]);
 
 	// Transfer 组件的处理函数
 	const handleTransferChange = useCallback((targetKeys: string[]) => {
@@ -854,31 +767,6 @@ export function ProfileFormDrawer({
 		<div className="space-y-4">
 			<div className="flex items-center gap-4">
 				<span className="w-32 text-sm font-medium text-slate-600 dark:text-slate-300">
-					{t("profiles:form.fields.concurrentActivation", {
-						defaultValue: "Concurrent Activation",
-					})}
-				</span>
-				<div className="flex items-center gap-2">
-					<Switch
-						id={multiSelectId}
-						checked={formData.multi_select}
-						onCheckedChange={(checked) =>
-							setFormData((prev) => ({
-								...prev,
-								multi_select: checked,
-							}))
-						}
-					/>
-					<Label htmlFor={multiSelectId} className="text-sm">
-						{t("profiles:form.labels.concurrentActivationDescription", {
-							defaultValue: "Allow concurrent activation with other profiles",
-						})}
-					</Label>
-				</div>
-			</div>
-
-			<div className="flex items-center gap-4">
-				<span className="w-32 text-sm font-medium text-slate-600 dark:text-slate-300">
 					{t("profiles:form.fields.status", { defaultValue: "Status" })}
 				</span>
 				<div className="flex flex-wrap items-center gap-6">
@@ -886,6 +774,7 @@ export function ProfileFormDrawer({
 						<Switch
 							id={isActiveId}
 							checked={formData.is_active}
+							disabled={isWorkflowProfile}
 							onCheckedChange={(checked) =>
 								setFormData((prev) => ({
 									...prev,
@@ -920,114 +809,11 @@ export function ProfileFormDrawer({
 					)}
 				</div>
 			</div>
-
-			<div className="mt-6 space-y-4">
-				<div className="flex items-center gap-4">
-					<Label
-						htmlFor={cloneFromId}
-						className="w-32 text-sm font-medium text-slate-600 dark:text-slate-300"
-					>
-						{t("profiles:form.fields.cloneFrom", {
-							defaultValue: "Clone From",
-						})}
-					</Label>
-					<Select
-						value={formData.clone_from_id}
-						onValueChange={(value) =>
-							setFormData((prev) => ({
-								...prev,
-								clone_from_id: value,
-							}))
-						}
-					>
-						<SelectTrigger id={cloneFromId} className="flex-1">
-							<SelectValue
-								placeholder={t("profiles:form.labels.none", {
-									defaultValue: "None",
-								})}
-							>
-								{selectedCloneProfile?.name ??
-									t("profiles:form.labels.none", { defaultValue: "None" })}
-							</SelectValue>
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="none">
-								{t("profiles:form.labels.none", { defaultValue: "None" })}
-							</SelectItem>
-							{cloneableSuits.map((profile) => {
-								const rawDescription = profile.description?.trim() ?? "";
-								const truncatedDescription =
-									rawDescription.length > 80
-										? `${rawDescription.slice(0, 77).trimEnd()}…`
-										: rawDescription;
-								return (
-									<SelectItem key={profile.id} value={profile.id}>
-										<div className="flex w-full items-center justify-between gap-3">
-											<span className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
-												{profile.name}
-											</span>
-											{rawDescription ? (
-												<span className="hidden text-xs text-muted-foreground sm:block sm:max-w-[220px] sm:truncate sm:text-right">
-													{truncatedDescription}
-												</span>
-											) : (
-												<span className="hidden text-xs text-muted-foreground sm:block sm:text-right">
-													No description
-												</span>
-											)}
-										</div>
-									</SelectItem>
-								);
-							})}
-						</SelectContent>
-					</Select>
-				</div>
-				{clonePreview && (
-					<div className="flex items-start gap-4">
-						<span className="w-32" />
-						<div className="flex-1">{clonePreview}</div>
-					</div>
-				)}
-				<div className="flex items-start gap-4 pt-0">
-					<span className="w-32" />
-					<p className="flex-1 pl-1 text-xs text-muted-foreground">
-						{t("profiles:form.clonePreview.description", {
-							defaultValue:
-								"Cloning copies enabled servers, tools, and resources from the source profile.",
-						})}
-					</p>
-				</div>
-			</div>
 		</div>
 	);
 
 	const editModeSection = (
 		<div className="space-y-4">
-			<div className="flex items-center gap-4">
-				<span className="w-32 text-sm font-medium text-slate-600 dark:text-slate-300">
-					{t("profiles:form.fields.concurrentActivation", {
-						defaultValue: "Concurrent Activation",
-					})}
-				</span>
-				<div className="flex items-center gap-2">
-					<Switch
-						id={multiSelectId}
-						checked={formData.multi_select}
-						onCheckedChange={(checked) =>
-							setFormData((prev) => ({
-								...prev,
-								multi_select: checked,
-							}))
-						}
-					/>
-					<Label htmlFor={multiSelectId} className="text-sm">
-						{t("profiles:form.labels.concurrentActivationDescription", {
-							defaultValue: "Allow concurrent activation with other profiles",
-						})}
-					</Label>
-				</div>
-			</div>
-
 			<div className="flex items-center gap-4">
 				<span className="w-32 text-sm font-medium text-slate-600 dark:text-slate-300">
 					{t("profiles:form.fields.status", { defaultValue: "Status" })}
@@ -1037,6 +823,7 @@ export function ProfileFormDrawer({
 						<Switch
 							id={isActiveId}
 							checked={formData.is_active}
+							disabled={isWorkflowProfile}
 							onCheckedChange={(checked) =>
 								setFormData((prev) => ({
 									...prev,
@@ -1118,13 +905,14 @@ export function ProfileFormDrawer({
 
 				<form onSubmit={handleSubmit} className="flex h-full flex-col">
 					{/* Content area - scrollable */}
-					<div className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-4">
+					<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overflow-x-hidden p-4">
 						{!isHostAppProfile && (
 						<div className="flex flex-wrap items-center gap-4">
 							{steps.map((item, index) => {
 								const isActive = step === item.id;
 								const canNavigate =
 									item.id === "details" ||
+									(item.id === "workflow-rules" && detailsStepValid) ||
 									(item.id === "servers" && detailsStepValid);
 
 								return (
@@ -1233,11 +1021,74 @@ export function ProfileFormDrawer({
 									/>
 								</div>
 
+								<div className="flex items-start gap-4" role="group" aria-labelledby={profileModeId}>
+									<Label id={profileModeId} className="w-32 pt-2 text-sm font-medium text-slate-600 dark:text-slate-300">
+										{t("profiles:form.fields.profileMode")}
+									</Label>
+									<div className="min-w-0 flex-1 space-y-2">
+										<Segment
+											value={formData.profile_mode}
+											onValueChange={(value) => {
+												if (mode !== "create") return;
+												setFormData((prev) => ({
+													...prev,
+													profile_mode: value as "capability" | "workflow",
+													...(value === "workflow" ? { is_active: false, is_default: false } : {}),
+												}));
+											}}
+											options={profileModeOptions}
+											showDots={false}
+											disabled={mode === "edit"}
+										/>
+										<p className="pl-1 text-xs leading-relaxed text-muted-foreground">
+											{isWorkflowProfile
+												? t("profiles:form.profileModes.workflowDescription")
+												: t("profiles:form.profileModes.capabilityDescription")}
+											{mode === "edit" ? ` ${t("profiles:form.profileModes.editLockedHint")}` : null}
+										</p>
+									</div>
+								</div>
+
 								{detailsModeContent}
 							</div>
 						)}
+						{step === "workflow-rules" && isWorkflowEdit && (
+							<div className="space-y-4">
+								<div className="flex items-start gap-4">
+									<Label
+										htmlFor={validationNotesId}
+										className="w-32 pt-2 text-sm font-medium text-slate-600 dark:text-slate-300"
+									>
+										{t("profiles:detail.workflow.brief.validationNotes")}
+									</Label>
+									<Textarea
+										id={validationNotesId}
+										value={validationNotes}
+										onChange={(event) => setValidationNotes(event.target.value)}
+										rows={6}
+										className="flex-1"
+									/>
+								</div>
+
+								<div className="flex items-start gap-4">
+									<Label
+										htmlFor={avoidRulesId}
+										className="w-32 pt-2 text-sm font-medium text-slate-600 dark:text-slate-300"
+									>
+										{t("profiles:detail.workflow.brief.avoidRules")}
+									</Label>
+									<Textarea
+										id={avoidRulesId}
+										value={avoidRules}
+										onChange={(event) => setAvoidRules(event.target.value)}
+										rows={6}
+										className="flex-1"
+									/>
+								</div>
+							</div>
+						)}
 						{step === "servers" && (
-							<div className="flex flex-col flex-1 space-y-4">
+							<div className="flex min-h-0 flex-1 flex-col gap-4">
 								<div>
 									<p className="text-xs text-muted-foreground">
 										{t("profiles:form.serverSelection.title", {
@@ -1255,7 +1106,7 @@ export function ProfileFormDrawer({
 									</p>
 								</div>
 
-								<div className="flex-1 flex">
+								<div className="flex min-h-0 flex-1">
 									{isServersStepLoading ? (
 										<div className="flex-1 flex items-center justify-center rounded-lg border border-dashed border-slate-200 text-sm text-muted-foreground dark:border-slate-700">
 											<div className="flex items-center gap-2">
@@ -1336,7 +1187,7 @@ export function ProfileFormDrawer({
 											: t("profiles:form.buttons.back", { defaultValue: "Back" })}
 									</Button>
 								)}
-								{step === "servers" && !isHostAppProfile && (
+								{step !== "details" && !isHostAppProfile && (
 									<Button
 										type="button"
 										variant="ghost"

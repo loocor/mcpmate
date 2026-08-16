@@ -24,7 +24,6 @@ interface OperatorProfileRow {
 	name: string;
 	description?: string | null;
 	profile_type: string;
-	multi_select: boolean;
 	priority: number;
 	is_active: boolean;
 	is_default: boolean;
@@ -124,7 +123,6 @@ function profileRowToConfigSuit(
 		name: readString(row, "name", context),
 		description: readOptionalString(row, "description", context),
 		suit_type: readString(row, "profile_type", context),
-		multi_select: readBoolean(row, "multi_select", context),
 		priority: readNumber(row, "priority", context),
 		is_active: readBoolean(row, "is_active", context),
 		is_default: readBoolean(row, "is_default", context),

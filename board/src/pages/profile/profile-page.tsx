@@ -83,6 +83,7 @@ const arrangeSuitsWithDefaultAnchor = (items: ConfigSuit[] = []) => {
 type SuitStats = {
 	totalServers: number;
 	enabledServers: number;
+	totalSteps: number | null;
 	totalTools: number;
 	enabledTools: number;
 	totalResources: number;
@@ -351,13 +352,16 @@ export function ProfilePage() {
 		queries: suits.map((suit) => ({
 			queryKey: ["configSuitStats", suit.id] as const,
 			queryFn: async (): Promise<SuitStatsWithEnableMap> => {
-				const [serversRes, toolsRes, resourcesRes, promptsRes, templatesRes] =
+				const [serversRes, toolsRes, resourcesRes, promptsRes, templatesRes, workflowRes] =
 					await Promise.allSettled([
 						configSuitsApi.getServers(suit.id),
 						configSuitsApi.getTools(suit.id),
 						configSuitsApi.getResources(suit.id),
 						configSuitsApi.getPrompts(suit.id),
 						configSuitsApi.getResourceTemplates(suit.id),
+						suit.profile_mode === "workflow"
+							? configSuitsApi.getWorkflowSpecification(suit.id)
+							: Promise.resolve(null),
 					]);
 
 				const servers =
@@ -410,6 +414,17 @@ export function ProfilePage() {
 					);
 				}
 
+				const totalSteps =
+					workflowRes.status === "fulfilled" && workflowRes.value
+						? workflowRes.value.steps.length
+						: null;
+				if (workflowRes.status === "rejected") {
+					console.error(
+						"Failed to fetch workflow step stats",
+						workflowRes.reason,
+					);
+				}
+
 				const enabledByComponentId = buildEnabledByComponentId(
 					servers,
 					tools,
@@ -421,6 +436,7 @@ export function ProfilePage() {
 				return {
 					totalServers: servers.length,
 					enabledServers: servers.filter((server) => server.enabled).length,
+					totalSteps,
 					totalTools: tools.length,
 					enabledTools: tools.filter((tool) => tool.enabled).length,
 					totalResources: resources.length,
@@ -589,6 +605,9 @@ export function ProfilePage() {
 		const { stats, formatCount } = getSuitStatsForSuitId(suit.id);
 		const displayName = formatSuitDisplayName(suit.name, suit.id, t);
 		const avatarInitial = displayName.charAt(0).toUpperCase() || "P";
+		const profileModeLabel = t(
+			`profiles:badges.${suit.profile_mode === "workflow" ? "workflow" : "capability"}`,
+		);
 		const suitRole = suit.role ?? "user";
 		const isDefaultAnchor = suitRole === DEFAULT_ANCHOR_ROLE;
 		const isDefaultMember = suit.is_default;
@@ -629,14 +648,6 @@ export function ProfilePage() {
 				].filter(Boolean)}
 				stats={[
 					{
-						label: t("profiles:badges.multiSelect", {
-							defaultValue: "Multi-select",
-						}),
-						value: suit.multi_select
-							? t("yes", { defaultValue: "Yes" })
-							: t("no", { defaultValue: "No" }),
-					},
-					{
 						label: t("profiles:badges.priority", { defaultValue: "Priority" }),
 						value: suit.priority,
 					},
@@ -661,9 +672,7 @@ export function ProfilePage() {
 				]}
 				statusBadge={
 					<Badge variant={suit.is_active ? "default" : "secondary"}>
-						{t(`profiles:suitTypes.${suit.suit_type}`, {
-							defaultValue: suit.suit_type,
-						})}
+						{profileModeLabel}
 					</Badge>
 				}
 				enableSwitch={{
@@ -689,11 +698,24 @@ export function ProfilePage() {
 		const suitRole = suit.role ?? "user";
 		const isDefaultAnchor = suitRole === DEFAULT_ANCHOR_ROLE;
 		const reviewCount = getProfileReviewCount(pendingReviewItems, suit.id);
+		let workflowStepsValue: string;
+		if (statsLoading || stats?.totalSteps === undefined) {
+			workflowStepsValue = "...";
+		} else if (stats.totalSteps === null) {
+			workflowStepsValue = "—";
+		} else {
+			workflowStepsValue = String(stats.totalSteps);
+		}
 		const statItems = [
-			{
-				label: t("profiles:badges.servers", { defaultValue: "Servers" }),
-				value: formatCount(stats?.enabledServers, stats?.totalServers),
-			},
+			suit.profile_mode === "workflow"
+				? {
+					label: t("profiles:badges.steps", { defaultValue: "Steps" }),
+					value: workflowStepsValue,
+				}
+				: {
+					label: t("profiles:badges.servers", { defaultValue: "Servers" }),
+					value: formatCount(stats?.enabledServers, stats?.totalServers),
+				},
 			{
 				label: t("profiles:badges.tools", { defaultValue: "Tools" }),
 				value: formatCount(stats?.enabledTools, stats?.totalTools),

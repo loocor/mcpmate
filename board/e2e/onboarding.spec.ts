@@ -213,7 +213,6 @@ async function installOnboardingApiMocks(
                 id: "default-anchor",
                 name: "Default",
                 profile_type: "default",
-                multi_select: true,
                 priority: 0,
                 is_active: true,
                 is_default: true,
