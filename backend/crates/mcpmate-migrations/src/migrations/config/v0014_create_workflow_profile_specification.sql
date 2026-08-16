@@ -2,11 +2,15 @@ ALTER TABLE profile
 ADD COLUMN profile_mode TEXT NOT NULL DEFAULT 'capability'
 CHECK (profile_mode IN ('capability', 'workflow'));
 
+ALTER TABLE profile DROP COLUMN multi_select;
+
 CREATE TABLE workflow_profile_specifications (
     profile_id TEXT PRIMARY KEY,
     specification_revision INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    validation_notes TEXT,
+    avoid_rules TEXT,
     FOREIGN KEY (profile_id) REFERENCES profile (id) ON DELETE CASCADE
 );
 

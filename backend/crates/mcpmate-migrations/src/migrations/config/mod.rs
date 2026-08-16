@@ -6,8 +6,6 @@ mod v0010_create_capability_catalog;
 mod v0012_create_structured_server_transport;
 mod v0013_canonicalize_unrecognized_server_transport;
 mod v0014_create_workflow_profile_specification;
-mod v0015_remove_profile_multi_select;
-mod v0016_add_workflow_specification_guidance;
 
 use super::Migration;
 use anyhow::Result;
@@ -36,8 +34,6 @@ pub(crate) fn all() -> Vec<Migration> {
         v0012_create_structured_server_transport::migration(),
         v0013_canonicalize_unrecognized_server_transport::migration(),
         v0014_create_workflow_profile_specification::migration(),
-        v0015_remove_profile_multi_select::migration(),
-        v0016_add_workflow_specification_guidance::migration(),
     ]
 }
 

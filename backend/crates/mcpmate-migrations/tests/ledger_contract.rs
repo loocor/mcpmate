@@ -45,7 +45,7 @@ async fn preparation_applies_the_complete_config_stream_once() {
         .fetch_one(&pool)
         .await
         .expect("count applied config migrations");
-    assert_eq!(applied, 16);
+    assert_eq!(applied, 14);
 
     let second_backup = prepare_config_database(&pool, DatabaseSource::InMemory)
         .await

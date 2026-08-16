@@ -42,10 +42,20 @@ impl MigrationStep for CreateWorkflowProfileSpecification {
 }
 
 async fn verify_existing_storage(transaction: &mut Transaction<'_, Sqlite>) -> Result<()> {
-    for table in [
-        "workflow_profile_specifications",
-        "workflow_profile_steps",
-        "workflow_profile_step_bindings",
+    for (table, required_columns) in [
+        ("profile", &["profile_mode"][..]),
+        (
+            "workflow_profile_specifications",
+            &["profile_id", "specification_revision", "created_at", "updated_at"],
+        ),
+        (
+            "workflow_profile_steps",
+            &["profile_id", "step_index", "title", "description"],
+        ),
+        (
+            "workflow_profile_step_bindings",
+            &["profile_id", "step_index", "binding_index", "ref_id", "binding_policy"],
+        ),
     ] {
         let exists: bool =
             sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)")
@@ -55,6 +65,16 @@ async fn verify_existing_storage(transaction: &mut Transaction<'_, Sqlite>) -> R
                 .with_context(|| format!("verify Workflow specification table '{table}'"))?;
         if !exists {
             bail!("Workflow Profile mode exists but Workflow specification table '{table}' is missing");
+        }
+        let columns: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info(?)")
+            .bind(table)
+            .fetch_all(&mut **transaction)
+            .await
+            .with_context(|| format!("inspect Workflow specification table '{table}'"))?;
+        for column in required_columns {
+            if !columns.iter().any(|existing| existing == column) {
+                bail!("Workflow specification table '{table}' is missing required column '{column}'");
+            }
         }
     }
     Ok(())
