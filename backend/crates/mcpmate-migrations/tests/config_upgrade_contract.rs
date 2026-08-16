@@ -27,7 +27,7 @@ async fn upgrades_pre_generation_profile_storage() {
             id, name, description, type, role, multi_select, priority, is_active, is_default,
             created_at, updated_at
          ) VALUES (
-            'profile-1', 'Production', 'Preserved description', 'persistent', 'admin', 1, 7, 1, 1,
+            'profile-1', 'Production', 'Preserved description', 'persistent', 'admin', 0, 7, 1, 1,
             '2026-08-01T00:00:00Z', '2026-08-02T00:00:00Z'
          )",
     )
@@ -59,7 +59,6 @@ async fn upgrades_pre_generation_profile_storage() {
         String,
         String,
         String,
-        bool,
         i32,
         bool,
         bool,
@@ -67,7 +66,7 @@ async fn upgrades_pre_generation_profile_storage() {
         String,
         i64,
     ) = sqlx::query_as(
-        "SELECT id, name, description, type, role, multi_select, priority, is_active, is_default,
+        "SELECT id, name, description, type, role, priority, is_active, is_default,
                     created_at, updated_at, authoring_generation
              FROM profile WHERE id = 'profile-1'",
     )
@@ -82,7 +81,6 @@ async fn upgrades_pre_generation_profile_storage() {
             "Preserved description".into(),
             "persistent".into(),
             "admin".into(),
-            true,
             7,
             true,
             true,
@@ -91,6 +89,11 @@ async fn upgrades_pre_generation_profile_storage() {
             0,
         )
     );
+    let profile_mode: String = sqlx::query_scalar("SELECT profile_mode FROM profile WHERE id = 'profile-1'")
+        .fetch_one(&pool)
+        .await
+        .expect("load upgraded Profile mode");
+    assert_eq!(profile_mode, "capability");
     let relationship: (String, String, bool, String) = sqlx::query_as(
         "SELECT profile_id, server_id, enabled, new_ref_policy
          FROM profile_server_relationships WHERE profile_id = 'profile-1'",
@@ -109,7 +112,27 @@ async fn upgrades_pre_generation_profile_storage() {
     .fetch_one(&pool)
     .await
     .expect("load latest config migration");
-    assert_eq!(version, 13);
+    assert_eq!(version, 16);
+
+    let upgraded_columns: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('profile')")
+        .fetch_all(&pool)
+        .await
+        .expect("inspect upgraded Profile columns");
+    assert!(
+        !upgraded_columns.iter().any(|column| column == "multi_select"),
+        "legacy multi_select must be physically removed after upgrade"
+    );
+    let workflow_columns: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM pragma_table_info('workflow_profile_specifications')")
+            .fetch_all(&pool)
+            .await
+            .expect("inspect upgraded Workflow specification columns");
+    for column in ["validation_notes", "avoid_rules"] {
+        assert!(
+            workflow_columns.iter().any(|existing| existing == column),
+            "missing Workflow specification guidance column {column}"
+        );
+    }
 
     let backup_pool = file_support::pool(&backup).await;
     let backup_columns: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('profile')")
@@ -117,6 +140,7 @@ async fn upgrades_pre_generation_profile_storage() {
         .await
         .expect("inspect recovery backup Profile columns");
     assert!(!backup_columns.iter().any(|column| column == "authoring_generation"));
+    assert!(!backup_columns.iter().any(|column| column == "profile_mode"));
     let backup_profile: (String, String) =
         sqlx::query_as("SELECT name, description FROM profile WHERE id = 'profile-1'")
             .fetch_one(&backup_pool)

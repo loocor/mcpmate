@@ -1,11 +1,80 @@
 // Profile models for MCPMate
 // Contains data models for profile
 
+use std::{fmt, str::FromStr};
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
+use sqlx::{
+    Decode, Encode, FromRow, Sqlite, Type,
+    encode::IsNull,
+    error::BoxDynError,
+    sqlite::{SqliteArgumentValue, SqliteTypeInfo, SqliteValueRef},
+};
 
 use crate::common::profile::{ProfileRole, ProfileType};
+
+/// Runtime-isolated Profile authoring mode.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileMode {
+    #[default]
+    Capability,
+    Workflow,
+}
+
+impl ProfileMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Capability => "capability",
+            Self::Workflow => "workflow",
+        }
+    }
+}
+
+impl fmt::Display for ProfileMode {
+    fn fmt(
+        &self,
+        formatter: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ProfileMode {
+    type Err = &'static str;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "capability" => Ok(Self::Capability),
+            "workflow" => Ok(Self::Workflow),
+            _ => Err("invalid Profile mode"),
+        }
+    }
+}
+
+impl Type<Sqlite> for ProfileMode {
+    fn type_info() -> SqliteTypeInfo {
+        <String as Type<Sqlite>>::type_info()
+    }
+}
+
+impl<'q> Encode<'q, Sqlite> for ProfileMode {
+    fn encode_by_ref(
+        &self,
+        buf: &mut Vec<SqliteArgumentValue<'q>>,
+    ) -> Result<IsNull, BoxDynError> {
+        <String as Encode<Sqlite>>::encode_by_ref(&self.to_string(), buf)
+    }
+}
+
+impl<'r> Decode<'r, Sqlite> for ProfileMode {
+    fn decode(value: SqliteValueRef<'r>) -> Result<Self, BoxDynError> {
+        let value = <String as Decode<Sqlite>>::decode(value)?;
+        ProfileMode::from_str(&value)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error).into())
+    }
+}
 
 /// Profile model
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -21,8 +90,6 @@ pub struct Profile {
     pub profile_type: ProfileType,
     /// Role of the profile within the system lifecycle
     pub role: ProfileRole,
-    /// Whether multiple profile can be selected simultaneously
-    pub multi_select: bool,
     /// Priority of the profile (higher priority wins in case of conflicts)
     pub priority: i32,
     /// Whether the profile is currently active
@@ -31,6 +98,8 @@ pub struct Profile {
     pub is_default: bool,
     /// Monotonic generation for Profile authoring concurrency control.
     pub authoring_generation: i64,
+    /// Authoring mode that determines whether this Profile is a capability set or workflow specification.
+    pub profile_mode: ProfileMode,
     /// When the profile was created
     pub created_at: Option<DateTime<Utc>>,
     /// When the profile was last updated
@@ -49,11 +118,11 @@ impl Profile {
             description: None,
             profile_type,
             role: ProfileRole::User,
-            multi_select: false,
             priority: 0,
             is_active: false,
             is_default: false,
             authoring_generation: 0,
+            profile_mode: ProfileMode::Capability,
             created_at: None,
             updated_at: None,
         }
@@ -71,11 +140,11 @@ impl Profile {
             description,
             profile_type,
             role: ProfileRole::User,
-            multi_select: false,
             priority: 0,
             is_active: false,
             is_default: false,
             authoring_generation: 0,
+            profile_mode: ProfileMode::Capability,
             created_at: None,
             updated_at: None,
         }

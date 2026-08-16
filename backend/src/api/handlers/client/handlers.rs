@@ -1877,7 +1877,6 @@ mod tests {
         let mut profile = Profile::new(name.to_string(), ProfileType::Shared);
         profile.is_active = true;
         profile.is_default = true;
-        profile.multi_select = true;
         crate::test_helpers::insert_profile(pool, &profile).await
     }
 
@@ -2840,11 +2839,11 @@ mod tests {
             description: None,
             profile_type: ProfileType::Shared,
             role: ProfileRole::User,
-            multi_select: false,
             priority: 0,
             is_active: false,
             is_default: false,
             authoring_generation: 0,
+            profile_mode: crate::config::models::ProfileMode::Capability,
             created_at: None,
             updated_at: None,
         };

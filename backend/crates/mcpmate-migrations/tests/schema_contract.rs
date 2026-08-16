@@ -82,6 +82,9 @@ async fn creates_config_and_audit_schema_through_independent_ledgers() {
         "secure_store_secrets",
         "profile",
         "profile_server_relationships",
+        "workflow_profile_specifications",
+        "workflow_profile_steps",
+        "workflow_profile_step_bindings",
         "profile_capability_refs",
         "direct_exposure_refs",
         "direct_exposure_servers",
@@ -90,6 +93,13 @@ async fn creates_config_and_audit_schema_through_independent_ledgers() {
         "surface_manifests",
     ] {
         assert!(table_exists(&config, table).await, "missing config table {table}");
+    }
+    let workflow_columns = table_columns(&config, "workflow_profile_specifications").await;
+    for column in ["validation_notes", "avoid_rules"] {
+        assert!(
+            workflow_columns.contains(&column.to_string()),
+            "missing Workflow specification guidance column {column}"
+        );
     }
     for legacy in [
         "profile_tool",
@@ -677,7 +687,7 @@ async fn adopts_complete_epoch_four_capability_storage_without_losing_data() {
     .fetch_one(&pool)
     .await
     .expect("load adopted migration version");
-    assert_eq!(version, 13);
+    assert_eq!(version, 16);
 }
 
 #[tokio::test]

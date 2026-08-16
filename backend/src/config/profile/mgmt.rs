@@ -18,9 +18,9 @@ pub(crate) async fn normalize_default_anchor_profile(pool: &Pool<Sqlite>) -> Res
         .begin_with("BEGIN IMMEDIATE")
         .await
         .context("Failed to begin default anchor normalization")?;
-    let current = sqlx::query_as::<_, (String, String, String, bool, bool, bool, i64)>(
+    let current = sqlx::query_as::<_, (String, String, String, bool, bool, i64)>(
         r#"
-        SELECT id, type, role, multi_select, is_active, is_default, authoring_generation
+        SELECT id, type, role, is_active, is_default, authoring_generation
         FROM profile
         WHERE is_default = 1 OR role = 'default_anchor'
         ORDER BY CASE WHEN role = 'default_anchor' THEN 0 ELSE 1 END, created_at
@@ -31,10 +31,9 @@ pub(crate) async fn normalize_default_anchor_profile(pool: &Pool<Sqlite>) -> Res
     .await
     .context("Failed to load default anchor Profile")?;
 
-    let profile_id = if let Some((id, profile_type, role, multi_select, is_active, is_default, generation)) = current {
+    let profile_id = if let Some((id, profile_type, role, is_active, is_default, generation)) = current {
         let needs_update = profile_type != ProfileType::Shared.as_str()
             || role != DEFAULT_ANCHOR_ROLE.as_str()
-            || !multi_select
             || !is_active
             || !is_default;
         if needs_update {
@@ -43,7 +42,6 @@ pub(crate) async fn normalize_default_anchor_profile(pool: &Pool<Sqlite>) -> Res
                 UPDATE profile
                 SET type = 'shared',
                     role = 'default_anchor',
-                    multi_select = 1,
                     is_active = 1,
                     is_default = 1,
                     authoring_generation = authoring_generation + 1,
@@ -66,9 +64,9 @@ pub(crate) async fn normalize_default_anchor_profile(pool: &Pool<Sqlite>) -> Res
         sqlx::query(
             r#"
             INSERT INTO profile (
-                id, name, description, type, role, multi_select,
+                id, name, description, type, role,
                 priority, is_active, is_default, authoring_generation
-            ) VALUES (?, ?, ?, 'shared', 'default_anchor', 1, 0, 1, 1, 0)
+            ) VALUES (?, ?, ?, 'shared', 'default_anchor', 0, 1, 1, 0)
             "#,
         )
         .bind(&id)

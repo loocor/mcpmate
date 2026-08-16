@@ -393,8 +393,7 @@ impl ProfileSurfaceManagement {
         struct ActivationState {
             id: String,
             name: String,
-            multi_select: bool,
-            is_default: bool,
+            profile_mode: String,
             role: String,
             was_active: bool,
             is_active: bool,
@@ -402,7 +401,7 @@ impl ProfileSurfaceManagement {
         }
 
         let rows = sqlx::query(
-            "SELECT id, name, multi_select, is_default, role, is_active, authoring_generation FROM profile ORDER BY id",
+            "SELECT id, name, profile_mode, role, is_active, authoring_generation FROM profile ORDER BY id",
         )
         .fetch_all(&mut *transaction)
         .await?;
@@ -413,8 +412,7 @@ impl ProfileSurfaceManagement {
                 Ok(ActivationState {
                     id: row.try_get("id")?,
                     name: row.try_get("name")?,
-                    multi_select: row.try_get("multi_select")?,
-                    is_default: row.try_get("is_default")?,
+                    profile_mode: row.try_get("profile_mode")?,
                     role: row.try_get("role")?,
                     was_active: is_active,
                     is_active,
@@ -442,6 +440,12 @@ impl ProfileSurfaceManagement {
                     value: "default anchor cannot be deactivated".to_string(),
                 });
             }
+            if action == ProfileActivationAction::Activate && state.profile_mode == "workflow" {
+                return Err(CatalogError::InvalidSurfaceValue {
+                    field: "profile activation",
+                    value: "workflow Profiles cannot be activated before publication is supported".to_string(),
+                });
+            }
         }
 
         for profile_id in profile_ids {
@@ -449,13 +453,6 @@ impl ProfileSurfaceManagement {
                 .iter()
                 .position(|state| state.id == *profile_id)
                 .expect("requested Profiles were prevalidated");
-            if action == ProfileActivationAction::Activate && !states[target_index].multi_select {
-                for state in &mut states {
-                    if !state.is_default && state.id != *profile_id {
-                        state.is_active = false;
-                    }
-                }
-            }
             states[target_index].is_active = action == ProfileActivationAction::Activate;
         }
 

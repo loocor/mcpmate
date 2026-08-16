@@ -92,7 +92,6 @@ This project adopts a consistent “list/details/create/update/delete/manage” 
       "name": "string (optional)",
       "description": "string (optional)",
       "profile_type": "string (optional)",
-      "multi_select": boolean (optional),
       "priority": number (optional),
       "is_active": boolean (optional),
       "is_default": boolean (optional)

@@ -18,9 +18,9 @@ pub async fn insert_profile(
     sqlx::query(
         r#"
         INSERT INTO profile (
-            id, name, description, type, role, multi_select,
+            id, name, description, type, role,
             priority, is_active, is_default, authoring_generation
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&profile_id)
@@ -28,7 +28,6 @@ pub async fn insert_profile(
     .bind(&profile.description)
     .bind(profile.profile_type)
     .bind(profile.role)
-    .bind(profile.multi_select)
     .bind(profile.priority)
     .bind(profile.is_active)
     .bind(profile.is_default)

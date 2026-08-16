@@ -353,10 +353,10 @@ mod tests {
         sqlx::query(
             r#"
             INSERT INTO profile (
-                id, name, description, type, role, multi_select,
+                id, name, description, type, role,
                 priority, is_active, is_default, authoring_generation
             ) VALUES (
-                'default-anchor', 'Default', '', 'host_app', 'user', 0,
+                'default-anchor', 'Default', '', 'host_app', 'user',
                 0, 0, 1, 4
             )
             "#,
@@ -372,8 +372,8 @@ mod tests {
 
         database.initialize_defaults().await.unwrap();
 
-        let normalized: (String, String, bool, bool, bool, i64) = sqlx::query_as(
-            "SELECT type, role, multi_select, is_active, is_default, authoring_generation
+        let normalized: (String, String, bool, bool, i64) = sqlx::query_as(
+            "SELECT type, role, is_active, is_default, authoring_generation
              FROM profile WHERE id = 'default-anchor'",
         )
         .fetch_one(&pool)
@@ -381,7 +381,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             normalized,
-            ("shared".to_string(), "default_anchor".to_string(), true, true, true, 5)
+            ("shared".to_string(), "default_anchor".to_string(), true, true, 5)
         );
     }
 }

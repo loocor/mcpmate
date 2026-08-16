@@ -138,12 +138,12 @@ fn update_command(
         name: name.to_string(),
         description: Some(format!("{name} description")),
         profile_type: "shared".to_string(),
-        multi_select: true,
         priority: 5,
         is_active: true,
         is_default: false,
         server_ids: server_ids.iter().map(|id| (*id).to_string()).collect(),
         clone_from_id: None,
+        profile_mode: None,
     }
 }
 
@@ -258,12 +258,12 @@ async fn create_profile_metadata_servers_activation_and_default_are_atomic() {
                 name: "Atomic Create".to_string(),
                 description: Some("Must not be partially visible".to_string()),
                 profile_type: "scenario".to_string(),
-                multi_select: false,
                 priority: 9,
                 is_active: true,
                 is_default: false,
                 server_ids: vec!["server-a".to_string(), "missing".to_string()],
                 clone_from_id: None,
+                profile_mode: None,
             },
             "test",
         )
@@ -403,12 +403,12 @@ async fn clone_and_explicit_server_selection_commit_as_one_authoring_operation()
                 name: "Clone".to_string(),
                 description: None,
                 profile_type: "shared".to_string(),
-                multi_select: true,
                 priority: 0,
                 is_active: false,
                 is_default: false,
                 server_ids: vec!["server-a".to_string(), "server-a".to_string()],
                 clone_from_id: Some("profile-source".to_string()),
+                profile_mode: None,
             },
             "test",
         )
@@ -466,12 +466,12 @@ async fn create_rolls_back_profile_and_relationships_when_materialization_fails(
                 name: "Rolled Back Create".to_string(),
                 description: None,
                 profile_type: "shared".to_string(),
-                multi_select: true,
                 priority: 0,
                 is_active: true,
                 is_default: false,
                 server_ids: vec!["server-a".to_string()],
                 clone_from_id: None,
+                profile_mode: None,
             },
             "test",
         )
@@ -497,7 +497,7 @@ async fn save_returns_the_committed_runtime_effect_deltas() {
     add_server(&pool, "server-b", Vec::new()).await;
     add_profile(&pool, "profile-a", "Profile A", &[]).await;
     add_profile(&pool, "profile-b", "Profile B", &["server-a"]).await;
-    sqlx::query("UPDATE profile SET is_active = 0, multi_select = 0 WHERE id = 'profile-b'")
+    sqlx::query("UPDATE profile SET is_active = 0 WHERE id = 'profile-b'")
         .execute(&pool)
         .await
         .unwrap();
@@ -510,12 +510,12 @@ async fn save_returns_the_committed_runtime_effect_deltas() {
                 name: "Profile B".to_string(),
                 description: None,
                 profile_type: "shared".to_string(),
-                multi_select: false,
                 priority: 0,
                 is_active: true,
                 is_default: false,
                 server_ids: vec!["server-b".to_string()],
                 clone_from_id: None,
+                profile_mode: None,
             },
             "test",
         )
@@ -523,7 +523,11 @@ async fn save_returns_the_committed_runtime_effect_deltas() {
         .unwrap();
 
     assert_eq!(saved.activation_delta, Some(true));
-    assert_eq!(saved.automatically_deactivated_profile_ids, vec!["profile-a"]);
+    let active_profile_ids: Vec<String> = sqlx::query_scalar("SELECT id FROM profile WHERE is_active = 1 ORDER BY id")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(active_profile_ids, vec!["profile-a", "profile-b"]);
     assert_eq!(saved.server_relationship_deltas.len(), 2);
     assert_eq!(saved.server_relationship_deltas[0].server_id, "server-a");
     assert!(!saved.server_relationship_deltas[0].enabled);

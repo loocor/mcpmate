@@ -10,6 +10,10 @@ pub use self::{
     mgmt::{profile_delete, profile_details, profile_list, profile_manage},
     server::{server_manage, servers_list},
     token_estimate::token_estimate,
+    workflow::{
+        workflow_specification_delete, workflow_specification_preview, workflow_specification_save,
+        workflow_specification_view,
+    },
 };
 
 // Submodules
@@ -21,6 +25,7 @@ mod mgmt;
 mod server;
 mod token_estimate;
 mod unified_capability_query;
+mod workflow;
 
 pub(crate) async fn map_profile_management_error(
     pool: &sqlx::Pool<sqlx::Sqlite>,

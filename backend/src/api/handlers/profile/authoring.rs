@@ -18,6 +18,7 @@ pub async fn profile_authoring_view(
     Ok(Json(ProfileAuthoringViewResp::success(ProfileAuthoringViewData {
         profile: profile_to_response(&view.profile),
         server_ids: view.server_ids,
+        profile_mode: view.profile_mode,
     })))
 }
 
@@ -36,25 +37,28 @@ pub async fn profile_authoring_save(
                 name: request.name,
                 description: request.description,
                 profile_type: request.profile_type,
-                multi_select: request.multi_select,
                 priority: request.priority,
                 is_active: request.is_active,
                 is_default: request.is_default,
                 server_ids: request.server_ids,
                 clone_from_id: request.clone_from_id,
+                profile_mode: request.profile_mode,
             },
             "profile_management",
         )
         .await
         .map_err(profile_authoring_error)?;
 
-    publish_post_commit_runtime_effects(&saved);
-    if let Some(profile_service) = &state.profile_merge_service {
-        profile_service.invalidate_cache().await;
+    if saved.profile_mode == crate::config::models::ProfileMode::Capability {
+        publish_post_commit_runtime_effects(&saved);
+        if let Some(profile_service) = &state.profile_merge_service {
+            profile_service.invalidate_cache().await;
+        }
     }
     let profile_id = saved.profile.id.clone().unwrap_or_default();
     let response = Json(ProfileAuthoringSaveResp::success(ProfileAuthoringSaveData {
         profile: profile_to_response(&saved.profile),
+        profile_mode: saved.profile_mode,
     }));
     crate::audit::interceptor::emit_event(
         state.audit_service.as_ref(),
@@ -92,12 +96,6 @@ fn publish_post_commit_runtime_effects(saved: &crate::core::profile::authoring::
         crate::core::events::EventBus::global().publish(crate::core::events::Event::ProfileStatusChanged {
             profile_id: profile_id.to_string(),
             enabled,
-        });
-    }
-    for deactivated_profile_id in &saved.automatically_deactivated_profile_ids {
-        crate::core::events::EventBus::global().publish(crate::core::events::Event::ProfileStatusChanged {
-            profile_id: deactivated_profile_id.clone(),
-            enabled: false,
         });
     }
     for delta in &saved.server_relationship_deltas {
@@ -157,7 +155,6 @@ mod tests {
             server_ids: vec!["effect-server-b".to_string()],
             materializations: Vec::new(),
             activation_delta: Some(true),
-            automatically_deactivated_profile_ids: vec!["effect-profile-a".to_string()],
             server_relationship_deltas: vec![
                 ProfileServerRelationshipDelta {
                     server_id: "effect-server-a".to_string(),
@@ -170,6 +167,7 @@ mod tests {
                     enabled: true,
                 },
             ],
+            profile_mode: crate::config::models::ProfileMode::Capability,
         };
 
         super::publish_post_commit_runtime_effects(&saved);
@@ -193,14 +191,13 @@ mod tests {
         }
         assert_eq!(
             effects.len(),
-            4,
+            3,
             "each committed delta must publish exactly one runtime event"
         );
         assert_eq!(
             effects,
             vec![
                 "profile:effect-profile-b:true".to_string(),
-                "profile:effect-profile-a:false".to_string(),
                 "server:effect-profile-b:effect-server-a:false".to_string(),
                 "server:effect-profile-b:effect-server-b:true".to_string(),
             ]
