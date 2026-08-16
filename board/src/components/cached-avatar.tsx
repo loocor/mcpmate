@@ -50,6 +50,8 @@ export interface CachedAvatarProps {
 	alt?: string;
 	fallback: string;
 	className?: string;
+	fallbackClassName?: string;
+	imageClassName?: string;
 	size?: "sm" | "md" | "lg" | "xl";
 	shape?: "circle" | "rounded" | "square";
 	onLoad?: () => void;
@@ -67,8 +69,10 @@ const sizeClasses = {
 export function CachedAvatar({
     src,
     alt = "",
-    fallback,
-    className,
+	fallback,
+	className,
+	fallbackClassName,
+	imageClassName,
     size = "md",
     shape = "rounded",
     onLoad,
@@ -95,7 +99,9 @@ export function CachedAvatar({
 					onLoad={onLoad}
 					onError={onError}
 					fallback={
-                    <AvatarFallback className={cn(sizeClasses[size], fallbackShapeClass)}>
+					<AvatarFallback
+						className={cn(sizeClasses[size], fallbackShapeClass, fallbackClassName)}
+					>
                         {fallbackText}
                     </AvatarFallback>
                 }
@@ -104,10 +110,12 @@ export function CachedAvatar({
                         <div className="h-4 w-4 animate-spin rounded-[10px] border-2 border-slate-300 border-t-slate-600" />
                     </div>
                 }
-                className="h-full w-full"
+				className={cn("h-full w-full", imageClassName)}
             />
         ) : (
-                <AvatarFallback className={cn(sizeClasses[size], fallbackShapeClass)}>
+				<AvatarFallback
+					className={cn(sizeClasses[size], fallbackShapeClass, fallbackClassName)}
+				>
                     {fallbackText}
                 </AvatarFallback>
             )}

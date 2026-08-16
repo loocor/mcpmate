@@ -2268,6 +2268,12 @@ export function ProfileDetailPage() {
 															const serverLeadClassName = serverBulk.isBulkMode
 																? "flex items-center gap-3"
 																: "flex items-center gap-0";
+															const serverAvatarClassName = isSelected
+																? "border-primary bg-primary text-primary-foreground"
+																: "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900/40";
+															const serverTitleClassName = isSelected
+																? "truncate font-medium text-primary"
+																: "truncate font-medium text-slate-900 dark:text-slate-100";
 
 															return (
 																<CapsuleStripeListItem
@@ -2313,9 +2319,15 @@ export function ProfileDetailPage() {
 																					}
 																					fallback={avatarFallback}
 																					size="sm"
-																					shape="rounded"
-																					className="border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900/40"
-																				/>
+																shape="rounded"
+																className={`border ${serverAvatarClassName}`}
+																fallbackClassName={
+																	isSelected ? "bg-primary text-primary-foreground" : undefined
+																}
+																imageClassName={
+																	isSelected ? "m-1 h-6 w-6 rounded-md" : undefined
+																}
+															/>
 																			</div>
 																		}
 																		trailing={
@@ -2354,7 +2366,7 @@ export function ProfileDetailPage() {
 																	>
 																		<div className="min-w-0">
 																			<div
-																				className="truncate font-medium text-slate-900 dark:text-slate-100"
+																className={serverTitleClassName}
 																				title={server.name}
 																			>
 																				{server.name}

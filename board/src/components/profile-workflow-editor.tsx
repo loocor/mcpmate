@@ -287,11 +287,23 @@ export function ProfileWorkflowEditor({
 													className="flex min-w-0 flex-1 items-center gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
 													onClick={() => setSelectedStepIndex(index)}
 												>
-													<span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-sm font-semibold text-slate-600 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300">
-														{index + 1}
-													</span>
-													<span className="min-w-0">
-														<span className="block truncate font-medium text-slate-900 dark:text-slate-100">
+											<span
+												className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md border text-sm font-semibold ${
+													isSelected
+														? "border-primary bg-primary text-primary-foreground"
+														: "border-slate-200 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300"
+												}`}
+											>
+													{index + 1}
+											</span>
+											<span className="min-w-0">
+												<span
+													className={`block truncate font-medium ${
+														isSelected
+															? "text-primary"
+															: "text-slate-900 dark:text-slate-100"
+													}`}
+												>
 															{step.title || t("profiles:detail.workflow.untitledStep")}
 														</span>
 														{step.description ? (
