@@ -184,7 +184,7 @@ impl ProfileAuthoringService {
                 .as_deref()
                 .expect("Capability Profile save loaded the default configuration mode");
             let consumer_ids =
-                load_affected_consumer_ids(&mut transaction, &profile_id, activation_changed, &default_config_mode)
+                load_affected_consumer_ids(&mut transaction, &profile_id, activation_changed, default_config_mode)
                     .await?;
             let trigger = MaterializationTrigger::for_consumer(
                 "profile_authoring_save",
@@ -197,7 +197,7 @@ impl ProfileAuthoringService {
                     .compile_consumer_in_transaction_with_default(
                         &mut transaction,
                         &consumer_id,
-                        &default_config_mode,
+                        default_config_mode,
                         &trigger,
                     )
                     .await
