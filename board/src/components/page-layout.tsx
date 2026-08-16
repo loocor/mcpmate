@@ -108,13 +108,23 @@ export function StatsCard({
 				className={cn(
 					"min-w-0 pb-0",
 					action && "pr-14",
-					onHeaderClick && "cursor-pointer",
 				)}
-				onClick={onHeaderClick}
 			>
-				<CardTitle className="truncate text-sm" title={title}>
-					{title}
-				</CardTitle>
+				{onHeaderClick ? (
+					<button
+						type="button"
+						onClick={onHeaderClick}
+						className="block min-w-0 cursor-pointer text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+					>
+						<CardTitle className="truncate text-sm" title={title}>
+							{title}
+						</CardTitle>
+					</button>
+				) : (
+					<CardTitle className="truncate text-sm" title={title}>
+						{title}
+					</CardTitle>
+				)}
 				{action ? (
 					<div className="absolute right-3 top-3 flex gap-1 opacity-70 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
 						{action}

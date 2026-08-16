@@ -43,6 +43,7 @@ export function ProfileSuitGridCard({
 	const profileModeLabel = t(
 		`profiles:badges.${suit.profile_mode === "workflow" ? "workflow" : "capability"}`,
 	);
+	const isWorkflowProfile = suit.profile_mode === "workflow";
 
 	return (
 		<EntityCard
@@ -91,7 +92,7 @@ export function ProfileSuitGridCard({
 				<Switch
 					checked={suit.is_active}
 					onCheckedChange={onToggle}
-					disabled={isTogglePending || isDefaultAnchor}
+					disabled={isTogglePending || isDefaultAnchor || isWorkflowProfile}
 					onClick={(e) => e.stopPropagation()}
 				/>
 			}
