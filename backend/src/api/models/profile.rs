@@ -436,6 +436,8 @@ pub struct ProfileAuthoringSaveReq {
     pub clone_from_id: Option<String>,
     #[serde(default)]
     pub profile_mode: Option<ProfileMode>,
+    #[serde(default)]
+    pub workflow_specification: Option<WorkflowSpecificationSaveReq>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -444,7 +446,7 @@ pub struct ProfileAuthoringSaveData {
     pub profile_mode: ProfileMode,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WorkflowSpecificationSaveReq {
     pub profile_id: String,
     pub expected_specification_revision: Option<i64>,

@@ -157,19 +157,27 @@ impl WorkflowSpecificationService {
         &self,
         command: WorkflowSpecificationSaveCommand,
     ) -> Result<WorkflowSpecification, WorkflowSpecificationError> {
-        validate_save_command(&command)?;
         let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        verify_workflow_profile(&mut transaction, &command.profile_id).await?;
-        let available = available_capability_refs(&mut transaction).await?;
+        let specification = Self::save_in_transaction(&mut transaction, command).await?;
+        transaction.commit().await?;
+        Ok(specification)
+    }
+
+    pub(crate) async fn save_in_transaction(
+        transaction: &mut Transaction<'_, Sqlite>,
+        command: WorkflowSpecificationSaveCommand,
+    ) -> Result<WorkflowSpecification, WorkflowSpecificationError> {
+        validate_save_command(&command)?;
+        verify_workflow_profile(transaction, &command.profile_id).await?;
+        let available = available_capability_refs(transaction).await?;
         validate_bindings(&command.steps, &available)?;
 
-        let specification_revision = save_specification(&mut transaction, &command).await?;
-        replace_steps(&mut transaction, &command.profile_id, &command.steps, &available).await?;
-        let specification = load_specification(&mut transaction, &command.profile_id)
+        let specification_revision = save_specification(transaction, &command).await?;
+        replace_steps(transaction, &command.profile_id, &command.steps, &available).await?;
+        let specification = load_specification(transaction, &command.profile_id)
             .await?
             .expect("workflow specification exists after save");
         debug_assert_eq!(specification.specification_revision, specification_revision);
-        transaction.commit().await?;
         Ok(specification.into())
     }
 

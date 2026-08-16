@@ -4,7 +4,10 @@ use crate::api::models::profile::{
     ProfileAuthoringSaveData, ProfileAuthoringSaveReq, ProfileAuthoringSaveResp, ProfileAuthoringViewData,
     ProfileAuthoringViewResp, ProfileIdReq,
 };
-use crate::core::profile::authoring::{ProfileAuthoringCommand, ProfileAuthoringError, ProfileAuthoringService};
+use crate::core::profile::authoring::{
+    ProfileAuthoringCommand, ProfileAuthoringError, ProfileAuthoringService, WorkflowProfileAuthoringError,
+};
+use crate::core::profile::workflow::WorkflowSpecificationSaveCommand;
 
 pub async fn profile_authoring_view(
     State(state): State<Arc<AppState>>,
@@ -29,25 +32,42 @@ pub async fn profile_authoring_save(
     let started_at = std::time::Instant::now();
     let db = get_database(&state).await?;
     let is_create = request.id.is_none();
-    let saved = ProfileAuthoringService::new(db.pool.clone())
-        .save(
-            ProfileAuthoringCommand {
-                id: request.id,
-                expected_authoring_generation: request.expected_authoring_generation,
-                name: request.name,
-                description: request.description,
-                profile_type: request.profile_type,
-                priority: request.priority,
-                is_active: request.is_active,
-                is_default: request.is_default,
-                server_ids: request.server_ids,
-                clone_from_id: request.clone_from_id,
-                profile_mode: request.profile_mode,
-            },
-            "profile_management",
-        )
-        .await
-        .map_err(profile_authoring_error)?;
+    let workflow_specification = request
+        .workflow_specification
+        .map(|specification| WorkflowSpecificationSaveCommand {
+            profile_id: specification.profile_id,
+            expected_specification_revision: specification.expected_specification_revision,
+            validation_notes: specification.validation_notes,
+            avoid_rules: specification.avoid_rules,
+            steps: specification.steps,
+        });
+    let command = ProfileAuthoringCommand {
+        id: request.id,
+        expected_authoring_generation: request.expected_authoring_generation,
+        name: request.name,
+        description: request.description,
+        profile_type: request.profile_type,
+        priority: request.priority,
+        is_active: request.is_active,
+        is_default: request.is_default,
+        server_ids: request.server_ids,
+        clone_from_id: request.clone_from_id,
+        profile_mode: request.profile_mode,
+    };
+    let service = ProfileAuthoringService::new(db.pool.clone());
+    let saved = match workflow_specification {
+        Some(workflow_specification) => {
+            service
+                .save_with_workflow_specification(command, workflow_specification)
+                .await
+                .map_err(workflow_profile_authoring_error)?
+                .0
+        }
+        None => service
+            .save(command, "profile_management")
+            .await
+            .map_err(profile_authoring_error)?,
+    };
 
     if saved.profile_mode == crate::config::models::ProfileMode::Capability {
         publish_post_commit_runtime_effects(&saved);
@@ -105,6 +125,13 @@ fn publish_post_commit_runtime_effects(saved: &crate::core::profile::authoring::
             profile_id: profile_id.to_string(),
             enabled: delta.enabled,
         });
+    }
+}
+
+fn workflow_profile_authoring_error(error: WorkflowProfileAuthoringError) -> ApiError {
+    match error {
+        WorkflowProfileAuthoringError::Authoring(error) => profile_authoring_error(error),
+        WorkflowProfileAuthoringError::Workflow(error) => super::workflow::workflow_specification_error(error),
     }
 }
 

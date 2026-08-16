@@ -10,6 +10,9 @@ use crate::core::capability::management::ConsumerMaterialization;
 use crate::core::capability::materializer::{
     MaterializationCoordinator, MaterializationTrigger, SurfaceAuthoringLoader, load_default_config_mode,
 };
+use crate::core::profile::workflow::{
+    WorkflowSpecification, WorkflowSpecificationError, WorkflowSpecificationSaveCommand, WorkflowSpecificationService,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProfileAuthoringCommand {
@@ -66,6 +69,20 @@ pub enum ProfileAuthoringError {
     Persistence(#[source] CatalogError),
     #[error("Profile authoring database operation failed")]
     Database(#[source] sqlx::Error),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum WorkflowProfileAuthoringError {
+    #[error(transparent)]
+    Authoring(#[from] ProfileAuthoringError),
+    #[error(transparent)]
+    Workflow(#[from] WorkflowSpecificationError),
+}
+
+impl From<sqlx::Error> for WorkflowProfileAuthoringError {
+    fn from(error: sqlx::Error) -> Self {
+        Self::Authoring(error.into())
+    }
 }
 
 impl From<sqlx::Error> for ProfileAuthoringError {
@@ -127,6 +144,16 @@ impl ProfileAuthoringService {
             .into_iter()
             .collect();
         self.validate_targets(&command).await?;
+        let profile_mode_before_transaction = resolve_profile_mode_before_transaction(&self.pool, &command).await?;
+        let default_config_mode = if profile_mode_before_transaction == ProfileMode::Capability {
+            Some(
+                load_default_config_mode(&self.pool)
+                    .await
+                    .map_err(ProfileAuthoringError::Persistence)?,
+            )
+        } else {
+            None
+        };
 
         let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let profile_mode = resolve_profile_mode_in_transaction(&mut transaction, &command).await?;
@@ -153,9 +180,9 @@ impl ProfileAuthoringService {
         let activation_changed = previous_active != command.is_active;
         let materializations = if profile_mode == ProfileMode::Capability {
             let coordinator = MaterializationCoordinator::new(self.pool.clone());
-            let default_config_mode = load_default_config_mode(&self.pool)
-                .await
-                .map_err(ProfileAuthoringError::Persistence)?;
+            let default_config_mode = default_config_mode
+                .as_deref()
+                .expect("Capability Profile save loaded the default configuration mode");
             let consumer_ids =
                 load_affected_consumer_ids(&mut transaction, &profile_id, activation_changed, &default_config_mode)
                     .await?;
@@ -199,6 +226,80 @@ impl ProfileAuthoringService {
             server_relationship_deltas,
             profile_mode,
         })
+    }
+
+    pub async fn save_with_workflow_specification(
+        &self,
+        mut command: ProfileAuthoringCommand,
+        workflow_command: WorkflowSpecificationSaveCommand,
+    ) -> Result<(ProfileAuthoringSaveResult, WorkflowSpecification), WorkflowProfileAuthoringError> {
+        validate_command(&command)?;
+        let profile_id = command.id.as_deref().ok_or_else(|| {
+            ProfileAuthoringError::InvalidRequest(
+                "workflow specification can only be saved with an existing Profile".to_string(),
+            )
+        })?;
+        if workflow_command.profile_id != profile_id {
+            return Err(ProfileAuthoringError::InvalidRequest(
+                "workflow specification Profile ID must match the Profile authoring request".to_string(),
+            )
+            .into());
+        }
+        command.server_ids = command
+            .server_ids
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        self.validate_targets(&command).await?;
+
+        let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let profile_mode = resolve_profile_mode_in_transaction(&mut transaction, &command).await?;
+        validate_profile_mode_command(&command, profile_mode)?;
+        if profile_mode != ProfileMode::Workflow {
+            return Err(ProfileAuthoringError::InvalidRequest(
+                "workflow specification requires a Workflow Profile".to_string(),
+            )
+            .into());
+        }
+        validate_targets_in_transaction(&mut transaction, &command).await?;
+        let previous_relationships = load_server_relationships_in_transaction(&mut transaction, profile_id).await?;
+        let (profile_id, previous_active) = update_profile_cas(
+            &mut transaction,
+            profile_id,
+            command
+                .expected_authoring_generation
+                .expect("validated workflow Profile update has an authoring generation"),
+            &command,
+        )
+        .await?;
+        if let Some(source_profile_id) = command.clone_from_id.as_deref() {
+            clone_profile_intent(&mut transaction, &profile_id, source_profile_id).await?;
+        }
+        replace_server_relationships(&mut transaction, &profile_id, &command.server_ids).await?;
+        let specification =
+            WorkflowSpecificationService::save_in_transaction(&mut transaction, workflow_command).await?;
+
+        let profile = sqlx::query_as::<_, Profile>("SELECT * FROM profile WHERE id = ?")
+            .bind(&profile_id)
+            .fetch_one(&mut *transaction)
+            .await?;
+        let server_ids = load_server_ids_in_transaction(&mut transaction, &profile_id).await?;
+        let current_relationships = load_server_relationships_in_transaction(&mut transaction, &profile_id).await?;
+        let server_relationship_deltas = relationship_deltas(&previous_relationships, &current_relationships);
+        transaction.commit().await?;
+
+        Ok((
+            ProfileAuthoringSaveResult {
+                profile,
+                server_ids,
+                materializations: Vec::new(),
+                activation_delta: (previous_active != command.is_active).then_some(command.is_active),
+                server_relationship_deltas,
+                profile_mode,
+            },
+            specification,
+        ))
     }
 
     async fn validate_targets(
@@ -260,6 +361,13 @@ fn validate_profile_mode_command(
             "workflow Profiles must remain inactive and non-default".to_string(),
         ));
     }
+    if profile_mode == ProfileMode::Workflow
+        && command.description.as_deref().is_none_or(|description| description.trim().is_empty())
+    {
+        return Err(ProfileAuthoringError::InvalidRequest(
+            "workflow Profiles require a description".to_string(),
+        ));
+    }
     Ok(())
 }
 
@@ -279,6 +387,24 @@ async fn resolve_profile_mode_in_transaction(
         }
     }
     Ok(profile_mode)
+}
+
+async fn resolve_profile_mode_before_transaction(
+    pool: &Pool<Sqlite>,
+    command: &ProfileAuthoringCommand,
+) -> Result<ProfileMode, ProfileAuthoringError> {
+    let Some(profile_id) = command.id.as_deref() else {
+        return Ok(command.profile_mode.unwrap_or_default());
+    };
+    let profile_mode: Option<String> = sqlx::query_scalar("SELECT profile_mode FROM profile WHERE id = ?")
+        .bind(profile_id)
+        .fetch_optional(pool)
+        .await?;
+    let profile_mode = profile_mode.ok_or_else(|| ProfileAuthoringError::NotFound {
+        profile_id: profile_id.to_string(),
+    })?;
+    ProfileMode::from_str(&profile_mode)
+        .map_err(|_| ProfileAuthoringError::InvalidRequest(format!("invalid stored Profile mode '{profile_mode}'")))
 }
 
 async fn load_profile_mode_in_transaction(
@@ -661,15 +787,14 @@ mod tests {
     use super::{ProfileAuthoringCommand, ProfileAuthoringService};
 
     #[tokio::test]
-    async fn save_reads_default_mode_after_acquiring_the_authoring_write_lock() {
+    async fn save_with_one_connection_reads_default_mode_before_the_authoring_write_lock() {
         let directory = tempfile::tempdir().unwrap();
         let options = SqliteConnectOptions::new()
             .filename(directory.path().join("authoring.db"))
             .create_if_missing(true)
             .busy_timeout(Duration::from_secs(2));
         let pool = SqlitePoolOptions::new()
-            .min_connections(2)
-            .max_connections(2)
+            .max_connections(1)
             .connect_with(options)
             .await
             .unwrap();
@@ -691,47 +816,29 @@ mod tests {
         .await
         .unwrap();
 
-        let blocker = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
         let service = ProfileAuthoringService::new(pool.clone());
-        let save = tokio::spawn(async move {
-            service
-                .save(
-                    ProfileAuthoringCommand {
-                        id: None,
-                        expected_authoring_generation: None,
-                        name: "Mode Locked".to_string(),
-                        description: None,
-                        profile_type: "shared".to_string(),
-                        priority: 0,
-                        is_active: true,
-                        is_default: false,
-                        server_ids: Vec::new(),
-                        clone_from_id: None,
-                        profile_mode: None,
-                    },
-                    "test",
-                )
-                .await
-        });
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while pool.num_idle() != 0 {
-                tokio::task::yield_now().await;
-            }
-        })
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            service.save(
+                ProfileAuthoringCommand {
+                    id: None,
+                    expected_authoring_generation: None,
+                    name: "Mode Locked".to_string(),
+                    description: None,
+                    profile_type: "shared".to_string(),
+                    priority: 0,
+                    is_active: true,
+                    is_default: false,
+                    server_ids: Vec::new(),
+                    clone_from_id: None,
+                    profile_mode: None,
+                },
+                "test",
+            ),
+        )
         .await
-        .expect("authoring save should hold the second connection while waiting for the write lock");
-        crate::system::settings::set_default_config_mode(&pool, "hosted")
-            .await
-            .unwrap();
-        blocker.rollback().await.unwrap();
-
-        save.await.unwrap().unwrap();
-        let publications: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM surface_publications WHERE consumer_id = 'client-activated'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(publications, 1);
+        .expect("authoring save must not acquire a second pool connection while holding the write lock")
+        .unwrap();
     }
 
     #[tokio::test]

@@ -390,6 +390,67 @@ async fn workflow_specification_is_ordered_cas_aware_and_never_publishes_a_surfa
 }
 
 #[tokio::test]
+async fn workflow_authoring_and_specification_save_rolls_back_together() {
+    let pool = pool().await;
+    let ref_ids = add_server(&pool, "server-a", "Server A", 1).await;
+    let authoring = ProfileAuthoringService::new(pool.clone());
+    let created = authoring
+        .save(workflow_profile_command(), "test")
+        .await
+        .expect("create workflow Profile");
+    let profile_id = created.profile.id.clone().expect("created workflow Profile ID");
+    let workflow = WorkflowSpecificationService::new(pool.clone())
+        .save(WorkflowSpecificationSaveCommand {
+            profile_id: profile_id.clone(),
+            expected_specification_revision: None,
+            validation_notes: Some("Initial validation notes".to_string()),
+            avoid_rules: None,
+            steps: workflow_steps(&ref_ids),
+        })
+        .await
+        .expect("create workflow specification");
+
+    let mut command = workflow_profile_command();
+    command.id = Some(profile_id.clone());
+    command.expected_authoring_generation = Some(created.profile.authoring_generation);
+    command.name = "Changed workflow name".to_string();
+    let error = authoring
+        .save_with_workflow_specification(
+            command,
+            WorkflowSpecificationSaveCommand {
+                profile_id: profile_id.clone(),
+                expected_specification_revision: Some(9),
+                validation_notes: Some("Stale validation notes".to_string()),
+                avoid_rules: None,
+                steps: workflow_steps(&ref_ids),
+            },
+        )
+        .await
+        .expect_err("stale workflow specification must roll back authoring changes");
+    assert!(matches!(
+        error,
+        mcpmate::core::profile::authoring::WorkflowProfileAuthoringError::Workflow(
+            WorkflowSpecificationError::SpecificationChanged {
+                current_specification_revision: 0
+            }
+        )
+    ));
+
+    let persisted_name: String = sqlx::query_scalar("SELECT name FROM profile WHERE id = ?")
+        .bind(&profile_id)
+        .fetch_one(&pool)
+        .await
+        .expect("load persisted Profile name");
+    assert_eq!(persisted_name, "Investigate incident");
+    let persisted = WorkflowSpecificationService::new(pool.clone())
+        .view(&profile_id)
+        .await
+        .expect("load persisted workflow specification");
+    assert_eq!(persisted.specification_revision, workflow.specification_revision);
+    assert_eq!(persisted.validation_notes, workflow.validation_notes);
+}
+
+#[tokio::test]
 async fn workflow_binding_accepts_globally_enabled_servers_outside_the_profile() {
     let pool = pool().await;
     add_server(&pool, "server-a", "Server A", 1).await;
