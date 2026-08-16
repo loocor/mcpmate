@@ -29,6 +29,8 @@ pub async fn workflow_specification_save(
     State(state): State<Arc<AppState>>,
     Json(request): Json<WorkflowSpecificationSaveReq>,
 ) -> Result<Json<WorkflowSpecificationSaveResp>, ApiError> {
+    let started_at = std::time::Instant::now();
+    let profile_id = request.profile_id.clone();
     let db = get_database(&state).await?;
     let specification = WorkflowSpecificationService::new(db.pool.clone())
         .save(WorkflowSpecificationSaveCommand {
@@ -40,6 +42,21 @@ pub async fn workflow_specification_save(
         })
         .await
         .map_err(workflow_specification_error)?;
+    crate::audit::interceptor::emit_event(
+        state.audit_service.as_ref(),
+        crate::audit::interceptor::build_rest_event(
+            crate::audit::AuditAction::ProfileUpdate,
+            crate::audit::AuditStatus::Success,
+            "POST",
+            "/api/mcp/profile/workflow/specification/save",
+            Some(started_at.elapsed().as_millis() as u64),
+            None,
+            Some(profile_id),
+            None,
+            None,
+        ),
+    )
+    .await;
     Ok(Json(WorkflowSpecificationSaveResp::success(
         WorkflowSpecificationSaveData { specification },
     )))
@@ -49,15 +66,30 @@ pub async fn workflow_specification_delete(
     State(state): State<Arc<AppState>>,
     Json(request): Json<WorkflowSpecificationDeleteReq>,
 ) -> Result<Json<WorkflowSpecificationDeleteResp>, ApiError> {
+    let started_at = std::time::Instant::now();
+    let profile_id = request.profile_id.clone();
     let db = get_database(&state).await?;
     WorkflowSpecificationService::new(db.pool.clone())
         .delete(&request.profile_id, request.expected_specification_revision)
         .await
         .map_err(workflow_specification_error)?;
+    crate::audit::interceptor::emit_event(
+        state.audit_service.as_ref(),
+        crate::audit::interceptor::build_rest_event(
+            crate::audit::AuditAction::ProfileUpdate,
+            crate::audit::AuditStatus::Success,
+            "DELETE",
+            "/api/mcp/profile/workflow/specification/delete",
+            Some(started_at.elapsed().as_millis() as u64),
+            None,
+            Some(profile_id.clone()),
+            None,
+            None,
+        ),
+    )
+    .await;
     Ok(Json(WorkflowSpecificationDeleteResp::success(
-        WorkflowSpecificationDeleteData {
-            profile_id: request.profile_id,
-        },
+        WorkflowSpecificationDeleteData { profile_id },
     )))
 }
 
@@ -75,7 +107,7 @@ pub async fn workflow_specification_preview(
     )))
 }
 
-fn workflow_specification_error(error: WorkflowSpecificationError) -> ApiError {
+pub(super) fn workflow_specification_error(error: WorkflowSpecificationError) -> ApiError {
     match error {
         WorkflowSpecificationError::NotFound { profile_id } => {
             ApiError::NotFound(format!("Workflow Profile with ID '{profile_id}' not found"))
