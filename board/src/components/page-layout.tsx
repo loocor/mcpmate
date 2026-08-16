@@ -60,6 +60,7 @@ export interface StatsCardProps {
 	tone?: "default" | "warning" | "destructive";
 	tooltip?: string;
 	className?: string;
+	onHeaderClick?: () => void;
 }
 
 function statsCardToneClassName(tone: StatsCardProps["tone"]): string {
@@ -92,18 +93,28 @@ export function StatsCard({
 	tone = "default",
 	tooltip,
 	className = "",
+	onHeaderClick,
 }: StatsCardProps) {
 	return (
 		<Card
 			className={cn(
-				"group relative flex flex-col overflow-hidden transition-colors",
+				"group relative flex min-w-0 flex-col overflow-hidden transition-colors",
 				statsCardToneClassName(tone),
 				className,
 			)}
 			title={tooltip}
 		>
-			<CardHeader className={cn("pb-2", action && "pr-14")}>
-				<CardTitle className="text-sm">{title}</CardTitle>
+			<CardHeader
+				className={cn(
+					"min-w-0 pb-0",
+					action && "pr-14",
+					onHeaderClick && "cursor-pointer",
+				)}
+				onClick={onHeaderClick}
+			>
+				<CardTitle className="truncate text-sm" title={title}>
+					{title}
+				</CardTitle>
 				{action ? (
 					<div className="absolute right-3 top-3 flex gap-1 opacity-70 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
 						{action}
@@ -111,7 +122,9 @@ export function StatsCard({
 				) : null}
 			</CardHeader>
 			<CardContent className="min-w-0 pt-0">
-				<div className="text-2xl font-bold">{value}</div>
+				<div className="truncate text-2xl font-bold" title={String(value)}>
+					{value}
+				</div>
 				<CardDescription
 					className={cn(
 						"truncate",
