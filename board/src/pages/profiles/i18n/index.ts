@@ -455,7 +455,7 @@ export const profilesTranslations = {
 		badges: {
 			defaultAnchor: "默认锚点",
 			inDefault: "在默认中",
-			capability: "能力",
+			capability: "能力集",
 			workflow: "工作流",
 			priority: "优先级",
 			servers: "服务器",
@@ -522,7 +522,7 @@ export const profilesTranslations = {
 				description: "描述",
 				status: "状态",
 				cloneFrom: "克隆自",
-				profileMode: "Profile 模式",
+				profileMode: "模式",
 			},
 			placeholders: {
 				profileName: "输入配置集名称",
@@ -534,15 +534,14 @@ export const profilesTranslations = {
 				setAsDefault: "设为默认配置集",
 				none: "无",
 				noDescription: "无描述",
-				workflowInactive:
-					"Workflow Profile 必须保持非活跃，且不能设为默认 Profile。",
+				workflowInactive: "工作流模式必须保持非活跃，且不能设为默认配置集。",
 			},
 			profileModes: {
-				capability: "Capability Profile",
-				workflow: "Workflow Profile",
+				capability: "能力集",
+				workflow: "工作流",
 				capabilityDescription: "将服务器及其 MCP 能力组织为可复用的能力边界。",
 				workflowDescription: "从有序工作流开始，再为每个步骤绑定支撑能力。",
-				editLockedHint: "Profile 类型创建后不可切换。",
+				editLockedHint: "模式创建后不可切换。",
 			},
 			buttons: {
 				next: "下一步",
@@ -676,7 +675,7 @@ export const profilesTranslations = {
 				bindingPolicies: { metaOnDemand: "按需元数据", direct: "直接" },
 				boundary: {
 					title: "能力边界",
-					description: "只有当前 Profile 可用的能力才能支撑工作流步骤。",
+					description: "只有当前配置集可用的能力才能支撑工作流步骤。",
 					available: "可用能力",
 					metaDefault: "默认使用 Meta 按需访问；Direct Exposure 必须明确指定。",
 					directNotice:
