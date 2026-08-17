@@ -18,7 +18,17 @@ Use this reference when the short `validation` skill body is not enough.
 When MCP behavior changes:
 
 - Terminal A: run the backend service, usually with `cargo run` from `backend/`
-- Terminal B: use `bunx --bun @modelcontextprotocol/inspector --cli http://127.0.0.1:8000/mcp --transport http` with the list or call methods needed for the touched surface
+- Terminal B: in terminals that inherit a local proxy, explicitly clear both uppercase and lowercase proxy variables before starting the Inspector CLI. Use the managed query side-band required by MCPMate, for example:
+
+  ```bash
+  env -u HTTPS_PROXY -u HTTP_PROXY -u ALL_PROXY \
+    -u https_proxy -u http_proxy -u all_proxy \
+    npx @modelcontextprotocol/inspector \
+    --cli 'http://127.0.0.1:8000/mcp?client_id=inspector' \
+    --transport http --method tools/list --format json
+  ```
+
+  The Inspector process can otherwise inherit proxy settings even for loopback traffic. `client_id=inspector` supplies MCPMate's managed client context; do not omit it when validating the Default-mode endpoint.
 
 Scale the loop to the risk:
 

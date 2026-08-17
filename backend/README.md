@@ -176,8 +176,16 @@ cargo test --features interop
 cargo run
 
 # Terminal 2: Run inspector
-npx @modelcontextprotocol/inspector --cli http://127.0.0.1:8000/mcp --transport http --method tools/list
+env -u HTTPS_PROXY -u HTTP_PROXY -u ALL_PROXY \
+  -u https_proxy -u http_proxy -u all_proxy \
+  npx @modelcontextprotocol/inspector \
+  --cli 'http://127.0.0.1:8000/mcp?client_id=inspector' \
+  --transport http --method tools/list --format json
 ```
+
+MCPMate's Default-mode endpoint requires the managed `client_id` query
+side-band. Clear both cases of the proxy variables when launching Inspector so
+the CLI does not inherit a local proxy for loopback validation.
 
 ## Documentation
 
