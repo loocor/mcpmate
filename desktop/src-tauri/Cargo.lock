@@ -470,6 +470,7 @@ dependencies = [
  "matchit",
  "memchr",
  "mime",
+ "multer",
  "percent-encoding",
  "pin-project-lite",
  "rustversion",
@@ -1860,6 +1861,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
+]
+
+[[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]
@@ -3262,6 +3273,7 @@ dependencies = [
  "lru",
  "mcpmate-capability-store",
  "mcpmate-llm",
+ "mcpmate-migrations",
  "mcpmate-secrets",
  "nanoid",
  "num_cpus",
@@ -3311,6 +3323,7 @@ dependencies = [
  "chrono",
  "dashmap",
  "lru",
+ "mcpmate-migrations",
  "rmcp",
  "schemars 0.9.0",
  "serde",
@@ -3337,12 +3350,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "mcpmate-migrations"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "fs2",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "mcpmate-secrets"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
  "keyring",
+ "mcpmate-migrations",
  "ring",
  "serde",
  "serde_json",
@@ -3508,6 +3537,23 @@ dependencies = [
  "serde",
  "thiserror 2.0.16",
  "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "multer"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83e87776546dc87511aa5ee218730c92b666d7264ab6ed41f9d215af9cd5224b"
+dependencies = [
+ "bytes",
+ "encoding_rs",
+ "futures-util",
+ "http",
+ "httparse",
+ "memchr",
+ "mime",
+ "spin",
+ "version_check",
 ]
 
 [[package]]
@@ -7187,6 +7233,7 @@ version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4e6559d53cc268e5031cd8429d05415bc4cb4aefc4aa5d6cc35fbf5b924a1f8"
 dependencies = [
+ "async-compression",
  "bitflags 2.9.4",
  "bytes",
  "futures-core",

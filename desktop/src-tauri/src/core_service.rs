@@ -311,7 +311,9 @@ pub async fn probe_localhost_core_detail(api_port: u16) -> LocalhostCoreProbe {
                 ready,
                 failure: (!ready).then_some(LocalhostCoreProbeFailure {
                     status_code: Some(status.as_u16()),
-                    error: body.err().map(|err| format!("invalid core status response: {err}")),
+                    error: body
+                        .err()
+                        .map(|err| format!("invalid core status response: {err}")),
                 }),
             }
         }
@@ -325,7 +327,10 @@ pub async fn probe_localhost_core_detail(api_port: u16) -> LocalhostCoreProbe {
     }
 }
 
-fn is_localhost_core_status_response(status: reqwest::StatusCode, body: &serde_json::Value) -> bool {
+fn is_localhost_core_status_response(
+    status: reqwest::StatusCode,
+    body: &serde_json::Value,
+) -> bool {
     status.is_success()
         && body.get("product").and_then(serde_json::Value::as_str) == Some("mcpmate")
         && body.get("status").and_then(serde_json::Value::as_str) == Some("running")

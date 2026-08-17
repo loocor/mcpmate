@@ -16,7 +16,11 @@ use std::{
 use std::os::windows::process::CommandExt;
 
 use anyhow::{Context, Error, Result};
-use mcpmate::common::{MCPMatePaths, global_paths, set_global_paths};
+use mcpmate::{
+    common::{MCPMatePaths, global_paths, set_global_paths},
+    config::database::Database,
+    core::profile::materials::WorkflowMaterialsService,
+};
 use serde_json::json;
 use tauri::{
     Emitter, Manager, RunEvent, WindowEvent,
@@ -103,6 +107,13 @@ struct DesktopCoreSourceView {
     remote_available: bool,
     startup_failure: Option<DesktopCoreStartupFailureView>,
     startup_progress: Option<DesktopCoreStartupProgressView>,
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkflowMaterialFileAction {
+    Open,
+    Reveal,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -1320,6 +1331,7 @@ pub fn run() -> Result<()> {
         mcp_shell_read_core_source,
         mcp_shell_apply_core_source,
         mcp_shell_manage_local_core_service,
+        mcp_shell_open_workflow_material,
         mcp_shell_open_full_board,
         mcp_shell_take_pending_full_board_path,
         mcp_shell_show_operator_panel,
@@ -1511,6 +1523,55 @@ async fn mcp_shell_read_core_source(
         .map_err(|err| err.to_string())?;
     log_core_state_view("mcp_shell_read_core_source", &view);
     Ok(view)
+}
+
+#[tauri::command]
+async fn mcp_shell_open_workflow_material(
+    profile_id: String,
+    material_id: String,
+    action: WorkflowMaterialFileAction,
+) -> Result<(), String> {
+    let config = DesktopCoreSourceConfig::load(global_paths()).map_err(|err| {
+        warn!(error = %err, "Failed to read desktop core source for workflow material file action");
+        "Unable to access workflow material files".to_string()
+    })?;
+    if config.selected_source != DesktopCoreSourceKind::Localhost {
+        return Err("Workflow material file actions require the local core".to_string());
+    }
+
+    let database = Database::new().await.map_err(|err| {
+        warn!(error = %err, "Failed to open local database for workflow material file action");
+        "Unable to access workflow material files".to_string()
+    })?;
+    let materials = WorkflowMaterialsService::new(
+        database.pool.clone(),
+        database
+            .path
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join("skills"),
+    );
+    let path = materials
+        .resolve_local_file(&profile_id, &material_id)
+        .await
+        .map_err(|err| {
+            warn!(error = %err, profile_id, material_id, "Failed to resolve workflow material file");
+            "Workflow material file is unavailable".to_string()
+        });
+    database.close().await.map_err(|err| {
+        warn!(error = %err, "Failed to close local database after workflow material file action");
+        "Unable to access workflow material files".to_string()
+    })?;
+    let path = path?;
+
+    match action {
+        WorkflowMaterialFileAction::Open => tauri_plugin_opener::open_path(&path, None::<&str>),
+        WorkflowMaterialFileAction::Reveal => tauri_plugin_opener::reveal_item_in_dir(&path),
+    }
+    .map_err(|err| {
+        warn!(error = %err, "Failed to run workflow material file action");
+        "Unable to open workflow material file".to_string()
+    })
 }
 
 #[tauri::command]
