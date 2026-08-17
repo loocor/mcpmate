@@ -45,7 +45,29 @@ async fn preparation_applies_the_complete_config_stream_once() {
         .fetch_one(&pool)
         .await
         .expect("count applied config migrations");
-    assert_eq!(applied, 14);
+    assert_eq!(applied, 15);
+
+    for table in [
+        "workflow_profile_skills",
+        "workflow_profile_material_libraries",
+        "workflow_profile_materials",
+        "workflow_profile_step_materials",
+    ] {
+        assert!(table_exists(&pool, table).await, "{table} should be created by v0015");
+    }
+    for referenced_table in ["workflow_profile_steps", "workflow_profile_materials"] {
+        let foreign_key_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_foreign_key_list('workflow_profile_step_materials') WHERE \"table\" = ?",
+        )
+        .bind(referenced_table)
+        .fetch_one(&pool)
+        .await
+        .expect("inspect Step-Material foreign keys");
+        assert!(
+            foreign_key_count > 0,
+            "Step-Material rows must reference {referenced_table}"
+        );
+    }
 
     let second_backup = prepare_config_database(&pool, DatabaseSource::InMemory)
         .await
