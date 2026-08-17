@@ -6,6 +6,7 @@ use crate::api::models::profile::{
     ProfileAction, ProfileDeleteReq, ProfileDetailsData, ProfileDetailsReq, ProfileDetailsResp, ProfileListData,
     ProfileListReq, ProfileListResp, ProfileManageData, ProfileManageReq, ProfileManageResp, ProfileOperationResult,
 };
+use crate::core::profile::materials::WorkflowMaterialsService;
 use chrono::Utc;
 use serde_json::{Map, Value};
 
@@ -138,6 +139,16 @@ pub async fn profile_delete(
             return Err(super::map_profile_management_error(&db.pool, &request.id, Vec::new(), error).await);
         }
     };
+    if let Some(skill_name) = management.workflow_skill_name.clone() {
+        if let Err(error) = WorkflowMaterialsService::trash_managed_skill_directory(
+            db.path.parent().unwrap_or(std::path::Path::new(".")).join("skills"),
+            skill_name,
+        )
+        .await
+        {
+            tracing::warn!(error = %error, profile_id = %request.id, "Failed to move deleted workflow Skill directory to trash");
+        }
+    }
 
     let response = ProfileManageData {
         success_count: 1,

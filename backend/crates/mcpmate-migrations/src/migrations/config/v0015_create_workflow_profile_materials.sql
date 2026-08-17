@@ -1,7 +1,9 @@
 ALTER TABLE workflow_profile_steps ADD COLUMN step_id TEXT;
 
 UPDATE workflow_profile_steps
-SET step_id = lower(hex(randomblob(16)))
+SET step_id = lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-'
+    || lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-'
+    || lower(hex(randomblob(6)))
 WHERE step_id IS NULL;
 
 CREATE UNIQUE INDEX idx_workflow_profile_steps_step_id

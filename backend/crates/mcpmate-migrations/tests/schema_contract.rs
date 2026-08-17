@@ -70,6 +70,75 @@ async fn fresh_config_schema_contains_profile_authoring_generation() {
 }
 
 #[tokio::test]
+async fn upgrades_workflow_steps_with_standard_uuid_ids() {
+    let pool = memory_support::pool().await;
+    prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect("prepare current config database");
+    sqlx::raw_sql(
+        "DROP TABLE workflow_profile_step_materials;
+         DROP TABLE workflow_profile_materials;
+         DROP TABLE workflow_profile_material_libraries;
+         DROP TABLE workflow_profile_skills;
+         DROP TRIGGER validate_workflow_profile_step_id_insert;
+         DROP TRIGGER validate_workflow_profile_step_id_update;
+         DROP INDEX idx_workflow_profile_steps_step_id;
+         ALTER TABLE workflow_profile_steps DROP COLUMN step_id;",
+    )
+    .execute(&pool)
+    .await
+    .expect("restore the version fourteen workflow step schema");
+    rewind_config_to_version(&pool, 14).await;
+
+    sqlx::query(
+        "INSERT INTO profile (id, name, description, type, role, profile_mode)
+         VALUES ('workflow-profile', 'Workflow Profile', '', 'shared', 'user', 'workflow')",
+    )
+    .execute(&pool)
+    .await
+    .expect("insert Workflow Profile");
+    sqlx::query(
+        "INSERT INTO workflow_profile_specifications (profile_id)
+         VALUES ('workflow-profile')",
+    )
+    .execute(&pool)
+    .await
+    .expect("insert Workflow specification");
+    sqlx::query(
+        "INSERT INTO workflow_profile_steps (profile_id, step_index, title)
+         VALUES ('workflow-profile', 0, 'Existing step')",
+    )
+    .execute(&pool)
+    .await
+    .expect("insert pre-material Workflow step");
+
+    prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect("upgrade Workflow step storage");
+
+    let step_id: String = sqlx::query_scalar(
+        "SELECT step_id FROM workflow_profile_steps
+         WHERE profile_id = 'workflow-profile' AND step_index = 0",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("load upgraded Workflow step ID");
+    assert_eq!(step_id.len(), 36);
+    assert_eq!(
+        [8, 13, 18, 23]
+            .into_iter()
+            .map(|index| step_id.as_bytes()[index])
+            .collect::<Vec<_>>(),
+        vec![b'-'; 4]
+    );
+    assert!(
+        step_id
+            .chars()
+            .all(|character| character == '-' || character.is_ascii_hexdigit())
+    );
+}
+
+#[tokio::test]
 async fn creates_config_and_audit_schema_through_independent_ledgers() {
     let config = memory_support::pool().await;
     prepare_config_database(&config, DatabaseSource::InMemory)
@@ -687,7 +756,7 @@ async fn adopts_complete_epoch_four_capability_storage_without_losing_data() {
     .fetch_one(&pool)
     .await
     .expect("load adopted migration version");
-    assert_eq!(version, 14);
+    assert_eq!(version, 15);
 }
 
 #[tokio::test]

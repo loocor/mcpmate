@@ -503,11 +503,16 @@ async fn replace_steps(
         .execute(&mut **transaction)
         .await?;
     if step_ids.is_empty() {
+        let removed_step_materials = has_step_materials(transaction, profile_id, &step_ids).await?;
         sqlx::query("DELETE FROM workflow_profile_steps WHERE profile_id = ?")
             .bind(profile_id)
             .execute(&mut **transaction)
             .await?;
+        if removed_step_materials {
+            bump_materials_revision(transaction, profile_id).await?;
+        }
     } else {
+        let removed_step_materials = has_step_materials(transaction, profile_id, &step_ids).await?;
         let mut deleted_steps =
             sqlx::QueryBuilder::<Sqlite>::new("DELETE FROM workflow_profile_steps WHERE profile_id = ");
         deleted_steps.push_bind(profile_id).push(" AND step_id NOT IN (");
@@ -517,8 +522,17 @@ async fn replace_steps(
         }
         separated.push_unseparated(")");
         deleted_steps.build().execute(&mut **transaction).await?;
+        if removed_step_materials {
+            bump_materials_revision(transaction, profile_id).await?;
+        }
+        let temporary_index_offset: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(step_index), -1) + 1 FROM workflow_profile_steps WHERE profile_id = ?",
+        )
+        .bind(profile_id)
+        .fetch_one(&mut **transaction)
+        .await?;
         sqlx::query("UPDATE workflow_profile_steps SET step_index = step_index + ? WHERE profile_id = ?")
-            .bind(step_ids.len() as i64)
+            .bind(temporary_index_offset)
             .bind(profile_id)
             .execute(&mut **transaction)
             .await?;
@@ -558,6 +572,43 @@ async fn replace_steps(
             .await?;
         }
     }
+    Ok(())
+}
+
+async fn has_step_materials(
+    transaction: &mut Transaction<'_, Sqlite>,
+    profile_id: &str,
+    retained_step_ids: &[String],
+) -> Result<bool, WorkflowSpecificationError> {
+    let mut query = sqlx::QueryBuilder::<Sqlite>::new(
+        "SELECT EXISTS(SELECT 1 FROM workflow_profile_step_materials WHERE profile_id = ",
+    );
+    query.push_bind(profile_id);
+    if retained_step_ids.is_empty() {
+        query.push(")");
+    } else {
+        query.push(" AND step_id NOT IN (");
+        let mut separated = query.separated(", ");
+        for step_id in retained_step_ids {
+            separated.push_bind(step_id);
+        }
+        separated.push_unseparated("))");
+    }
+    Ok(query.build_query_scalar().fetch_one(&mut **transaction).await?)
+}
+
+async fn bump_materials_revision(
+    transaction: &mut Transaction<'_, Sqlite>,
+    profile_id: &str,
+) -> Result<(), WorkflowSpecificationError> {
+    sqlx::query(
+        "UPDATE workflow_profile_material_libraries \
+         SET materials_revision = materials_revision + 1, updated_at = CURRENT_TIMESTAMP \
+         WHERE profile_id = ?",
+    )
+    .bind(profile_id)
+    .execute(&mut **transaction)
+    .await?;
     Ok(())
 }
 

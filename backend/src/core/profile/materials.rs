@@ -201,10 +201,53 @@ impl StagedMaterialFile {
         Ok(())
     }
 
-    async fn discard(self) -> Result<(), WorkflowMaterialsError> {
-        tokio::fs::remove_file(self.staged).await?;
-        Ok(())
+    async fn move_to_trash(self) -> Result<(), WorkflowMaterialsError> {
+        move_managed_path_to_trash(self.staged).await
     }
+}
+
+pub(crate) async fn move_managed_path_to_trash(path: PathBuf) -> Result<(), WorkflowMaterialsError> {
+    tokio::task::spawn_blocking(move || {
+        #[cfg(target_os = "macos")]
+        {
+            use trash::macos::{DeleteMethod, TrashContextExtMacos};
+
+            let mut context = trash::TrashContext::new();
+            context.set_delete_method(DeleteMethod::NsFileManager);
+            context.delete(&path)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            trash::delete(&path)
+        }
+    })
+    .await
+    .map_err(|error| WorkflowMaterialsError::InvalidRequest(format!("failed to move managed path to trash: {error}")))?
+    .map_err(|error| WorkflowMaterialsError::InvalidRequest(format!("failed to move managed path to trash: {error}")))
+}
+
+async fn trash_staged_file(
+    staged_file: Option<StagedMaterialFile>,
+    profile_id: &str,
+    material_id: &str,
+) {
+    if let Some(staged_file) = staged_file {
+        if let Err(error) = staged_file.move_to_trash().await {
+            tracing::warn!(
+                %error,
+                %profile_id,
+                %material_id,
+                "Failed to move committed workflow material file to trash"
+            );
+        }
+    }
+}
+
+async fn restore_staged_file(staged_file: Option<StagedMaterialFile>) -> Result<(), WorkflowMaterialsError> {
+    if let Some(staged_file) = staged_file {
+        staged_file.restore().await?;
+    }
+    Ok(())
 }
 
 impl WorkflowMaterialsService {
@@ -219,17 +262,37 @@ impl WorkflowMaterialsService {
         validate_skill_name(skill_name)
     }
 
+    pub async fn trash_managed_skill_directory(
+        skills_root: PathBuf,
+        skill_name: String,
+    ) -> Result<(), WorkflowMaterialsError> {
+        validate_skill_name(&skill_name)?;
+        ensure_existing_directory_without_symlink(&skills_root).await?;
+        let directory = skills_root.join(skill_name);
+        ensure_existing_directory_without_symlink(&directory).await?;
+        move_managed_path_to_trash(directory).await
+    }
+
     pub async fn view(
         &self,
         profile_id: &str,
     ) -> Result<WorkflowMaterialsView, WorkflowMaterialsError> {
         let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         verify_workflow_profile(&mut transaction, profile_id).await?;
-        let skill_name = ensure_skill_name(&mut transaction, profile_id).await?;
+        ensure_skill_name(&mut transaction, profile_id).await?;
         ensure_material_library(&mut transaction, profile_id).await?;
         transaction.commit().await?;
+
+        let mut read_transaction = self.pool.begin().await?;
+        let skill_name: String =
+            sqlx::query_scalar("SELECT skill_name FROM workflow_profile_skills WHERE profile_id = ?")
+                .bind(profile_id)
+                .fetch_one(&mut *read_transaction)
+                .await?;
         self.ensure_skill_directory(&skill_name).await?;
-        self.load_view(profile_id, skill_name).await
+        let view = self.load_view_in_transaction(&mut read_transaction, profile_id).await?;
+        read_transaction.commit().await?;
+        Ok(view)
     }
 
     pub async fn set_skill_name(
@@ -332,7 +395,8 @@ impl WorkflowMaterialsService {
             }
         };
         self.ensure_skill_directory(&skill_name).await?;
-        let staged_previous = if material.kind == WorkflowMaterialKind::MarkdownFile {
+        let replaces_previous_file = previous_relative_path.as_deref() != material.relative_path.as_deref();
+        let staged_previous = if material.kind == WorkflowMaterialKind::MarkdownFile || replaces_previous_file {
             if let Some(path) = previous_relative_path.as_deref() {
                 self.stage_material_file(&skill_name, path).await?
             } else {
@@ -356,7 +420,19 @@ impl WorkflowMaterialsService {
                 return Err(error);
             }
         }
-        bump_materials_revision(&mut transaction, &command.profile_id).await?;
+        if let Err(error) = bump_materials_revision(&mut transaction, &command.profile_id).await {
+            if material.kind == WorkflowMaterialKind::MarkdownFile {
+                self.rollback_written_file(
+                    &skill_name,
+                    material.relative_path.as_deref().expect("markdown path"),
+                    staged_previous,
+                )
+                .await?;
+            } else {
+                restore_staged_file(staged_previous).await?;
+            }
+            return Err(error);
+        }
         if let Err(error) = transaction.commit().await {
             if material.kind == WorkflowMaterialKind::MarkdownFile {
                 self.rollback_written_file(
@@ -365,17 +441,12 @@ impl WorkflowMaterialsService {
                     staged_previous,
                 )
                 .await?;
+            } else {
+                restore_staged_file(staged_previous).await?;
             }
             return Err(error.into());
         }
-        if let Some(staged_file) = staged_previous {
-            staged_file.discard().await?;
-        }
-        if previous_relative_path.as_deref() != material.relative_path.as_deref() {
-            if let Some(path) = previous_relative_path.as_deref() {
-                self.remove_material_file(&skill_name, path).await?;
-            }
-        }
+        trash_staged_file(staged_previous, &command.profile_id, &material_id).await;
         self.load_material(&material_id).await
     }
 
@@ -463,15 +534,17 @@ impl WorkflowMaterialsService {
             }
             return Err(error);
         }
-        bump_materials_revision(&mut transaction, profile_id).await?;
+        if let Err(error) = bump_materials_revision(&mut transaction, profile_id).await {
+            self.rollback_written_file(&skill_name, &relative_path, staged_previous)
+                .await?;
+            return Err(error);
+        }
         if let Err(error) = transaction.commit().await {
             self.rollback_written_file(&skill_name, &relative_path, staged_previous)
                 .await?;
             return Err(error.into());
         }
-        if let Some(staged_file) = staged_previous {
-            staged_file.discard().await?;
-        }
+        trash_staged_file(staged_previous, profile_id, &material_id).await;
         self.load_material(&material_id).await
     }
 
@@ -512,9 +585,7 @@ impl WorkflowMaterialsService {
             }
             return Err(error.into());
         }
-        if let Some(staged_file) = staged_file {
-            staged_file.discard().await?;
-        }
+        trash_staged_file(staged_file, profile_id, material_id).await;
         Ok(())
     }
 
@@ -601,8 +672,14 @@ impl WorkflowMaterialsService {
                 "material ordering must contain every profile Material exactly once".to_string(),
             ));
         }
+        let temporary_ordinal_offset: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(ordinal), -1) + 1 FROM workflow_profile_materials WHERE profile_id = ?",
+        )
+        .bind(&command.profile_id)
+        .fetch_one(&mut *transaction)
+        .await?;
         sqlx::query("UPDATE workflow_profile_materials SET ordinal = ordinal + ? WHERE profile_id = ?")
-            .bind(material_ids.len() as i64)
+            .bind(temporary_ordinal_offset)
             .bind(&command.profile_id)
             .execute(&mut *transaction)
             .await?;
@@ -684,25 +761,30 @@ impl WorkflowMaterialsService {
         Ok(path)
     }
 
-    async fn load_view(
+    async fn load_view_in_transaction(
         &self,
+        transaction: &mut Transaction<'_, Sqlite>,
         profile_id: &str,
-        skill_name: String,
     ) -> Result<WorkflowMaterialsView, WorkflowMaterialsError> {
+        let skill_name: String =
+            sqlx::query_scalar("SELECT skill_name FROM workflow_profile_skills WHERE profile_id = ?")
+                .bind(profile_id)
+                .fetch_one(&mut **transaction)
+                .await?;
         let rows = sqlx::query_as::<_, MaterialRow>("SELECT material_id, profile_id, material_revision, ordinal, title, kind, external_url, relative_path, original_filename, file_size, checksum, markdown_content, created_at, updated_at FROM workflow_profile_materials WHERE profile_id = ? ORDER BY ordinal")
-            .bind(profile_id).fetch_all(&self.pool).await?;
-        let materials = self.hydrate_materials(rows).await?;
+            .bind(profile_id).fetch_all(&mut **transaction).await?;
+        let materials = self.hydrate_materials_in_transaction(transaction, rows).await?;
         let materials_revision: i64 = sqlx::query_scalar(
             "SELECT materials_revision FROM workflow_profile_material_libraries WHERE profile_id = ?",
         )
         .bind(profile_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut **transaction)
         .await?;
         let step_rows: Vec<(String, String)> = sqlx::query_as(
             "SELECT step_id, material_id FROM workflow_profile_step_materials WHERE profile_id = ? ORDER BY step_id, ordinal",
         )
         .bind(profile_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut **transaction)
         .await?;
         let mut step_material_ids = BTreeMap::new();
         for (step_id, material_id) in step_rows {
@@ -746,6 +828,37 @@ impl WorkflowMaterialsService {
             }
             separated.push_unseparated(") ORDER BY ordinal");
             query.build_query_as().fetch_all(&self.pool).await?
+        };
+        let mut references = BTreeMap::<String, Vec<String>>::new();
+        for (material_id, step_id) in refs {
+            references.entry(material_id).or_default().push(step_id);
+        }
+        rows.into_iter()
+            .map(|row| {
+                let material_id = row.material_id.clone();
+                row.into_material(references.remove(&material_id).unwrap_or_default())
+            })
+            .collect()
+    }
+
+    async fn hydrate_materials_in_transaction(
+        &self,
+        transaction: &mut Transaction<'_, Sqlite>,
+        rows: Vec<MaterialRow>,
+    ) -> Result<Vec<WorkflowMaterial>, WorkflowMaterialsError> {
+        let ids: Vec<String> = rows.iter().map(|row| row.material_id.clone()).collect();
+        let refs: Vec<(String, String)> = if ids.is_empty() {
+            Vec::new()
+        } else {
+            let mut query = sqlx::QueryBuilder::<Sqlite>::new(
+                "SELECT material_id, step_id FROM workflow_profile_step_materials WHERE material_id IN (",
+            );
+            let mut separated = query.separated(", ");
+            for id in &ids {
+                separated.push_bind(id);
+            }
+            separated.push_unseparated(") ORDER BY ordinal");
+            query.build_query_as().fetch_all(&mut **transaction).await?
         };
         let mut references = BTreeMap::<String, Vec<String>>::new();
         for (material_id, step_id) in refs {
@@ -861,9 +974,12 @@ impl WorkflowMaterialsService {
         let destination = self.skills_root.join(skill_name);
         match tokio::fs::symlink_metadata(&destination).await {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => self.ensure_skill_directory(skill_name).await,
-            Ok(_) => Err(WorkflowMaterialsError::InvalidRequest(
-                "requested Skill directory already exists".to_string(),
-            )),
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                Err(WorkflowMaterialsError::InvalidRequest(
+                    "requested Skill directory is not a regular directory".to_string(),
+                ))
+            }
+            Ok(_) => self.ensure_skill_directory(skill_name).await,
             Err(error) => Err(error.into()),
         }
     }
@@ -1400,11 +1516,7 @@ fn material_stem_fallback(material_id: &str) -> String {
 
 fn filename_stem(filename: &str) -> Option<String> {
     let stem = Path::new(filename).file_stem()?.to_str()?.trim();
-    if stem.is_empty() {
-        None
-    } else {
-        Some(stem.to_string())
-    }
+    if stem.is_empty() { None } else { Some(stem.to_string()) }
 }
 
 fn leaf_stem_from_relative_path(relative_path: &str) -> Option<String> {
@@ -1424,10 +1536,7 @@ fn normalize_material_stem(raw: &str) -> String {
             last_was_separator = false;
             continue;
         }
-        if matches!(character, '.' | '-' | '_' | ' ' | '\t' | '\n' | '\r')
-            && !stem.is_empty()
-            && !last_was_separator
-        {
+        if matches!(character, '.' | '-' | '_' | ' ' | '\t' | '\n' | '\r') && !stem.is_empty() && !last_was_separator {
             stem.push('-');
             last_was_separator = true;
         }
@@ -1620,20 +1729,9 @@ async fn resolve_replace_material_path(
             .map(|value| normalize_material_stem(&value))
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| {
-                preferred_material_stem(
-                    filename_stem(original_filename).as_deref(),
-                    Some(title),
-                    material_id,
-                )
+                preferred_material_stem(filename_stem(original_filename).as_deref(), Some(title), material_id)
             });
-        return allocate_storage_relative_path(
-            transaction,
-            profile_id,
-            &stem,
-            extension,
-            Some(material_id),
-        )
-        .await;
+        return allocate_storage_relative_path(transaction, profile_id, &stem, extension, Some(material_id)).await;
     }
     allocate_created_material_path(
         transaction,
@@ -1882,17 +1980,28 @@ mod tests {
 
     #[test]
     fn material_stems_prefer_readable_names_and_keep_unicode() {
-        assert_eq!(normalize_material_stem("Research Brief (final)"), "research-brief-final");
+        assert_eq!(
+            normalize_material_stem("Research Brief (final)"),
+            "research-brief-final"
+        );
         assert_eq!(normalize_material_stem("  API_Auth Notes  "), "api-auth-notes");
         assert_eq!(normalize_material_stem("客户调研纪要 v2"), "客户调研纪要-v2");
         assert_eq!(normalize_material_stem("!!!"), "");
         assert_eq!(normalize_material_stem("Skill"), "");
         assert_eq!(
-            preferred_material_stem(filename_stem("evidence.md").as_deref(), Some("Ignored Title"), "9e742db7-2d52-4c02-91fb-25c8c86a1495"),
+            preferred_material_stem(
+                filename_stem("evidence.md").as_deref(),
+                Some("Ignored Title"),
+                "9e742db7-2d52-4c02-91fb-25c8c86a1495"
+            ),
             "evidence"
         );
         assert_eq!(
-            preferred_material_stem(filename_stem("Research Brief (final).MD").as_deref(), Some("Title"), "9e742db7-2d52-4c02-91fb-25c8c86a1495"),
+            preferred_material_stem(
+                filename_stem("Research Brief (final).MD").as_deref(),
+                Some("Title"),
+                "9e742db7-2d52-4c02-91fb-25c8c86a1495"
+            ),
             "research-brief-final"
         );
         assert_eq!(
@@ -2067,20 +2176,13 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .unwrap();
-        sqlx::query("CREATE TABLE workflow_profile_materials (material_id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, material_revision INTEGER NOT NULL, ordinal INTEGER NOT NULL, title TEXT NOT NULL, kind TEXT NOT NULL, external_url TEXT, relative_path TEXT, original_filename TEXT, file_size INTEGER, checksum TEXT, markdown_content TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
-            .execute(&pool)
-            .await
-            .unwrap();
+        crate::test_helpers::prepare_config_database(&pool).await;
         sqlx::query(
-            "CREATE TABLE workflow_profile_step_materials (                profile_id TEXT NOT NULL,                 step_id TEXT NOT NULL,                 material_id TEXT NOT NULL,                 ordinal INTEGER NOT NULL            )",
+            "INSERT INTO profile (id, name, description, type, role, profile_mode) VALUES ('profile-a', 'Profile A', '', 'shared', 'user', 'workflow')",
         )
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("CREATE TABLE workflow_profile_skills (profile_id TEXT PRIMARY KEY, skill_name TEXT NOT NULL)")
-            .execute(&pool)
-            .await
-            .unwrap();
+        .execute(&pool)
+        .await
+        .unwrap();
         sqlx::query(
             "INSERT INTO workflow_profile_skills (profile_id, skill_name) VALUES ('profile-a', 'workflow-test')",
         )
@@ -2126,5 +2228,66 @@ mod tests {
                 Err(WorkflowMaterialsError::InvalidRequest(_))
             ));
         }
+    }
+
+    #[tokio::test]
+    async fn converting_a_markdown_material_requires_its_previous_file_to_be_safe_before_commit() {
+        let directory = tempfile::tempdir().unwrap();
+        let skills_root = directory.path().join("skills");
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        crate::test_helpers::prepare_config_database(&pool).await;
+        sqlx::query(
+            "INSERT INTO profile (id, name, description, type, role, profile_mode) VALUES ('profile-a', 'Profile A', '', 'shared', 'user', 'workflow')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let service = WorkflowMaterialsService::new(pool.clone(), skills_root.clone());
+        let initial = service.view("profile-a").await.unwrap();
+        let markdown = service
+            .save(WorkflowMaterialSaveCommand {
+                profile_id: "profile-a".to_string(),
+                material_id: None,
+                expected_material_revision: None,
+                expected_materials_revision: initial.materials_revision,
+                title: "Guide".to_string(),
+                kind: WorkflowMaterialKind::MarkdownFile,
+                external_url: None,
+                markdown_content: Some("# Guide".to_string()),
+            })
+            .await
+            .unwrap();
+        let path = skills_root
+            .join(initial.skill_name)
+            .join(markdown.relative_path.as_deref().expect("Markdown material path"));
+        tokio::fs::remove_file(&path).await.unwrap();
+        tokio::fs::create_dir(&path).await.unwrap();
+
+        let result = service
+            .save(WorkflowMaterialSaveCommand {
+                profile_id: "profile-a".to_string(),
+                material_id: Some(markdown.material_id.clone()),
+                expected_material_revision: Some(markdown.material_revision),
+                expected_materials_revision: initial.materials_revision + 1,
+                title: "Guide".to_string(),
+                kind: WorkflowMaterialKind::ExternalUrl,
+                external_url: Some("https://example.com/guide".to_string()),
+                markdown_content: None,
+            })
+            .await;
+
+        assert!(matches!(result, Err(WorkflowMaterialsError::InvalidRequest(_))));
+        let stored_kind: String =
+            sqlx::query_scalar("SELECT kind FROM workflow_profile_materials WHERE material_id = ?")
+                .bind(markdown.material_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(stored_kind, "markdown_file");
     }
 }

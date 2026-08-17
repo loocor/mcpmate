@@ -556,7 +556,7 @@ export function ProfileFormDrawer({
 		if (isWorkflowProfile && !isValidSkillName(formData.skill_name.trim())) {
 			notifyError(
 				t("profiles:form.messages.validationFailed", { defaultValue: "Validation failed" }),
-				"Skill name must use lowercase letters, numbers, and single hyphens only",
+				t("profiles:form.messages.skillNameInvalid"),
 			);
 			return;
 		}
@@ -1036,19 +1036,19 @@ export function ProfileFormDrawer({
 											htmlFor={skillNameId}
 											className="flex w-32 items-center gap-1 pt-2 text-sm font-medium text-slate-600 dark:text-slate-300"
 										>
-											Skill name *
+												{t("profiles:form.fields.skillName")}
 											<TooltipProvider delayDuration={200}>
 												<Tooltip>
 													<TooltipTrigger asChild>
 														<span
 															className="inline-flex cursor-help text-muted-foreground"
-															aria-label="Skill name help"
+														aria-label={t("profiles:form.fields.skillNameHelp")}
 														>
 															<HelpCircle className="size-3.5" />
 														</span>
 													</TooltipTrigger>
 													<TooltipContent side="right" className="max-w-xs">
-														Used for the Skill directory and SKILL.md name.
+														{t("profiles:form.fields.skillNameHelp")}
 													</TooltipContent>
 												</Tooltip>
 											</TooltipProvider>
@@ -1061,7 +1061,7 @@ export function ProfileFormDrawer({
 													skillNameTouchedRef.current = true;
 													setFormData((prev) => ({ ...prev, skill_name: e.target.value }));
 												}}
-												placeholder="lowercase letters, numbers, and hyphens only"
+											placeholder={t("profiles:form.placeholders.skillName")}
 												maxLength={64}
 												pattern="[a-z0-9]+(-[a-z0-9]+)*"
 												aria-invalid={

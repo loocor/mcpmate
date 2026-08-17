@@ -30,7 +30,7 @@ import {
   type WorkflowCapabilityOption,
   type WorkflowStepDraft,
 } from "../lib/profile-workflow-specification";
-import type { WorkflowBindingPolicy } from "../lib/types";
+import type { WorkflowBindingPolicy, WorkflowMaterialsView } from "../lib/types";
 import CapabilityCombobox from "./capability-combobox";
 import {
   ProfileSurfaceMetrics,
@@ -112,7 +112,9 @@ export function ProfileWorkflowEditor({
   const [newStep, setNewStep] = useState<WorkflowStepDraft>(
     createEmptyWorkflowStep,
   );
-  const [draftMaterialIds, setDraftMaterialIds] = useState<string[]>([]);
+  const [draftMaterialIdsByStepId, setDraftMaterialIdsByStepId] = useState<
+    Record<string, string[]>
+  >({});
   const [draggedStepIndex, setDraggedStepIndex] = useState<number | null>(null);
   const [materialPickerOpen, setMaterialPickerOpen] = useState(false);
   const [materialPickerQuery, setMaterialPickerQuery] = useState("");
@@ -158,7 +160,7 @@ export function ProfileWorkflowEditor({
       notifyError(
         error instanceof Error
           ? error.message
-          : "Failed to save step materials",
+          : t("profiles:detail.workflow.materials.saveStepMaterialsFailed"),
       ),
   });
   useEffect(() => {
@@ -167,7 +169,7 @@ export function ProfileWorkflowEditor({
     setSteps([]);
     setSelectedStepIndex(null);
     setNewStep(createEmptyWorkflowStep());
-    setDraftMaterialIds([]);
+    setDraftMaterialIdsByStepId({});
   }, [profileId]);
 
   useEffect(() => {
@@ -315,14 +317,21 @@ export function ProfileWorkflowEditor({
     )
     : null;
   const editingStepMaterialIds = selectedStepIsUnsaved
-    ? draftMaterialIds
+    ? (selectedStep.step_id
+      ? (draftMaterialIdsByStepId[selectedStep.step_id] ?? [])
+      : [])
     : selectedStep?.step_id
       ? (materialsQuery.data?.step_material_ids[selectedStep.step_id] ?? [])
-      : draftMaterialIds;
+      : [];
   const attachMaterialToSelectedStep = (materialId: string) => {
     if (editingStepMaterialIds.includes(materialId)) return;
     if (selectedStepIsUnsaved || !selectedStep?.step_id) {
-      setDraftMaterialIds((current) => [...current, materialId]);
+      const stepId = selectedStep.step_id;
+      if (!stepId) return;
+      setDraftMaterialIdsByStepId((current) => ({
+        ...current,
+        [stepId]: [...(current[stepId] ?? []), materialId],
+      }));
       setMaterialPickerOpen(false);
       setMaterialPickerQuery("");
       return;
@@ -336,9 +345,12 @@ export function ProfileWorkflowEditor({
   };
   const detachMaterialFromSelectedStep = (materialId: string) => {
     if (selectedStepIsUnsaved || !selectedStep?.step_id) {
-      setDraftMaterialIds((current) =>
-        current.filter((id) => id !== materialId),
-      );
+      const stepId = selectedStep.step_id;
+      if (!stepId) return;
+      setDraftMaterialIdsByStepId((current) => ({
+        ...current,
+        [stepId]: (current[stepId] ?? []).filter((id) => id !== materialId),
+      }));
       return;
     }
     stepMaterialsMutation.mutate({
@@ -450,8 +462,14 @@ export function ProfileWorkflowEditor({
   };
   const cancelUnsavedStep = (index: number) => {
     if (!isUnsavedWorkflowStep(steps[index], persistedStepIds)) return;
+    const stepId = steps[index]?.step_id;
     dropStepAtIndex(index);
-    setDraftMaterialIds([]);
+    if (stepId) {
+      setDraftMaterialIdsByStepId((current) => {
+        const { [stepId]: _, ...remaining } = current;
+        return remaining;
+      });
+    }
   };
   const removeStep = (index: number) => {
     if (isUnsavedWorkflowStep(steps[index], persistedStepIds)) {
@@ -478,12 +496,14 @@ export function ProfileWorkflowEditor({
   const saveEditedSteps = () => {
     if (selectedStepIndex === null) {
       const newStepIndex = steps.length;
+      const draftStepId = newStep.step_id;
+      const draftMaterialIds = draftStepId
+        ? (draftMaterialIdsByStepId[draftStepId] ?? [])
+        : [];
       saveMutation.mutate([...steps, newStep], {
         onSuccess: async (specification) => {
           setSelectedStepIndex(newStepIndex);
-          const stepId =
-            workflowDraftFromSpecification(specification).steps[newStepIndex]
-              ?.step_id;
+          const stepId = workflowDraftFromSpecification(specification)[newStepIndex]?.step_id;
           if (stepId && draftMaterialIds.length > 0) {
             try {
               const materials =
@@ -494,7 +514,13 @@ export function ProfileWorkflowEditor({
                 material_ids: draftMaterialIds,
                 expected_materials_revision: materials.materials_revision,
               });
-              setDraftMaterialIds([]);
+              if (draftStepId) {
+                setDraftMaterialIdsByStepId((current) => {
+                  const next = { ...current };
+                  delete next[draftStepId];
+                  return next;
+                });
+              }
               queryClient.invalidateQueries({
                 queryKey: ["workflowMaterials", profileId],
               });
@@ -502,7 +528,7 @@ export function ProfileWorkflowEditor({
               notifyError(
                 error instanceof Error
                   ? error.message
-                  : "Failed to save step materials",
+                  : t("profiles:detail.workflow.materials.saveStepMaterialsFailed"),
               );
             }
           }
@@ -514,10 +540,10 @@ export function ProfileWorkflowEditor({
     const pendingDraftMaterials =
       selectedStepIsUnsaved &&
         selectedStep.step_id &&
-        draftMaterialIds.length > 0
+        (draftMaterialIdsByStepId[selectedStep.step_id]?.length ?? 0) > 0
         ? {
           stepId: selectedStep.step_id,
-          materialIds: [...draftMaterialIds],
+          materialIds: [...(draftMaterialIdsByStepId[selectedStep.step_id] ?? [])],
         }
         : null;
     saveMutation.mutate(steps, {
@@ -532,7 +558,11 @@ export function ProfileWorkflowEditor({
             material_ids: pendingDraftMaterials.materialIds,
             expected_materials_revision: materials.materials_revision,
           });
-          setDraftMaterialIds([]);
+          setDraftMaterialIdsByStepId((current) => {
+            const next = { ...current };
+            delete next[pendingDraftMaterials.stepId];
+            return next;
+          });
           queryClient.invalidateQueries({
             queryKey: ["workflowMaterials", profileId],
           });
@@ -540,7 +570,7 @@ export function ProfileWorkflowEditor({
           notifyError(
             error instanceof Error
               ? error.message
-              : "Failed to save step materials",
+              : t("profiles:detail.workflow.materials.saveStepMaterialsFailed"),
           );
         }
       },
@@ -1276,7 +1306,7 @@ export function ProfileWorkflowMaterials({
   const isCreating = selectedDraft !== null;
   const selected =
     materials.find((material) => material.material_id === selectedId) ?? null;
-  const selectMaterial = (materialId: string) => {
+  const selectMaterial = useCallback((materialId: string) => {
     const activeId = selectedIdRef.current;
     const latestMarkdown = markdownRef.current;
     if (activeId && activeId !== materialId) {
@@ -1298,7 +1328,7 @@ export function ProfileWorkflowMaterials({
     };
     setSelectedId(materialId);
     onSelectedMaterialIdChange(materialId);
-  };
+  }, [onSelectedMaterialIdChange, selectedMaterialId]);
   const updateSelectedDraft = (
     update: (draft: {
       material_id: string;
@@ -1356,7 +1386,7 @@ export function ProfileWorkflowMaterials({
         }
         markdownFlushTimerRef.current = window.setTimeout(
           () => {
-            flushMarkdownToDraft(draftId, markdownRef.current);
+            flushMarkdownToDraft(draftId, nextMarkdown);
             markdownFlushTimerRef.current = null;
           },
           nextMarkdown.length > 64_000 ? 500 : 150,
@@ -1414,7 +1444,7 @@ export function ProfileWorkflowMaterials({
       notifyError(
         error instanceof Error
           ? error.message
-          : "Unable to open workflow material file",
+          : t("profiles:detail.workflow.materials.openFileFailed"),
       );
     }
   };
@@ -1479,6 +1509,16 @@ export function ProfileWorkflowMaterials({
     },
     onSuccess: (material) => {
       const draftId = selectedDraft?.material_id ?? null;
+      queryClient.setQueryData<WorkflowMaterialsView>(
+        ["workflowMaterials", profileId],
+        (current) => {
+          if (!current) return current;
+          const materials = current.materials.filter(
+            (item) => item.material_id !== material.material_id,
+          );
+          return { ...current, materials: [...materials, material] };
+        },
+      );
       if (draftId) {
         setDrafts((current) =>
           current.filter((draft) => draft.material_id !== draftId),
@@ -1499,7 +1539,9 @@ export function ProfileWorkflowMaterials({
     },
     onError: (error) =>
       notifyError(
-        error instanceof Error ? error.message : "Failed to save material",
+        error instanceof Error
+          ? error.message
+          : t("profiles:detail.workflow.materials.saveFailed"),
       ),
   });
   const uploadMutation = useMutation({
@@ -1544,7 +1586,9 @@ export function ProfileWorkflowMaterials({
     },
     onError: (error) =>
       notifyError(
-        error instanceof Error ? error.message : "Failed to upload material",
+        error instanceof Error
+          ? error.message
+          : t("profiles:detail.workflow.materials.uploadFailed"),
       ),
   });
   const deleteMutation = useMutation({
@@ -1565,6 +1609,12 @@ export function ProfileWorkflowMaterials({
         queryKey: ["workflowMaterials", profileId],
       });
     },
+    onError: (error) =>
+      notifyError(
+        error instanceof Error
+          ? error.message
+          : t("profiles:detail.workflow.materials.deleteFailed"),
+      ),
   });
   const reorderMutation = useMutation({
     mutationFn: (materialIds: string[]) =>
@@ -1580,7 +1630,9 @@ export function ProfileWorkflowMaterials({
       }),
     onError: (error) =>
       notifyError(
-        error instanceof Error ? error.message : "Failed to reorder Materials",
+        error instanceof Error
+          ? error.message
+          : t("profiles:detail.workflow.materials.reorderFailed"),
       ),
   });
   const moveMaterial = (materialId: string, direction: -1 | 1) => {
@@ -1601,7 +1653,7 @@ export function ProfileWorkflowMaterials({
     reorderMutation.mutate(materialIds);
   };
 
-  const beginCreate = () => {
+  const beginCreate = useCallback(() => {
     const draft = {
       material_id: crypto.randomUUID(),
       title: "",
@@ -1615,7 +1667,12 @@ export function ProfileWorkflowMaterials({
     applyMarkdownEditor("", `draft:${draft.material_id}`);
     setCreationKind("external_url");
     selectMaterial(draft.material_id);
-  };
+  }, [applyMarkdownEditor, selectMaterial]);
+  const beginEmptyDraft = useCallback(() => {
+    if (ensuredEmptyDraftRef.current) return;
+    ensuredEmptyDraftRef.current = true;
+    beginCreate();
+  }, [beginCreate]);
   const cancelDraft = (materialId: string) => {
     if (persistedMaterialIds.has(materialId)) return;
     const remainingDrafts = drafts.filter(
@@ -1703,9 +1760,9 @@ export function ProfileWorkflowMaterials({
       return;
     }
     handledFocusTitleTokenRef.current = focusTitleToken;
-    beginCreate();
+    beginEmptyDraft();
     requestAnimationFrame(() => titleInputRef.current?.focus());
-  }, [focusTitleToken]);
+  }, [beginEmptyDraft, focusTitleToken]);
   useEffect(() => {
     if (!isActive) return;
     if (!materialsQuery.data) return;
@@ -1716,10 +1773,7 @@ export function ProfileWorkflowMaterials({
     ]);
 
     if (knownIds.size === 0) {
-      if (!ensuredEmptyDraftRef.current) {
-        ensuredEmptyDraftRef.current = true;
-        beginCreate();
-      }
+      beginEmptyDraft();
       return;
     }
     ensuredEmptyDraftRef.current = false;
@@ -1776,6 +1830,7 @@ export function ProfileWorkflowMaterials({
     }
   }, [
     drafts,
+    beginEmptyDraft,
     isActive,
     materials,
     materialsQuery.data,
@@ -2059,15 +2114,19 @@ export function ProfileWorkflowMaterials({
                               "profiles:detail.workflow.materials.createMarkdown",
                             )}
                           </SelectItem>
-                          <SelectItem value="uploaded_file">
-                            {t("profiles:detail.workflow.materials.uploadFile")}
-                          </SelectItem>
+                          {selected?.kind !== "external_url" || isCreating ? (
+                            <SelectItem value="uploaded_file">
+                              {t("profiles:detail.workflow.materials.uploadFile")}
+                            </SelectItem>
+                          ) : null}
                         </SelectContent>
                       </Select>
                     </div>
                     {creationKind === "external_url" ? (
                       <div className="grid gap-2">
-                        <Label htmlFor="workflow-material-url">URL</Label>
+                        <Label htmlFor="workflow-material-url">
+                          {t("profiles:detail.workflow.materials.urlLabel")}
+                        </Label>
                         <div className="group relative">
                           <Input
                             id="workflow-material-url"
@@ -2219,7 +2278,11 @@ export function ProfileWorkflowMaterials({
 											  is the only vertical scroller (shade attaches to it).
 											*/}
                       <div className="bg-background p-3">
-                        {creationKind === "markdown_file" || selectedIsText ? (
+                        {previewQuery.isError ? (
+                          <p className="text-sm text-destructive">
+                            {t("profiles:detail.workflow.materials.previewFailed")}
+                          </p>
+                        ) : creationKind === "markdown_file" || selectedIsText ? (
                           <MaterialFilePreview
                             content={previewContent}
                             extension={
@@ -2248,13 +2311,13 @@ export function ProfileWorkflowMaterials({
                           className={MATERIAL_PREVIEW_HOVER_BUTTON_CLASS}
                           title={
                             markdownPreviewMode === "rendered"
-                              ? "Show source"
-                              : "Show preview"
+                              ? t("profiles:detail.workflow.materials.showSource")
+                              : t("profiles:detail.workflow.materials.showPreview")
                           }
                           aria-label={
                             markdownPreviewMode === "rendered"
-                              ? "Show source"
-                              : "Show preview"
+                              ? t("profiles:detail.workflow.materials.showSource")
+                              : t("profiles:detail.workflow.materials.showPreview")
                           }
                           onClick={() =>
                             setMarkdownPreviewMode((mode) =>
@@ -2279,7 +2342,7 @@ export function ProfileWorkflowMaterials({
                               size="icon"
                               variant="ghost"
                               className={`${MATERIAL_PREVIEW_HOVER_BUTTON_CLASS} data-[state=open]:opacity-100`}
-                              aria-label="File actions"
+                              aria-label={t("profiles:detail.workflow.materials.fileActions")}
                             >
                               <MoreHorizontal className="h-4 w-4" />
                             </Button>
@@ -2289,7 +2352,7 @@ export function ProfileWorkflowMaterials({
                               onSelect={() => void runDesktopFileAction("open")}
                             >
                               <FileText className="mr-2 h-4 w-4" />
-                              Open with default app
+                              {t("profiles:detail.workflow.materials.openWithDefaultApp")}
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               onSelect={() =>
@@ -2297,7 +2360,7 @@ export function ProfileWorkflowMaterials({
                               }
                             >
                               <FolderOpen className="mr-2 h-4 w-4" />
-                              Show in Finder or Explorer
+                              {t("profiles:detail.workflow.materials.revealInFileManager")}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -2307,7 +2370,7 @@ export function ProfileWorkflowMaterials({
                         size="icon"
                         variant="ghost"
                         className={MATERIAL_PREVIEW_HOVER_BUTTON_CLASS}
-                        aria-label="Close preview"
+                        aria-label={t("profiles:detail.workflow.materials.closePreview")}
                         onClick={() => setIsPreviewOpen(false)}
                       >
                         <X className="h-4 w-4" />
