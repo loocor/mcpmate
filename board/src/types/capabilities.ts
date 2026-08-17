@@ -27,6 +27,7 @@ export type CapabilityRecord = Record<string, unknown> & {
   unique_uri_template?: unknown;
 	tool_name?: unknown;
 	prompt_name?: unknown;
+	ref_id?: unknown;
 	name?: unknown;
 	id?: unknown;
 };

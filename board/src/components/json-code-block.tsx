@@ -1,7 +1,47 @@
-import { Highlight, themes, type PrismTheme } from "prism-react-renderer";
-import { useSyncExternalStore } from "react";
+import { Fragment, useSyncExternalStore } from "react";
+import {
+	Highlight,
+	themes,
+	type PrismTheme,
+	type Token,
+	type TokenOutputProps,
+} from "prism-react-renderer";
 import { useAppStore } from "../lib/store";
 import { cn } from "../lib/utils";
+
+function isBlankPrismLine(line: Token[]): boolean {
+	return line.every(
+		(token) => token.empty === true || token.content === "" || token.content === "\n",
+	);
+}
+
+function PrismSourceLine({
+	line,
+	lineIdx,
+	isLastLine,
+	getTokenProps,
+}: {
+	line: Token[];
+	lineIdx: number;
+	isLastLine: boolean;
+	getTokenProps: (input: { token: Token }) => TokenOutputProps;
+}) {
+	if (isBlankPrismLine(line)) {
+		return "\n";
+	}
+
+	return (
+		<Fragment>
+			{line.map((token, tokenIdx) => (
+				<span
+					key={`tok-${lineIdx}-${tokenIdx}`}
+					{...getTokenProps({ token })}
+				/>
+			))}
+			{isLastLine ? null : "\n"}
+		</Fragment>
+	);
+}
 
 function useResolvedDark(): boolean {
 	const theme = useAppStore((s) => s.theme);
@@ -24,7 +64,7 @@ function useResolvedDark(): boolean {
 }
 
 /** Syntax-highlighted code block (via prism-react-renderer). Defaults to JSON. */
-export function JsonCodeBlock({
+export function SyntaxHighlightedCode({
 	code,
 	className,
 	language = "json",
@@ -39,7 +79,7 @@ export function JsonCodeBlock({
 
 	return (
 		<Highlight theme={prismTheme} code={code} language={language}>
-			{({ className: hlClass, style, tokens, getLineProps, getTokenProps }) => (
+			{({ className: hlClass, style, tokens, getTokenProps }) => (
 				<pre
 					className={cn(
 						hlClass,
@@ -53,14 +93,24 @@ export function JsonCodeBlock({
 					}}
 				>
 					{tokens.map((line, lineIdx) => (
-						<div key={`line-${lineIdx}`} {...getLineProps({ line })}>
-							{line.map((token, tokenIdx) => (
-								<span key={`tok-${lineIdx}-${tokenIdx}`} {...getTokenProps({ token })} />
-							))}
-						</div>
+						<PrismSourceLine
+							key={`line-${lineIdx}`}
+							line={line}
+							lineIdx={lineIdx}
+							isLastLine={lineIdx === tokens.length - 1}
+							getTokenProps={getTokenProps}
+						/>
 					))}
 				</pre>
 			)}
 		</Highlight>
 	);
+}
+
+export function JsonCodeBlock(props: {
+	code: string;
+	className?: string;
+	language?: string;
+}) {
+	return <SyntaxHighlightedCode {...props} />;
 }

@@ -240,6 +240,10 @@ export function ServerDetailPage() {
 	const { serverId } = useParams<{ serverId: string }>();
 	const navigate = useNavigate();
 	const location = useLocation();
+	const focusedCapabilityName = useMemo(
+		() => new URLSearchParams(location.search).get("capability") ?? undefined,
+		[location.search],
+	);
 	const queryClient = useQueryClient();
 	const enableServerDebug = useAppStore(
 		(state) => state.dashboardSettings.enableServerDebug,
@@ -1170,6 +1174,7 @@ export function ServerDetailPage() {
 							<ServerCapabilitiesPanel
 								serverId={serverId}
 								server={server}
+								focusedCapabilityName={focusedCapabilityName}
 								oauthStatus={authBadgeOAuthStatus}
 								authReadiness={authReadiness}
 								enabled={
@@ -1230,6 +1235,7 @@ function ServerCapabilityTabsHeader({
 function ServerCapabilitiesPanel({
 	serverId,
 	server,
+	focusedCapabilityName,
 	oauthStatus,
 	authReadiness,
 	enabled = true,
@@ -1240,6 +1246,7 @@ function ServerCapabilitiesPanel({
 }: {
 	serverId: string;
 	server: ServerDetail;
+	focusedCapabilityName?: string;
 	oauthStatus?: string | null;
 	authReadiness?: OAuthReadiness | null;
 	enabled?: boolean;
@@ -1252,7 +1259,11 @@ function ServerCapabilitiesPanel({
 		capabilityOptionsByKind?: InspectorTarget["capabilityOptionsByKind"],
 	) => void | Promise<void>;
 }) {
-	const [search, setSearch] = useState("");
+	const [search, setSearch] = useState(focusedCapabilityName ?? "");
+
+	useEffect(() => {
+		setSearch(focusedCapabilityName ?? "");
+	}, [focusedCapabilityName]);
 	const { t } = useTranslation("servers");
 	const {
 		kindFilters,
@@ -1355,10 +1366,38 @@ function ServerCapabilitiesPanel({
 	);
 	const initialCapabilitiesLoading =
 		anyCapabilitiesLoading && !hasLoadedCapabilityItems;
-	const tools = resolveVisibleItems("tools", toolsQ.data?.items);
-	const resources = resolveVisibleItems("resources", resourcesQ.data?.items);
-	const prompts = resolveVisibleItems("prompts", promptsQ.data?.items);
-	const templates = resolveVisibleItems("templates", templatesQ.data?.items);
+	const focusedSearchIsActive = search === focusedCapabilityName;
+	const filterFocusedCapability = (items: CapabilityRecord[]): CapabilityRecord[] => {
+		if (!focusedSearchIsActive || !focusedCapabilityName) return items;
+		return items.filter((item) =>
+			[
+				item.unique_name,
+				item.tool_name,
+				item.prompt_name,
+				item.name,
+				item.unique_uri,
+				item.resource_uri,
+				item.uri,
+				item.unique_uri_template,
+				item.uri_template,
+				item.uriTemplate,
+			].some(
+				(value) => readCapabilityIdentifier(value) === focusedCapabilityName,
+			),
+		);
+	};
+	const tools = filterFocusedCapability(
+		resolveVisibleItems("tools", toolsQ.data?.items),
+	);
+	const resources = filterFocusedCapability(
+		resolveVisibleItems("resources", resourcesQ.data?.items),
+	);
+	const prompts = filterFocusedCapability(
+		resolveVisibleItems("prompts", promptsQ.data?.items),
+	);
+	const templates = filterFocusedCapability(
+		resolveVisibleItems("templates", templatesQ.data?.items),
+	);
 	const emptyText = t("detail.capabilityList.emptyAll", {
 		defaultValue: "No capabilities from this server",
 	});

@@ -952,6 +952,7 @@ export interface ProfileAuthoringView {
   profile: ConfigSuit;
   server_ids: string[];
   profile_mode?: ProfileMode;
+  skill_name?: string | null;
 }
 
 export interface ProfileAuthoringSaveRequest {
@@ -966,6 +967,7 @@ export interface ProfileAuthoringSaveRequest {
   server_ids: string[];
   clone_from_id: string | null;
   profile_mode?: ProfileMode;
+  skill_name?: string | null;
   workflow_specification?: WorkflowSpecificationSaveRequest;
 }
 
@@ -983,9 +985,69 @@ export interface WorkflowBinding {
 }
 
 export interface WorkflowStep {
+  step_id: string;
   title: string;
   description: string | null;
   bindings: WorkflowBinding[];
+}
+
+export type WorkflowMaterialKind = "external_url" | "uploaded_file" | "markdown_file";
+
+export interface WorkflowMaterial {
+  material_id: string;
+  profile_id: string;
+  material_revision: number;
+  ordinal: number;
+  title: string;
+  kind: WorkflowMaterialKind;
+  external_url: string | null;
+  relative_path: string | null;
+  original_filename: string | null;
+  file_size: number | null;
+  checksum: string | null;
+  markdown_content: string | null;
+  created_at: string;
+  updated_at: string;
+  reference_step_ids: string[];
+}
+
+export interface WorkflowMaterialsView {
+  profile_id: string;
+  skill_name: string;
+  materials_revision: number;
+  materials: WorkflowMaterial[];
+  step_material_ids: Record<string, string[]>;
+}
+
+export interface WorkflowMaterialSaveRequest {
+  profile_id: string;
+  material_id: string | null;
+  expected_material_revision: number | null;
+  expected_materials_revision: number;
+  title: string;
+  kind: WorkflowMaterialKind;
+  external_url: string | null;
+  markdown_content: string | null;
+}
+
+export interface WorkflowMaterialDeleteRequest {
+  profile_id: string;
+  material_id: string;
+  expected_material_revision: number;
+  expected_materials_revision: number;
+}
+
+export interface WorkflowStepMaterialsSaveRequest {
+  profile_id: string;
+  step_id: string;
+  material_ids: string[];
+  expected_materials_revision: number;
+}
+
+export interface WorkflowMaterialsReorderRequest {
+  profile_id: string;
+  material_ids: string[];
+  expected_materials_revision: number;
 }
 
 export interface WorkflowSpecification {

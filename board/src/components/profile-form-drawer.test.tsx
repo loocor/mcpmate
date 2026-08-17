@@ -82,6 +82,7 @@ describe("ProfileFormDrawer authoring", () => {
 			profileId: null,
 			draft: {
 				...createRequest,
+				skill_name: "workflow-test",
 				suit_type: "shared",
 				clone_from_id: "none",
 				profile_mode: "workflow",
@@ -93,9 +94,21 @@ describe("ProfileFormDrawer authoring", () => {
 
 		expect(request).toMatchObject({
 			profile_mode: "workflow",
+			skill_name: "workflow-test",
 			is_active: false,
 			is_default: false,
 		});
+	});
+
+	test("validates Workflow Skill names before submission", () => {
+		expect(authoringUi.isValidSkillName("screenshot")).toBe(true);
+		expect(authoringUi.isValidSkillName("screenshot-workflow-2")).toBe(true);
+		expect(authoringUi.isValidSkillName("Screenshot")).toBe(false);
+		expect(authoringUi.isValidSkillName("screenshot_workflow")).toBe(false);
+		expect(authoringUi.isValidSkillName("-screenshot")).toBe(false);
+		expect(authoringUi.isValidSkillName("screenshot-")).toBe(false);
+		expect(authoringUi.isValidSkillName("screenshot--workflow")).toBe(false);
+		expect(authoringUi.isValidSkillName("a".repeat(65))).toBe(false);
 	});
 
 	test("updates metadata servers activation and default with one request", async () => {
@@ -193,6 +206,7 @@ describe("ProfileFormDrawer authoring", () => {
 		};
 		const draft: authoringUi.ProfileFormDraft = {
 			name: "Unsaved local name",
+			skill_name: "",
 			description: "Unsaved local description",
 			suit_type: "shared",
 			priority: 50,

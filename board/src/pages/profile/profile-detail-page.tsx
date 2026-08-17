@@ -37,6 +37,9 @@ import { CAPABILITY_SCROLL_CARD_CLASS } from "../../components/capability-scroll
 import {
 	CapsuleStripeList,
 	CapsuleStripeListItem,
+	PROFILE_EDITOR_SIDEBAR_ITEM_CLASS,
+	PROFILE_EDITOR_SIDEBAR_LIST_CLASS,
+	PROFILE_EDITOR_SIDEBAR_SCROLL_CLASS,
 } from "../../components/capsule-stripe-list";
 import { CapsuleStripeRowBody } from "../../components/capsule-stripe-row";
 import { ProfileFormDrawer } from "../../components/profile-form-drawer";
@@ -252,7 +255,7 @@ export function ProfileDetailPage() {
 	const profileTokenEstimateMethod = useAppStore(
 		(state) => state.dashboardSettings.profileTokenEstimateMethod,
 	);
-	const { activeTab, setActiveTab } = useUrlTab({
+	const { activeTab } = useUrlTab({
 		paramName: "tab",
 		defaultTab: "overview",
 		validTabs: PROFILE_DETAIL_TABS,
@@ -262,9 +265,70 @@ export function ProfileDetailPage() {
 	const reviewItemId = searchParams.get("review_item");
 	const reviewRefId = searchParams.get("ref_id");
 	const hasExplicitTab = searchParams.has("tab");
+	const selectedWorkflowItemId =
+		activeTab === "workflow" || activeTab === "materials"
+			? searchParams.get("id")
+			: null;
+	const updateWorkflowSelection = useCallback(
+		(value: string | null) => {
+			setSearchParams(
+				(current) => {
+					if (
+						current.get("id") === value &&
+						!current.has("step") &&
+						!current.has("material")
+					) {
+						return current;
+					}
+					const next = new URLSearchParams(current);
+					if (value) next.set("id", value);
+					else next.delete("id");
+					next.delete("step");
+					next.delete("material");
+					return next;
+				},
+				{ replace: true },
+			);
+		},
+		[setSearchParams],
+	);
+	const openWorkflowItem = useCallback(
+		(tab: "workflow" | "materials", itemId: string | null) => {
+			setSearchParams(
+				(current) => {
+					const next = new URLSearchParams(current);
+					next.set("tab", tab);
+					if (itemId) next.set("id", itemId);
+					else next.delete("id");
+					next.delete("step");
+					next.delete("material");
+					return next;
+				},
+				{ replace: true },
+			);
+		},
+		[setSearchParams],
+	);
+	const handleDetailTabChange = useCallback(
+		(tab: string) => {
+			setSearchParams(
+				(current) => {
+					const next = new URLSearchParams(current);
+					next.set("tab", tab);
+					next.delete("id");
+					next.delete("step");
+					next.delete("material");
+					return next;
+				},
+				{ replace: true },
+			);
+		},
+		[setSearchParams],
+	);
 
 	const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
 	const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+	const [materialFocusRequest, setMaterialFocusRequest] = useState<number | null>(null);
 	// Filters: servers
 	const [serverQuery, setServerQuery] = useState("");
 	const [serverStatus, setServerStatus] = useState<
@@ -295,12 +359,18 @@ export function ProfileDetailPage() {
 			hasExplicitTab,
 		);
 		if (reviewTab !== activeTab) {
-			setActiveTab(reviewTab);
+			handleDetailTabChange(reviewTab);
 		}
 		if (reviewRefId) {
 			setCapabilityQuery(reviewRefId);
 		}
-	}, [activeTab, hasExplicitTab, reviewItemId, reviewRefId, setActiveTab]);
+	}, [
+		activeTab,
+		handleDetailTabChange,
+		hasExplicitTab,
+		reviewItemId,
+		reviewRefId,
+	]);
 	const { bulkModeDescription } = useBulkSelectionLabels();
 	const serverBulk = useBulkSelection<string>();
 	const capabilityBulk = useBulkSelection<string>();
@@ -632,9 +702,9 @@ export function ProfileDetailPage() {
 			suit.profile_mode,
 		);
 		if (resolvedTab !== activeTab) {
-			setActiveTab(resolvedTab);
+			handleDetailTabChange(resolvedTab);
 		}
-	}, [activeTab, setActiveTab, suit]);
+	}, [activeTab, handleDetailTabChange, suit]);
 
 	// Fetch servers in suit
 	const {
@@ -1766,7 +1836,7 @@ export function ProfileDetailPage() {
 			) : suit ? (
 				<Tabs
 					value={activeTab}
-					onValueChange={setActiveTab}
+					onValueChange={handleDetailTabChange}
 					className="flex min-h-0 flex-1 flex-col gap-4"
 				>
 					<div className="flex shrink-0 items-center justify-between">
@@ -1963,7 +2033,7 @@ export function ProfileDetailPage() {
 									description={t("profiles:detail.overview.enabledAvailable", {
 										defaultValue: "enabled / available",
 									})}
-									onSelect={() => setActiveTab(overviewSurfaceTab)}
+								onSelect={() => handleDetailTabChange(overviewSurfaceTab)}
 									className={DETAIL_OVERVIEW_PINNED_SECTION_CLASS}
 								/>
 							)}
@@ -2048,12 +2118,42 @@ export function ProfileDetailPage() {
 								capabilityMetrics={profileSurfaceMetrics.filter(
 									(metric) => metric.id !== "servers",
 								)}
+								onCreateMaterial={() => {
+									openWorkflowItem("materials", null);
+									requestAnimationFrame(() => {
+										setMaterialFocusRequest((current) => (current ?? 0) + 1);
+									});
+								}}
+								onSelectMaterial={(materialId) => {
+									openWorkflowItem("materials", materialId);
+								}}
+								selectedStepId={selectedWorkflowItemId}
+								onSelectedStepIdChange={updateWorkflowSelection}
+								onOpenCapability={(capability) => {
+									const params = new URLSearchParams({
+										tab: "capabilities",
+										capability: capability.label,
+									});
+									navigate(
+										`/servers/${encodeURIComponent(capability.server_id)}?${params.toString()}`,
+									);
+								}}
 							/>
 						</TabsContent>
 					)}
-					{isWorkflowProfile && (
-						<TabsContent value="materials" className={DETAIL_TAB_CONTENT_CLASS}>
-							<ProfileWorkflowMaterials />
+					{isWorkflowProfile && profileId && (
+						<TabsContent
+							value="materials"
+							className={DETAIL_TAB_CONTENT_CLASS}
+							forceMount
+						>
+							<ProfileWorkflowMaterials
+								profileId={profileId}
+								focusTitleToken={materialFocusRequest}
+								isActive={activeTab === "materials"}
+								selectedMaterialId={selectedWorkflowItemId}
+								onSelectedMaterialIdChange={updateWorkflowSelection}
+							/>
 						</TabsContent>
 					)}
 
@@ -2141,7 +2241,7 @@ export function ProfileDetailPage() {
 													</Select>
 												</div>
 											</div>
-											<CardListScrollBody className="mx-3 mb-3 mt-0">
+											<CardListScrollBody className={PROFILE_EDITOR_SIDEBAR_SCROLL_CLASS}>
 												{isLoadingServers ? (
 													<div className="space-y-3">
 														{["s1", "s2", "s3"].map((id) => (
@@ -2152,11 +2252,11 @@ export function ProfileDetailPage() {
 														))}
 													</div>
 												) : visibleServers.length > 0 ? (
-													<CapsuleStripeList className="rounded-none border-0 overflow-visible">
+													<CapsuleStripeList className={PROFILE_EDITOR_SIDEBAR_LIST_CLASS}>
 														<CapsuleStripeListItem
 															key={ALL_CAPABILITY_SERVERS_ID}
 															interactive
-															className={`group relative px-3 transition-colors ${
+															className={`${PROFILE_EDITOR_SIDEBAR_ITEM_CLASS} ${
 																isAllCapabilityServersSelected
 																	? "bg-primary/10"
 																	: ""
@@ -2279,7 +2379,7 @@ export function ProfileDetailPage() {
 																<CapsuleStripeListItem
 																	key={server.id}
 																	interactive
-																	className={`group relative px-3 transition-colors ${serverItemStateClass}`}
+																	className={`${PROFILE_EDITOR_SIDEBAR_ITEM_CLASS} ${serverItemStateClass}`}
 																	onClick={() =>
 																		setSelectedCapabilityServerId(server.id)
 																	}
