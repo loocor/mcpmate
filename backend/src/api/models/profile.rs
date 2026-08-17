@@ -6,6 +6,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use crate::config::models::ProfileMode;
+use crate::core::profile::materials::{
+    WorkflowMaterial, WorkflowMaterialKind, WorkflowMaterialsReorderCommand, WorkflowMaterialsView,
+    WorkflowStepMaterialsSaveCommand,
+};
 use crate::core::profile::workflow::{WorkflowSpecification, WorkflowSpecificationPreview, WorkflowStepCommand};
 
 // Import the unified response macro
@@ -420,6 +424,7 @@ pub struct ProfileAuthoringViewData {
     pub profile: ProfileData,
     pub server_ids: Vec<String>,
     pub profile_mode: ProfileMode,
+    pub skill_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -436,6 +441,8 @@ pub struct ProfileAuthoringSaveReq {
     pub clone_from_id: Option<String>,
     #[serde(default)]
     pub profile_mode: Option<ProfileMode>,
+    #[serde(default)]
+    pub skill_name: Option<String>,
     #[serde(default)]
     pub workflow_specification: Option<WorkflowSpecificationSaveReq>,
 }
@@ -479,6 +486,90 @@ pub struct WorkflowSpecificationDeleteData {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct WorkflowSpecificationPreviewData {
     pub preview: WorkflowSpecificationPreview,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WorkflowMaterialSaveReq {
+    pub profile_id: String,
+    pub material_id: Option<String>,
+    pub expected_material_revision: Option<i64>,
+    pub expected_materials_revision: i64,
+    pub title: String,
+    pub kind: WorkflowMaterialKind,
+    pub external_url: Option<String>,
+    pub markdown_content: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WorkflowMaterialDeleteReq {
+    pub profile_id: String,
+    pub material_id: String,
+    pub expected_material_revision: i64,
+    pub expected_materials_revision: i64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WorkflowStepMaterialsSaveReq {
+    pub profile_id: String,
+    pub step_id: String,
+    pub material_ids: Vec<String>,
+    pub expected_materials_revision: i64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WorkflowMaterialsReorderReq {
+    pub profile_id: String,
+    pub material_ids: Vec<String>,
+    pub expected_materials_revision: i64,
+}
+
+impl From<WorkflowStepMaterialsSaveReq> for WorkflowStepMaterialsSaveCommand {
+    fn from(value: WorkflowStepMaterialsSaveReq) -> Self {
+        Self {
+            profile_id: value.profile_id,
+            step_id: value.step_id,
+            material_ids: value.material_ids,
+            expected_materials_revision: value.expected_materials_revision,
+        }
+    }
+}
+
+impl From<WorkflowMaterialsReorderReq> for WorkflowMaterialsReorderCommand {
+    fn from(value: WorkflowMaterialsReorderReq) -> Self {
+        Self {
+            profile_id: value.profile_id,
+            material_ids: value.material_ids,
+            expected_materials_revision: value.expected_materials_revision,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct WorkflowMaterialsViewData {
+    pub materials: WorkflowMaterialsView,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct WorkflowMaterialSaveData {
+    pub material: WorkflowMaterial,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct WorkflowMaterialDeleteData {
+    pub material_id: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct WorkflowStepMaterialsSaveData {
+    pub material_ids: Vec<String>,
+}
+
+pub type WorkflowMaterialsReorderData = WorkflowStepMaterialsSaveData;
+pub type WorkflowMaterialsReorderResp = WorkflowStepMaterialsSaveResp;
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct WorkflowMaterialPreviewData {
+    pub content: String,
 }
 
 /// Operation response
@@ -646,6 +737,31 @@ api_resp!(
     WorkflowSpecificationPreviewResp,
     WorkflowSpecificationPreviewData,
     "Workflow specification preview API response"
+);
+api_resp!(
+    WorkflowMaterialsViewResp,
+    WorkflowMaterialsViewData,
+    "Workflow Materials view API response"
+);
+api_resp!(
+    WorkflowMaterialSaveResp,
+    WorkflowMaterialSaveData,
+    "Workflow Material save API response"
+);
+api_resp!(
+    WorkflowMaterialDeleteResp,
+    WorkflowMaterialDeleteData,
+    "Workflow Material delete API response"
+);
+api_resp!(
+    WorkflowStepMaterialsSaveResp,
+    WorkflowStepMaterialsSaveData,
+    "Workflow Step Materials save API response"
+);
+api_resp!(
+    WorkflowMaterialPreviewResp,
+    WorkflowMaterialPreviewData,
+    "Workflow Material preview API response"
 );
 api_resp!(
     ProfileServersListResp,

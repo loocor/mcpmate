@@ -1,4 +1,9 @@
-use std::{collections::BTreeMap, str::FromStr};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    str::FromStr,
+};
+
+use uuid::Uuid;
 
 use mcpmate_capability_store::CapabilityId;
 use sqlx::{FromRow, Pool, Sqlite, Transaction};
@@ -43,6 +48,8 @@ pub struct WorkflowBindingCommand {
 
 #[derive(Clone, Debug, Eq, PartialEq, schemars::JsonSchema, serde::Deserialize, serde::Serialize)]
 pub struct WorkflowStepCommand {
+    #[serde(default)]
+    pub step_id: Option<String>,
     pub title: String,
     pub description: Option<String>,
     pub bindings: Vec<WorkflowBindingCommand>,
@@ -69,6 +76,7 @@ pub struct WorkflowSpecification {
 
 #[derive(Clone, Debug, Eq, PartialEq, schemars::JsonSchema, serde::Serialize)]
 pub struct WorkflowStep {
+    pub step_id: String,
     pub title: String,
     pub description: Option<String>,
     pub bindings: Vec<WorkflowBinding>,
@@ -266,6 +274,7 @@ impl WorkflowSpecificationService {
 #[derive(FromRow)]
 struct BindingRow {
     step_index: i64,
+    step_id: String,
     title: String,
     description: Option<String>,
     ref_id: Option<String>,
@@ -284,6 +293,7 @@ struct StoredWorkflowBinding {
 
 #[derive(Clone, Debug)]
 struct StoredWorkflowStep {
+    step_id: String,
     title: String,
     description: Option<String>,
     bindings: Vec<StoredWorkflowBinding>,
@@ -325,7 +335,7 @@ impl WorkflowSpecificationPreview {
     }
 }
 
-async fn verify_workflow_profile(
+pub(crate) async fn verify_workflow_profile(
     transaction: &mut Transaction<'_, Sqlite>,
     profile_id: &str,
 ) -> Result<(), WorkflowSpecificationError> {
@@ -350,11 +360,24 @@ fn validate_save_command(command: &WorkflowSpecificationSaveCommand) -> Result<(
             "workflow Profile ID must not be empty".to_string(),
         ));
     }
+    let mut step_ids = BTreeSet::new();
     for step in &command.steps {
         if step.title.trim().is_empty() {
             return Err(WorkflowSpecificationError::InvalidRequest(
                 "workflow step title must not be empty".to_string(),
             ));
+        }
+        if let Some(step_id) = &step.step_id {
+            if Uuid::parse_str(step_id).is_err() {
+                return Err(WorkflowSpecificationError::InvalidRequest(
+                    "workflow step ID must be a UUID".to_string(),
+                ));
+            }
+            if !step_ids.insert(step_id) {
+                return Err(WorkflowSpecificationError::InvalidRequest(
+                    "workflow step IDs must be unique".to_string(),
+                ));
+            }
         }
     }
     Ok(())
@@ -471,16 +494,47 @@ async fn replace_steps(
     steps: &[WorkflowStepCommand],
     available: &BTreeMap<String, AvailableWorkflowCapability>,
 ) -> Result<(), WorkflowSpecificationError> {
-    sqlx::query("DELETE FROM workflow_profile_steps WHERE profile_id = ?")
+    let step_ids: Vec<String> = steps
+        .iter()
+        .map(|step| step.step_id.clone().unwrap_or_else(|| Uuid::new_v4().to_string()))
+        .collect();
+    sqlx::query("DELETE FROM workflow_profile_step_bindings WHERE profile_id = ?")
         .bind(profile_id)
         .execute(&mut **transaction)
         .await?;
-    for (step_index, step) in steps.iter().enumerate() {
+    if step_ids.is_empty() {
+        sqlx::query("DELETE FROM workflow_profile_steps WHERE profile_id = ?")
+            .bind(profile_id)
+            .execute(&mut **transaction)
+            .await?;
+    } else {
+        let mut deleted_steps =
+            sqlx::QueryBuilder::<Sqlite>::new("DELETE FROM workflow_profile_steps WHERE profile_id = ");
+        deleted_steps.push_bind(profile_id).push(" AND step_id NOT IN (");
+        let mut separated = deleted_steps.separated(", ");
+        for step_id in &step_ids {
+            separated.push_bind(step_id);
+        }
+        separated.push_unseparated(")");
+        deleted_steps.build().execute(&mut **transaction).await?;
+        sqlx::query("UPDATE workflow_profile_steps SET step_index = step_index + ? WHERE profile_id = ?")
+            .bind(step_ids.len() as i64)
+            .bind(profile_id)
+            .execute(&mut **transaction)
+            .await?;
+    }
+    for ((step_index, step), step_id) in steps.iter().enumerate().zip(&step_ids) {
         sqlx::query(
-            "INSERT INTO workflow_profile_steps (profile_id, step_index, title, description) VALUES (?, ?, ?, ?)",
+            "INSERT INTO workflow_profile_steps (profile_id, step_index, step_id, title, description)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(profile_id, step_id) DO UPDATE SET
+                step_index = excluded.step_index,
+                title = excluded.title,
+                description = excluded.description",
         )
         .bind(profile_id)
         .bind(step_index as i64)
+        .bind(step_id)
         .bind(&step.title)
         .bind(&step.description)
         .execute(&mut **transaction)
@@ -522,7 +576,7 @@ async fn load_specification(
         return Ok(None);
     };
     let rows: Vec<BindingRow> = sqlx::query_as(
-        "SELECT step.step_index, step.title, step.description, binding.ref_id, binding.binding_policy,
+        "SELECT step.step_index, step.step_id, step.title, step.description, binding.ref_id, binding.binding_policy,
                 binding.expected_state_generation, binding.expected_capability_id
          FROM workflow_profile_steps step
          LEFT JOIN workflow_profile_step_bindings binding
@@ -545,6 +599,7 @@ async fn load_specification(
     let mut steps: BTreeMap<i64, StoredWorkflowStep> = BTreeMap::new();
     for row in rows {
         let step = steps.entry(row.step_index).or_insert_with(|| StoredWorkflowStep {
+            step_id: row.step_id,
             title: row.title,
             description: row.description,
             bindings: Vec::new(),
@@ -589,6 +644,7 @@ impl From<StoredWorkflowSpecification> for WorkflowSpecification {
                 .steps
                 .into_iter()
                 .map(|step| WorkflowStep {
+                    step_id: step.step_id,
                     title: step.title,
                     description: step.description,
                     bindings: step

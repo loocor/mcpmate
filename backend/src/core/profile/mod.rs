@@ -17,6 +17,7 @@
 
 pub mod authoring;
 pub mod config;
+pub mod materials;
 pub mod merge;
 pub mod service;
 pub mod types;

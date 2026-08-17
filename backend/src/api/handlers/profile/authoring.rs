@@ -22,6 +22,7 @@ pub async fn profile_authoring_view(
         profile: profile_to_response(&view.profile),
         server_ids: view.server_ids,
         profile_mode: view.profile_mode,
+        skill_name: view.skill_name,
     })))
 }
 
@@ -53,8 +54,12 @@ pub async fn profile_authoring_save(
         server_ids: request.server_ids,
         clone_from_id: request.clone_from_id,
         profile_mode: request.profile_mode,
+        skill_name: request.skill_name,
     };
-    let service = ProfileAuthoringService::new(db.pool.clone());
+    let service = ProfileAuthoringService::with_skills_root(
+        db.pool.clone(),
+        db.path.parent().unwrap_or(std::path::Path::new(".")).join("skills"),
+    );
     let saved = match workflow_specification {
         Some(workflow_specification) => {
             service
@@ -159,9 +164,12 @@ fn profile_authoring_error(error: ProfileAuthoringError) -> ApiError {
                 .map(str::to_string)
                 .collect(),
         )),
-        ProfileAuthoringError::Persistence(_) | ProfileAuthoringError::Database(_) => {
-            ApiError::InternalError("Profile authoring failed".to_string())
-        }
+        ProfileAuthoringError::SkillDirectory(
+            crate::core::profile::materials::WorkflowMaterialsError::InvalidRequest(message),
+        ) => ApiError::BadRequest(message),
+        ProfileAuthoringError::Persistence(_)
+        | ProfileAuthoringError::Database(_)
+        | ProfileAuthoringError::SkillDirectory(_) => ApiError::InternalError("Profile authoring failed".to_string()),
     }
 }
 

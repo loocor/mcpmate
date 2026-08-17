@@ -144,6 +144,7 @@ fn update_command(
         server_ids: server_ids.iter().map(|id| (*id).to_string()).collect(),
         clone_from_id: None,
         profile_mode: None,
+        skill_name: None,
     }
 }
 
@@ -264,6 +265,7 @@ async fn create_profile_metadata_servers_activation_and_default_are_atomic() {
                 server_ids: vec!["server-a".to_string(), "missing".to_string()],
                 clone_from_id: None,
                 profile_mode: None,
+                skill_name: None,
             },
             "test",
         )
@@ -409,6 +411,7 @@ async fn clone_and_explicit_server_selection_commit_as_one_authoring_operation()
                 server_ids: vec!["server-a".to_string(), "server-a".to_string()],
                 clone_from_id: Some("profile-source".to_string()),
                 profile_mode: None,
+                skill_name: None,
             },
             "test",
         )
@@ -472,6 +475,7 @@ async fn create_rolls_back_profile_and_relationships_when_materialization_fails(
                 server_ids: vec!["server-a".to_string()],
                 clone_from_id: None,
                 profile_mode: None,
+                skill_name: None,
             },
             "test",
         )
@@ -516,6 +520,7 @@ async fn save_returns_the_committed_runtime_effect_deltas() {
                 server_ids: vec!["server-b".to_string()],
                 clone_from_id: None,
                 profile_mode: None,
+                skill_name: None,
             },
             "test",
         )
