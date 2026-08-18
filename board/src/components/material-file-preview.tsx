@@ -22,6 +22,18 @@ function MarkdownInlineCode({ children }: { children: ReactNode }) {
 	return <code className="font-mono text-xs">{children}</code>;
 }
 
+function hasFencedCodeLanguage(children: ReactNode): boolean {
+	if (
+		typeof children !== "object" ||
+		children === null ||
+		!("props" in children)
+	) {
+		return false;
+	}
+	const className = (children.props as { className?: string }).className;
+	return className?.includes("language-") ?? false;
+}
+
 function RichMarkdownPreview({
 	content,
 	highlightFences,
