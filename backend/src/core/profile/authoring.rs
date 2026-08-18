@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use mcpmate_capability_store::CatalogError;
@@ -9,6 +10,9 @@ use crate::config::models::{Profile, ProfileMode};
 use crate::core::capability::management::ConsumerMaterialization;
 use crate::core::capability::materializer::{
     MaterializationCoordinator, MaterializationTrigger, SurfaceAuthoringLoader, load_default_config_mode,
+};
+use crate::core::profile::materials::{
+    SkillDirectoryRename, WorkflowMaterialsError, WorkflowMaterialsService, rollback_skill_directory_rename,
 };
 use crate::core::profile::workflow::{
     WorkflowSpecification, WorkflowSpecificationError, WorkflowSpecificationSaveCommand, WorkflowSpecificationService,
@@ -27,6 +31,7 @@ pub struct ProfileAuthoringCommand {
     pub server_ids: Vec<String>,
     pub clone_from_id: Option<String>,
     pub profile_mode: Option<ProfileMode>,
+    pub skill_name: Option<String>,
 }
 
 #[derive(Debug)]
@@ -34,6 +39,7 @@ pub struct ProfileAuthoringView {
     pub profile: Profile,
     pub server_ids: Vec<String>,
     pub profile_mode: ProfileMode,
+    pub skill_name: Option<String>,
 }
 
 #[derive(Debug)]
@@ -69,6 +75,8 @@ pub enum ProfileAuthoringError {
     Persistence(#[source] CatalogError),
     #[error("Profile authoring database operation failed")]
     Database(#[source] sqlx::Error),
+    #[error("Profile Skill directory operation failed")]
+    SkillDirectory(#[source] WorkflowMaterialsError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -94,11 +102,25 @@ impl From<sqlx::Error> for ProfileAuthoringError {
 #[derive(Clone)]
 pub struct ProfileAuthoringService {
     pool: Pool<Sqlite>,
+    skills_root: Option<PathBuf>,
 }
 
 impl ProfileAuthoringService {
     pub fn new(pool: Pool<Sqlite>) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            skills_root: None,
+        }
+    }
+
+    pub fn with_skills_root(
+        pool: Pool<Sqlite>,
+        skills_root: PathBuf,
+    ) -> Self {
+        Self {
+            pool,
+            skills_root: Some(skills_root),
+        }
     }
 
     pub async fn view(
@@ -124,10 +146,19 @@ impl ProfileAuthoringService {
             })?;
         let profile_mode = load_profile_mode_in_transaction(transaction, profile_id).await?;
         let server_ids = load_server_ids_in_transaction(transaction, profile_id).await?;
+        let skill_name = if profile_mode == ProfileMode::Workflow {
+            sqlx::query_scalar("SELECT skill_name FROM workflow_profile_skills WHERE profile_id = ?")
+                .bind(profile_id)
+                .fetch_optional(&mut **transaction)
+                .await?
+        } else {
+            None
+        };
         Ok(ProfileAuthoringView {
             profile,
             server_ids,
             profile_mode,
+            skill_name,
         })
     }
 
@@ -216,7 +247,14 @@ impl ProfileAuthoringService {
         let server_ids = load_server_ids_in_transaction(&mut transaction, &profile_id).await?;
         let current_relationships = load_server_relationships_in_transaction(&mut transaction, &profile_id).await?;
         let server_relationship_deltas = relationship_deltas(&previous_relationships, &current_relationships);
-        transaction.commit().await?;
+        let skill_directory_change = self
+            .synchronize_skill_name_in_transaction(&mut transaction, profile_mode, &profile_id, &command)
+            .await?;
+        if let Err(error) = transaction.commit().await {
+            self.rollback_skill_directory_change(skill_directory_change, error.to_string())
+                .await?;
+            return Err(error.into());
+        }
 
         Ok(ProfileAuthoringSaveResult {
             profile,
@@ -287,7 +325,14 @@ impl ProfileAuthoringService {
         let server_ids = load_server_ids_in_transaction(&mut transaction, &profile_id).await?;
         let current_relationships = load_server_relationships_in_transaction(&mut transaction, &profile_id).await?;
         let server_relationship_deltas = relationship_deltas(&previous_relationships, &current_relationships);
-        transaction.commit().await?;
+        let skill_directory_change = self
+            .synchronize_skill_name_in_transaction(&mut transaction, profile_mode, &profile_id, &command)
+            .await?;
+        if let Err(error) = transaction.commit().await {
+            self.rollback_skill_directory_change(skill_directory_change, error.to_string())
+                .await?;
+            return Err(error.into());
+        }
 
         Ok((
             ProfileAuthoringSaveResult {
@@ -325,6 +370,38 @@ impl ProfileAuthoringService {
         }
         Ok(())
     }
+
+    async fn synchronize_skill_name_in_transaction(
+        &self,
+        transaction: &mut Transaction<'_, Sqlite>,
+        profile_mode: ProfileMode,
+        profile_id: &str,
+        command: &ProfileAuthoringCommand,
+    ) -> Result<SkillDirectoryRename, ProfileAuthoringError> {
+        if profile_mode != ProfileMode::Workflow {
+            return Ok(SkillDirectoryRename::Unchanged);
+        }
+        let skills_root = self.skills_root.as_ref().ok_or_else(|| {
+            ProfileAuthoringError::InvalidRequest(
+                "Workflow Profile authoring requires a managed Skills directory".to_string(),
+            )
+        })?;
+        let skill_name = command.skill_name.as_deref().expect("validated Workflow Skill name");
+        WorkflowMaterialsService::new(self.pool.clone(), skills_root.clone())
+            .set_skill_name_in_transaction(transaction, profile_id, skill_name)
+            .await
+            .map_err(ProfileAuthoringError::SkillDirectory)
+    }
+
+    async fn rollback_skill_directory_change(
+        &self,
+        change: SkillDirectoryRename,
+        failed_operation: String,
+    ) -> Result<(), ProfileAuthoringError> {
+        rollback_skill_directory_rename(change, failed_operation)
+            .await
+            .map_err(ProfileAuthoringError::SkillDirectory)
+    }
 }
 
 fn validate_command(command: &ProfileAuthoringCommand) -> Result<(), ProfileAuthoringError> {
@@ -356,13 +433,33 @@ fn validate_profile_mode_command(
     command: &ProfileAuthoringCommand,
     profile_mode: ProfileMode,
 ) -> Result<(), ProfileAuthoringError> {
+    match (profile_mode, command.skill_name.as_deref()) {
+        (ProfileMode::Workflow, Some(skill_name)) => {
+            WorkflowMaterialsService::validate_configured_skill_name(skill_name)
+                .map_err(|error| ProfileAuthoringError::InvalidRequest(error.to_string()))?;
+        }
+        (ProfileMode::Workflow, None) => {
+            return Err(ProfileAuthoringError::InvalidRequest(
+                "Workflow Profiles require a Skill name".to_string(),
+            ));
+        }
+        (ProfileMode::Capability, Some(_)) => {
+            return Err(ProfileAuthoringError::InvalidRequest(
+                "Skill name is only supported by Workflow Profiles".to_string(),
+            ));
+        }
+        (ProfileMode::Capability, None) => {}
+    }
     if profile_mode == ProfileMode::Workflow && (command.is_active || command.is_default) {
         return Err(ProfileAuthoringError::InvalidRequest(
             "workflow Profiles must remain inactive and non-default".to_string(),
         ));
     }
     if profile_mode == ProfileMode::Workflow
-        && command.description.as_deref().is_none_or(|description| description.trim().is_empty())
+        && command
+            .description
+            .as_deref()
+            .is_none_or(|description| description.trim().is_empty())
     {
         return Err(ProfileAuthoringError::InvalidRequest(
             "workflow Profiles require a description".to_string(),
@@ -832,6 +929,7 @@ mod tests {
                     server_ids: Vec::new(),
                     clone_from_id: None,
                     profile_mode: None,
+                    skill_name: None,
                 },
                 "test",
             ),

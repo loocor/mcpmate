@@ -52,19 +52,23 @@ describe("buildWorkflowCapabilityOptions", () => {
 		expect(options).toEqual([
 			{
 				ref_id: "tool:server-a:lookup",
+				server_id: "server-a",
 				label: "server_a__lookup",
 				description: "Look up a record by identifier.",
 			},
 			{
 				ref_id: "resource:server-a:doc",
+				server_id: "server-a",
 				label: "server-a://docs/readme.md",
 			},
 			{
 				ref_id: "prompt:server-a:summarize",
+				server_id: "server-a",
 				label: "server_a__summarize",
 			},
 			{
 				ref_id: "template:server-a:issues",
+				server_id: "server-a",
 				label: "server-a://issues/{id}",
 			},
 		]);
@@ -95,6 +99,7 @@ describe("buildWorkflowCapabilityOptions", () => {
 		expect(options).toEqual([
 			{
 				ref_id: "tool:server-b:fetch",
+				server_id: "server-b",
 				label: "fetch-page",
 			},
 		]);

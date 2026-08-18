@@ -16,6 +16,10 @@ use mcpmate::{
         pool::UpstreamConnectionPool,
         profile::{
             authoring::{ProfileAuthoringCommand, ProfileAuthoringService},
+            materials::{
+                WorkflowMaterialKind, WorkflowMaterialSaveCommand, WorkflowMaterialsReorderCommand,
+                WorkflowMaterialsService, WorkflowStepMaterialsSaveCommand,
+            },
             workflow::{
                 WorkflowBindingCommand, WorkflowBindingPolicy, WorkflowBindingValidation, WorkflowSpecificationError,
                 WorkflowSpecificationSaveCommand, WorkflowSpecificationService, WorkflowStepCommand,
@@ -133,12 +137,18 @@ fn workflow_profile_command() -> ProfileAuthoringCommand {
         server_ids: vec!["server-a".to_string()],
         clone_from_id: None,
         profile_mode: Some(ProfileMode::Workflow),
+        skill_name: Some("investigate-incident".to_string()),
     }
+}
+
+fn workflow_authoring_service(pool: &sqlx::SqlitePool) -> ProfileAuthoringService {
+    ProfileAuthoringService::with_skills_root(pool.clone(), tempfile::tempdir().unwrap().keep())
 }
 
 fn workflow_steps(ref_ids: &[String]) -> Vec<WorkflowStepCommand> {
     vec![
         WorkflowStepCommand {
+            step_id: None,
             title: "Discover".to_string(),
             description: Some("Inspect available evidence".to_string()),
             bindings: vec![
@@ -153,6 +163,7 @@ fn workflow_steps(ref_ids: &[String]) -> Vec<WorkflowStepCommand> {
             ],
         },
         WorkflowStepCommand {
+            step_id: None,
             title: "Resolve".to_string(),
             description: None,
             bindings: vec![WorkflowBindingCommand {
@@ -201,7 +212,7 @@ fn app_state(pool: sqlx::SqlitePool) -> Arc<AppState> {
 async fn workflow_specification_is_ordered_cas_aware_and_never_publishes_a_surface() {
     let pool = pool().await;
     let ref_ids = add_server(&pool, "server-a", "Server A", 1).await;
-    let profile = ProfileAuthoringService::new(pool.clone())
+    let profile = workflow_authoring_service(&pool)
         .save(workflow_profile_command(), "test")
         .await
         .expect("create workflow Profile");
@@ -354,6 +365,7 @@ async fn workflow_specification_is_ordered_cas_aware_and_never_publishes_a_surfa
             validation_notes: updated.validation_notes.clone(),
             avoid_rules: updated.avoid_rules.clone(),
             steps: vec![WorkflowStepCommand {
+                step_id: None,
                 title: "Invalid".to_string(),
                 description: None,
                 bindings: vec![WorkflowBindingCommand {
@@ -390,10 +402,85 @@ async fn workflow_specification_is_ordered_cas_aware_and_never_publishes_a_surfa
 }
 
 #[tokio::test]
+async fn workflow_specification_can_expand_while_retaining_and_reordering_steps() {
+    let pool = pool().await;
+    let ref_ids = add_server(&pool, "server-a", "Server A", 1).await;
+    let profile = workflow_authoring_service(&pool)
+        .save(workflow_profile_command(), "test")
+        .await
+        .expect("create workflow Profile");
+    let profile_id = profile.profile.id.expect("created workflow Profile ID");
+    let service = WorkflowSpecificationService::new(pool);
+    let first = service
+        .save(WorkflowSpecificationSaveCommand {
+            profile_id: profile_id.clone(),
+            expected_specification_revision: None,
+            validation_notes: None,
+            avoid_rules: None,
+            steps: vec![WorkflowStepCommand {
+                step_id: None,
+                title: "Retained".to_string(),
+                description: None,
+                bindings: vec![WorkflowBindingCommand {
+                    ref_id: ref_ids[0].clone(),
+                    binding_policy: WorkflowBindingPolicy::MetaOnDemand,
+                }],
+            }],
+        })
+        .await
+        .expect("save initial workflow step");
+
+    let saved = service
+        .save(WorkflowSpecificationSaveCommand {
+            profile_id,
+            expected_specification_revision: first.specification_revision,
+            validation_notes: None,
+            avoid_rules: None,
+            steps: vec![
+                WorkflowStepCommand {
+                    step_id: None,
+                    title: "Inserted first".to_string(),
+                    description: None,
+                    bindings: vec![WorkflowBindingCommand {
+                        ref_id: ref_ids[0].clone(),
+                        binding_policy: WorkflowBindingPolicy::MetaOnDemand,
+                    }],
+                },
+                WorkflowStepCommand {
+                    step_id: None,
+                    title: "Inserted second".to_string(),
+                    description: None,
+                    bindings: vec![WorkflowBindingCommand {
+                        ref_id: ref_ids[0].clone(),
+                        binding_policy: WorkflowBindingPolicy::MetaOnDemand,
+                    }],
+                },
+                WorkflowStepCommand {
+                    step_id: Some(first.steps[0].step_id.clone()),
+                    title: "Retained".to_string(),
+                    description: None,
+                    bindings: vec![WorkflowBindingCommand {
+                        ref_id: ref_ids[0].clone(),
+                        binding_policy: WorkflowBindingPolicy::MetaOnDemand,
+                    }],
+                },
+            ],
+        })
+        .await
+        .expect("expand and reorder workflow steps");
+
+    assert_eq!(
+        saved.steps.iter().map(|step| step.title.as_str()).collect::<Vec<_>>(),
+        ["Inserted first", "Inserted second", "Retained"]
+    );
+    assert_eq!(saved.steps[2].step_id, first.steps[0].step_id);
+}
+
+#[tokio::test]
 async fn workflow_authoring_and_specification_save_rolls_back_together() {
     let pool = pool().await;
     let ref_ids = add_server(&pool, "server-a", "Server A", 1).await;
-    let authoring = ProfileAuthoringService::new(pool.clone());
+    let authoring = workflow_authoring_service(&pool);
     let created = authoring
         .save(workflow_profile_command(), "test")
         .await
@@ -455,7 +542,7 @@ async fn workflow_binding_accepts_globally_enabled_servers_outside_the_profile()
     let pool = pool().await;
     add_server(&pool, "server-a", "Server A", 1).await;
     let external_refs = add_server(&pool, "server-b", "Server B", 1).await;
-    let profile = ProfileAuthoringService::new(pool.clone())
+    let profile = workflow_authoring_service(&pool)
         .save(workflow_profile_command(), "test")
         .await
         .expect("create workflow Profile");
@@ -469,6 +556,7 @@ async fn workflow_binding_accepts_globally_enabled_servers_outside_the_profile()
             validation_notes: None,
             avoid_rules: None,
             steps: vec![WorkflowStepCommand {
+                step_id: None,
                 title: "External evidence".to_string(),
                 description: None,
                 bindings: vec![WorkflowBindingCommand {
@@ -509,7 +597,7 @@ async fn workflow_binding_rejects_globally_disabled_servers() {
     let pool = pool().await;
     add_server(&pool, "server-a", "Server A", 1).await;
     let disabled_refs = add_server(&pool, "server-c", "Server C", 0).await;
-    let profile = ProfileAuthoringService::new(pool.clone())
+    let profile = workflow_authoring_service(&pool)
         .save(workflow_profile_command(), "test")
         .await
         .expect("create workflow Profile");
@@ -522,6 +610,7 @@ async fn workflow_binding_rejects_globally_disabled_servers() {
             validation_notes: None,
             avoid_rules: None,
             steps: vec![WorkflowStepCommand {
+                step_id: None,
                 title: "Disabled".to_string(),
                 description: None,
                 bindings: vec![WorkflowBindingCommand {
@@ -533,4 +622,274 @@ async fn workflow_binding_rejects_globally_disabled_servers() {
         .await
         .expect_err("globally disabled server capability must not be bindable");
     assert!(matches!(invalid, WorkflowSpecificationError::InvalidBinding { .. }));
+}
+
+#[tokio::test]
+async fn deleting_workflow_specification_bumps_materials_revision_for_cascaded_links() {
+    let pool = pool().await;
+    let ref_ids = add_server(&pool, "server-a", "Materials Server", 1).await;
+    let profile = workflow_authoring_service(&pool)
+        .save(workflow_profile_command(), "test")
+        .await
+        .expect("create workflow Profile");
+    let profile_id = profile.profile.id.expect("workflow Profile ID");
+    let specification = WorkflowSpecificationService::new(pool.clone())
+        .save(WorkflowSpecificationSaveCommand {
+            profile_id: profile_id.clone(),
+            expected_specification_revision: None,
+            validation_notes: None,
+            avoid_rules: None,
+            steps: workflow_steps(&ref_ids),
+        })
+        .await
+        .expect("save workflow specification");
+    let temporary = tempfile::tempdir().expect("create managed Skills directory");
+    let materials = WorkflowMaterialsService::new(pool.clone(), temporary.path().to_path_buf());
+    let initial = materials.view(&profile_id).await.expect("initialize Materials library");
+    let material = materials
+        .save(WorkflowMaterialSaveCommand {
+            profile_id: profile_id.clone(),
+            material_id: None,
+            expected_material_revision: None,
+            expected_materials_revision: initial.materials_revision,
+            title: "Evidence".to_string(),
+            kind: WorkflowMaterialKind::ExternalUrl,
+            external_url: Some("https://example.com/evidence".to_string()),
+            markdown_content: None,
+        })
+        .await
+        .expect("create Material");
+    let step_id = specification.steps[0].step_id.clone();
+    materials
+        .save_step_materials(WorkflowStepMaterialsSaveCommand {
+            profile_id: profile_id.clone(),
+            step_id,
+            material_ids: vec![material.material_id],
+            expected_materials_revision: initial.materials_revision + 1,
+        })
+        .await
+        .expect("attach Material to workflow step");
+    let before_delete = materials.view(&profile_id).await.expect("load linked Materials");
+
+    WorkflowSpecificationService::new(pool)
+        .delete(
+            &profile_id,
+            specification
+                .specification_revision
+                .expect("saved specification revision"),
+        )
+        .await
+        .expect("delete workflow specification");
+
+    let after_delete = materials.view(&profile_id).await.expect("reload Materials library");
+    assert_eq!(after_delete.materials_revision, before_delete.materials_revision + 1);
+    assert!(after_delete.step_material_ids.is_empty());
+}
+
+#[tokio::test]
+async fn workflow_materials_keep_ordered_step_references_and_managed_files() {
+    let pool = pool().await;
+    let ref_ids = add_server(&pool, "server-a", "Materials Server", 1).await;
+    let profile = workflow_authoring_service(&pool)
+        .save(workflow_profile_command(), "test")
+        .await
+        .expect("create workflow Profile");
+    let profile_id = profile.profile.id.expect("workflow Profile ID");
+    let specification = WorkflowSpecificationService::new(pool.clone())
+        .save(WorkflowSpecificationSaveCommand {
+            profile_id: profile_id.clone(),
+            expected_specification_revision: None,
+            validation_notes: None,
+            avoid_rules: None,
+            steps: workflow_steps(&ref_ids),
+        })
+        .await
+        .expect("save workflow steps");
+    let temporary = tempfile::tempdir().expect("create managed Skills directory");
+    let materials = WorkflowMaterialsService::new(pool, temporary.path().to_path_buf());
+
+    let initial = materials.view(&profile_id).await.expect("initialize Materials library");
+    let external = materials
+        .save(WorkflowMaterialSaveCommand {
+            profile_id: profile_id.clone(),
+            material_id: None,
+            expected_material_revision: None,
+            expected_materials_revision: initial.materials_revision,
+            title: "External evidence".to_string(),
+            kind: WorkflowMaterialKind::ExternalUrl,
+            external_url: Some("https://example.com/evidence".to_string()),
+            markdown_content: None,
+        })
+        .await
+        .expect("create external Material");
+    let markdown = materials
+        .save(WorkflowMaterialSaveCommand {
+            profile_id: profile_id.clone(),
+            material_id: None,
+            expected_material_revision: None,
+            expected_materials_revision: 1,
+            title: "Local evidence".to_string(),
+            kind: WorkflowMaterialKind::MarkdownFile,
+            external_url: None,
+            markdown_content: Some("# Evidence".to_string()),
+        })
+        .await
+        .expect("create Markdown Material");
+    assert_eq!(markdown.relative_path.as_deref(), Some("references/local-evidence.md"));
+    let markdown_path = temporary
+        .path()
+        .join(&initial.skill_name)
+        .join(markdown.relative_path.as_deref().expect("Markdown path"));
+    assert_eq!(tokio::fs::read_to_string(&markdown_path).await.unwrap(), "# Evidence");
+    let uploaded = materials
+        .upload(
+            &profile_id,
+            "Uploaded evidence".to_string(),
+            "evidence.md".to_string(),
+            b"# Uploaded evidence".to_vec(),
+            None,
+            None,
+            2,
+        )
+        .await
+        .expect("create uploaded Material");
+    assert_eq!(
+        uploaded.relative_path.as_deref(),
+        Some("references/evidence.md")
+    );
+    let conflict = materials
+        .upload(
+            &profile_id,
+            "Second evidence".to_string(),
+            "evidence.md".to_string(),
+            b"# Second evidence".to_vec(),
+            None,
+            None,
+            3,
+        )
+        .await
+        .expect("create conflicting uploaded Material with unique path");
+    assert_eq!(
+        conflict.relative_path.as_deref(),
+        Some("references/evidence-2.md")
+    );
+    let renamed_uploaded = materials
+        .save(WorkflowMaterialSaveCommand {
+            profile_id: profile_id.clone(),
+            material_id: Some(uploaded.material_id.clone()),
+            expected_material_revision: Some(uploaded.material_revision),
+            expected_materials_revision: 4,
+            title: "Renamed uploaded evidence".to_string(),
+            kind: WorkflowMaterialKind::UploadedFile,
+            external_url: None,
+            markdown_content: None,
+        })
+        .await
+        .expect("rename uploaded Material without replacing its file");
+    let uploaded_path = temporary
+        .path()
+        .join(&initial.skill_name)
+        .join(uploaded.relative_path.as_deref().expect("uploaded file path"));
+    assert_eq!(renamed_uploaded.title, "Renamed uploaded evidence");
+    assert_eq!(renamed_uploaded.kind, WorkflowMaterialKind::UploadedFile);
+    assert_eq!(renamed_uploaded.relative_path, uploaded.relative_path);
+    assert_eq!(renamed_uploaded.original_filename, uploaded.original_filename);
+    assert_eq!(renamed_uploaded.file_size, uploaded.file_size);
+    assert_eq!(renamed_uploaded.checksum, uploaded.checksum);
+    assert_eq!(
+        tokio::fs::read_to_string(&uploaded_path).await.unwrap(),
+        "# Uploaded evidence"
+    );
+    let replaced = materials
+        .upload(
+            &profile_id,
+            "Replaced evidence".to_string(),
+            "evidence-renamed-on-disk.md".to_string(),
+            b"# Replaced evidence".to_vec(),
+            Some(uploaded.material_id.as_str()),
+            Some(renamed_uploaded.material_revision),
+            5,
+        )
+        .await
+        .expect("replace uploaded Material without renaming its storage path");
+    assert_eq!(replaced.relative_path, uploaded.relative_path);
+    assert_eq!(
+        tokio::fs::read_to_string(&uploaded_path).await.unwrap(),
+        "# Replaced evidence"
+    );
+
+    let step_id = specification.steps[0].step_id.clone();
+    materials
+        .save_step_materials(WorkflowStepMaterialsSaveCommand {
+            profile_id: profile_id.clone(),
+            step_id: step_id.clone(),
+            material_ids: vec![
+                external.material_id.clone(),
+                markdown.material_id.clone(),
+                renamed_uploaded.material_id.clone(),
+            ],
+            expected_materials_revision: 6,
+        })
+        .await
+        .expect("attach ordered Materials to Step");
+    materials
+        .reorder(WorkflowMaterialsReorderCommand {
+            profile_id: profile_id.clone(),
+            material_ids: vec![
+                markdown.material_id.clone(),
+                external.material_id.clone(),
+                renamed_uploaded.material_id.clone(),
+                conflict.material_id.clone(),
+            ],
+            expected_materials_revision: 7,
+        })
+        .await
+        .expect("reorder Materials library");
+    let ordered = materials.view(&profile_id).await.expect("load Materials library");
+    assert_eq!(
+        ordered
+            .materials
+            .iter()
+            .map(|material| &material.material_id)
+            .collect::<Vec<_>>(),
+        [
+            &markdown.material_id,
+            &external.material_id,
+            &renamed_uploaded.material_id,
+            &conflict.material_id,
+        ]
+    );
+    assert_eq!(
+        ordered.step_material_ids[&step_id],
+        [
+            external.material_id.clone(),
+            markdown.material_id.clone(),
+            renamed_uploaded.material_id.clone(),
+        ]
+    );
+
+    materials
+        .delete(
+            &profile_id,
+            &markdown.material_id,
+            markdown.material_revision,
+            ordered.materials_revision,
+        )
+        .await
+        .expect("delete Markdown Material");
+    let after_delete = materials.view(&profile_id).await.expect("reload Materials library");
+    assert_eq!(after_delete.materials.len(), 3);
+    assert_eq!(
+        after_delete.step_material_ids[&step_id],
+        [external.material_id, renamed_uploaded.material_id]
+    );
+    assert!(!markdown_path.exists());
+    assert!(uploaded_path.exists());
+    assert!(
+        temporary
+            .path()
+            .join(&initial.skill_name)
+            .join("references/evidence-2.md")
+            .exists()
+    );
 }

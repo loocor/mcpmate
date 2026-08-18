@@ -7,6 +7,10 @@ pub use self::{
     capabilities::{component_manage, prompts_list, resource_templates_list, resources_list, tools_list},
     capability_token_ledger::capability_token_ledger,
     helpers::{get_profile_or_error, get_tool_or_error, get_tool_with_details_or_error},
+    materials::{
+        workflow_material_delete, workflow_material_preview, workflow_material_replace, workflow_material_save,
+        workflow_material_upload, workflow_materials_reorder, workflow_materials_view, workflow_step_materials_save,
+    },
     mgmt::{profile_delete, profile_details, profile_list, profile_manage},
     server::{server_manage, servers_list},
     token_estimate::token_estimate,
@@ -21,6 +25,7 @@ mod authoring;
 mod capabilities;
 mod capability_token_ledger;
 pub mod helpers;
+pub(crate) mod materials;
 mod mgmt;
 mod server;
 mod token_estimate;

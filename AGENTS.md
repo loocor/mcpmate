@@ -58,7 +58,7 @@
 
 ## MCP Tooling & Codex Capabilities
 - Prefer mounted MCP tools when they are available instead of re-implementing helpers. If a task depends on a specific external tool, first verify that tool is available in the current environment.
-- Use Inspector to discover offerings: `bunx --bun @modelcontextprotocol/inspector --cli http://127.0.0.1:8000/mcp --transport http --method tools/list` and `--method tools/call --tool-name <tool>`.
+- Use Inspector to discover offerings. In proxy-inheriting terminals, run `env -u HTTPS_PROXY -u HTTP_PROXY -u ALL_PROXY -u https_proxy -u http_proxy -u all_proxy npx @modelcontextprotocol/inspector --cli 'http://127.0.0.1:8000/mcp?client_id=inspector' --transport http --method tools/list --format json`; retain the proxy clearing and `client_id=inspector` when using `--method tools/call --tool-name <tool>`.
 - Reference notable MCP tooling in design notes only when it materially affects the implementation or validation path.
 
 ## Coding Style Expectations

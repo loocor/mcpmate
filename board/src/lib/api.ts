@@ -51,6 +51,12 @@ import type {
 	WorkflowSpecification,
 	WorkflowSpecificationPreview,
 	WorkflowSpecificationSaveRequest,
+	WorkflowMaterial,
+	WorkflowMaterialDeleteRequest,
+	WorkflowMaterialSaveRequest,
+	WorkflowMaterialsReorderRequest,
+	WorkflowMaterialsView,
+	WorkflowStepMaterialsSaveRequest,
 	InspectorSessionCloseData,
 	InspectorSessionOpenData,
 	InspectorToolCallCancelData,
@@ -1156,7 +1162,9 @@ async function fetchApi<T>(
 			: new Headers(requestOptions.headers ?? {});
 	// Avoid forcing JSON header on GET requests to keep caching friendly.
 	if (!headers.has("content-type") && requestOptions.body) {
-		headers.set("content-type", "application/json");
+		if (!(requestOptions.body instanceof FormData)) {
+			headers.set("content-type", "application/json");
+		}
 	}
 	try {
 		const requestInit: RequestInit = {
@@ -2636,6 +2644,7 @@ export const configSuitsApi = {
 			profile: ProfileApiRow;
 			server_ids: string[];
 			profile_mode?: ProfileMode;
+			skill_name?: string | null;
 		}>
 		>(`/api/mcp/profile/authoring/view?${query}`);
 		const data = extractApiData(response);
@@ -2643,6 +2652,7 @@ export const configSuitsApi = {
 			profile: profileRowToConfigSuit(data.profile),
 			server_ids: data.server_ids,
 			profile_mode: data.profile_mode,
+			skill_name: data.skill_name,
 		};
 	},
 
@@ -2696,6 +2706,61 @@ export const configSuitsApi = {
 			ApiWrapper<{ preview: WorkflowSpecificationPreview }>
 		>(`/api/mcp/profile/workflow/specification/preview?${query}`);
 		return extractApiData(response).preview;
+	},
+
+	getWorkflowMaterials: async (profileId: string): Promise<WorkflowMaterialsView> => {
+		const query = new URLSearchParams({ id: profileId });
+		const response = await fetchApi<ApiWrapper<{ materials: WorkflowMaterialsView }>>(
+			`/api/mcp/profile/workflow/materials/view?${query}`,
+		);
+		return extractApiData(response).materials;
+	},
+
+	saveWorkflowMaterial: async (request: WorkflowMaterialSaveRequest): Promise<WorkflowMaterial> => {
+		const response = await fetchApi<ApiWrapper<{ material: WorkflowMaterial }>>(
+			"/api/mcp/profile/workflow/materials/save",
+			{ method: "POST", body: JSON.stringify(request) },
+		);
+		return extractApiData(response).material;
+	},
+
+	uploadWorkflowMaterial: async (formData: FormData, replace = false): Promise<WorkflowMaterial> => {
+		const response = await fetchApi<ApiWrapper<{ material: WorkflowMaterial }>>(
+			replace ? "/api/mcp/profile/workflow/materials/replace" : "/api/mcp/profile/workflow/materials/upload",
+			{ method: "POST", body: formData },
+		);
+		return extractApiData(response).material;
+	},
+
+	deleteWorkflowMaterial: async (request: WorkflowMaterialDeleteRequest): Promise<void> => {
+		const response = await fetchApi<ApiWrapper<void>>(
+			"/api/mcp/profile/workflow/materials/delete",
+			{ method: "DELETE", body: JSON.stringify(request) },
+		);
+		extractApiData(response);
+	},
+
+	getWorkflowMaterialPreview: async (profileId: string, materialId: string): Promise<string> => {
+		const query = new URLSearchParams({ profile_id: profileId, material_id: materialId });
+		const response = await fetchApi<ApiWrapper<{ content: string }>>(
+			`/api/mcp/profile/workflow/materials/preview?${query}`,
+		);
+		return extractApiData(response).content;
+	},
+
+	saveWorkflowStepMaterials: async (request: WorkflowStepMaterialsSaveRequest): Promise<string[]> => {
+		const response = await fetchApi<ApiWrapper<{ material_ids: string[] }>>(
+			"/api/mcp/profile/workflow/step-materials/save",
+			{ method: "POST", body: JSON.stringify(request) },
+		);
+		return extractApiData(response).material_ids;
+	},
+	reorderWorkflowMaterials: async (request: WorkflowMaterialsReorderRequest): Promise<string[]> => {
+		const response = await fetchApi<ApiWrapper<{ material_ids: string[] }>>(
+			"/api/mcp/profile/workflow/materials/reorder",
+			{ method: "POST", body: JSON.stringify(request) },
+		);
+		return extractApiData(response).material_ids;
 	},
 
 	deleteSuit: async (

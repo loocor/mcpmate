@@ -1,15 +1,55 @@
 import { describe, expect, test } from "bun:test";
 
 import {
-	serializeWorkflowSteps,
-	withSingleWorkflowCapabilityBinding,
-	workflowDraftFromSpecification,
-} from "../lib/profile-workflow-specification";
+		createEmptyWorkflowStep,
+		isUnsavedWorkflowStep,
+		serializeWorkflowSteps,
+		withSingleWorkflowCapabilityBinding,
+		workflowDraftFromSpecification,
+	} from "../lib/profile-workflow-specification";
 
-describe("Workflow Profile editor", () => {
-	test("serializes an empty workflow so the last step can be removed", () => {
-		expect(serializeWorkflowSteps([])).toEqual([]);
-	});
+	describe("Workflow Profile editor", () => {
+		test("treats client-only step ids as unsaved drafts until they exist on the server", () => {
+			const persistedStepIds = new Set(["step-1"]);
+			expect(
+				isUnsavedWorkflowStep(
+					{
+						title: "Untitled step",
+						description: "",
+						bindings: [],
+					},
+					persistedStepIds,
+				),
+			).toBe(true);
+			expect(
+				isUnsavedWorkflowStep(
+					{
+						step_id: "draft-step",
+						title: "Untitled step",
+						description: "",
+						bindings: [],
+					},
+					persistedStepIds,
+				),
+			).toBe(true);
+			expect(
+				isUnsavedWorkflowStep(
+					{
+						step_id: "step-1",
+						title: "Saved step",
+						description: "",
+						bindings: [],
+					},
+					persistedStepIds,
+				),
+			).toBe(false);
+			expect(isUnsavedWorkflowStep(undefined, persistedStepIds)).toBe(true);
+			expect(createEmptyWorkflowStep().step_id).toEqual(expect.any(String));
+		});
+
+		test("serializes an empty workflow so the last step can be removed", () => {
+			expect(serializeWorkflowSteps([])).toEqual([]);
+		});
 
 	test("replaces a step capability binding with exactly one binding", () => {
 		const step = {
@@ -47,22 +87,23 @@ describe("Workflow Profile editor", () => {
 			},
 		]);
 
-		expect(steps).toEqual([
-			{
+expect(steps).toHaveLength(2);
+			expect(steps[0]?.step_id).toEqual(expect.any(String));
+			expect(steps[1]?.step_id).toEqual(expect.any(String));
+			expect(steps[0]).toMatchObject({
 				title: "Gather context",
 				description: null,
 				bindings: [
 					{ ref_id: "capability-a", binding_policy: "meta_on_demand" },
 					{ ref_id: "capability-b", binding_policy: "direct" },
 				],
-			},
-			{
+			});
+			expect(steps[1]).toMatchObject({
 				title: "Respond",
 				description: "Use the gathered context.",
 				bindings: [],
-			},
-		]);
-	});
+			});
+		});
 
 	test("hydrates nullable descriptions without changing binding order", () => {
 		const drafts = workflowDraftFromSpecification({

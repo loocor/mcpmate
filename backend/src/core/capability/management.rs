@@ -52,6 +52,7 @@ pub struct ProfileActivationManagementResult {
 
 pub struct ProfileDeletionManagementResult {
     pub profile_name: String,
+    pub workflow_skill_name: Option<String>,
     pub materializations: Vec<ConsumerMaterialization>,
 }
 
@@ -311,6 +312,11 @@ impl ProfileSurfaceManagement {
                 value: profile_id.to_string(),
             })?;
         let profile_name: String = row.try_get("name")?;
+        let workflow_skill_name: Option<String> =
+            sqlx::query_scalar("SELECT skill_name FROM workflow_profile_skills WHERE profile_id = ?")
+                .bind(profile_id)
+                .fetch_optional(&mut *transaction)
+                .await?;
         let is_default: bool = row.try_get("is_default")?;
         let role: String = row.try_get("role")?;
         let current_authoring_generation: i64 = row.try_get("authoring_generation")?;
@@ -360,6 +366,7 @@ impl ProfileSurfaceManagement {
         transaction.commit().await?;
         Ok(ProfileDeletionManagementResult {
             profile_name,
+            workflow_skill_name,
             materializations,
         })
     }

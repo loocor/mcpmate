@@ -1,4 +1,9 @@
-use std::{collections::BTreeMap, str::FromStr};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    str::FromStr,
+};
+
+use uuid::Uuid;
 
 use mcpmate_capability_store::CapabilityId;
 use sqlx::{FromRow, Pool, Sqlite, Transaction};
@@ -43,6 +48,8 @@ pub struct WorkflowBindingCommand {
 
 #[derive(Clone, Debug, Eq, PartialEq, schemars::JsonSchema, serde::Deserialize, serde::Serialize)]
 pub struct WorkflowStepCommand {
+    #[serde(default)]
+    pub step_id: Option<String>,
     pub title: String,
     pub description: Option<String>,
     pub bindings: Vec<WorkflowBindingCommand>,
@@ -69,6 +76,7 @@ pub struct WorkflowSpecification {
 
 #[derive(Clone, Debug, Eq, PartialEq, schemars::JsonSchema, serde::Serialize)]
 pub struct WorkflowStep {
+    pub step_id: String,
     pub title: String,
     pub description: Option<String>,
     pub bindings: Vec<WorkflowBinding>,
@@ -188,6 +196,7 @@ impl WorkflowSpecificationService {
     ) -> Result<(), WorkflowSpecificationError> {
         let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         verify_workflow_profile(&mut transaction, profile_id).await?;
+        let removed_step_materials = has_step_materials(&mut transaction, profile_id, &[]).await?;
         let result = sqlx::query(
             "DELETE FROM workflow_profile_specifications WHERE profile_id = ? AND specification_revision = ?",
         )
@@ -197,6 +206,9 @@ impl WorkflowSpecificationService {
         .await?;
         if result.rows_affected() != 1 {
             return Err(load_specification_conflict(&mut transaction, profile_id).await?);
+        }
+        if removed_step_materials {
+            bump_materials_revision(&mut transaction, profile_id).await?;
         }
         transaction.commit().await?;
         Ok(())
@@ -266,6 +278,7 @@ impl WorkflowSpecificationService {
 #[derive(FromRow)]
 struct BindingRow {
     step_index: i64,
+    step_id: String,
     title: String,
     description: Option<String>,
     ref_id: Option<String>,
@@ -284,6 +297,7 @@ struct StoredWorkflowBinding {
 
 #[derive(Clone, Debug)]
 struct StoredWorkflowStep {
+    step_id: String,
     title: String,
     description: Option<String>,
     bindings: Vec<StoredWorkflowBinding>,
@@ -325,7 +339,7 @@ impl WorkflowSpecificationPreview {
     }
 }
 
-async fn verify_workflow_profile(
+pub(crate) async fn verify_workflow_profile(
     transaction: &mut Transaction<'_, Sqlite>,
     profile_id: &str,
 ) -> Result<(), WorkflowSpecificationError> {
@@ -350,11 +364,24 @@ fn validate_save_command(command: &WorkflowSpecificationSaveCommand) -> Result<(
             "workflow Profile ID must not be empty".to_string(),
         ));
     }
+    let mut step_ids = BTreeSet::new();
     for step in &command.steps {
         if step.title.trim().is_empty() {
             return Err(WorkflowSpecificationError::InvalidRequest(
                 "workflow step title must not be empty".to_string(),
             ));
+        }
+        if let Some(step_id) = &step.step_id {
+            if Uuid::parse_str(step_id).is_err() {
+                return Err(WorkflowSpecificationError::InvalidRequest(
+                    "workflow step ID must be a UUID".to_string(),
+                ));
+            }
+            if !step_ids.insert(step_id) {
+                return Err(WorkflowSpecificationError::InvalidRequest(
+                    "workflow step IDs must be unique".to_string(),
+                ));
+            }
         }
     }
     Ok(())
@@ -471,16 +498,62 @@ async fn replace_steps(
     steps: &[WorkflowStepCommand],
     available: &BTreeMap<String, AvailableWorkflowCapability>,
 ) -> Result<(), WorkflowSpecificationError> {
-    sqlx::query("DELETE FROM workflow_profile_steps WHERE profile_id = ?")
+    let step_ids: Vec<String> = steps
+        .iter()
+        .map(|step| step.step_id.clone().unwrap_or_else(|| Uuid::new_v4().to_string()))
+        .collect();
+    sqlx::query("DELETE FROM workflow_profile_step_bindings WHERE profile_id = ?")
         .bind(profile_id)
         .execute(&mut **transaction)
         .await?;
-    for (step_index, step) in steps.iter().enumerate() {
+    if step_ids.is_empty() {
+        let removed_step_materials = has_step_materials(transaction, profile_id, &step_ids).await?;
+        sqlx::query("DELETE FROM workflow_profile_steps WHERE profile_id = ?")
+            .bind(profile_id)
+            .execute(&mut **transaction)
+            .await?;
+        if removed_step_materials {
+            bump_materials_revision(transaction, profile_id).await?;
+        }
+    } else {
+        let removed_step_materials = has_step_materials(transaction, profile_id, &step_ids).await?;
+        let mut deleted_steps =
+            sqlx::QueryBuilder::<Sqlite>::new("DELETE FROM workflow_profile_steps WHERE profile_id = ");
+        deleted_steps.push_bind(profile_id).push(" AND step_id NOT IN (");
+        let mut separated = deleted_steps.separated(", ");
+        for step_id in &step_ids {
+            separated.push_bind(step_id);
+        }
+        separated.push_unseparated(")");
+        deleted_steps.build().execute(&mut **transaction).await?;
+        if removed_step_materials {
+            bump_materials_revision(transaction, profile_id).await?;
+        }
+        let maximum_existing_step_index: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(step_index), -1) + 1 FROM workflow_profile_steps WHERE profile_id = ?",
+        )
+        .bind(profile_id)
+        .fetch_one(&mut **transaction)
+        .await?;
+        let temporary_index_offset = maximum_existing_step_index.max(steps.len() as i64);
+        sqlx::query("UPDATE workflow_profile_steps SET step_index = step_index + ? WHERE profile_id = ?")
+            .bind(temporary_index_offset)
+            .bind(profile_id)
+            .execute(&mut **transaction)
+            .await?;
+    }
+    for ((step_index, step), step_id) in steps.iter().enumerate().zip(&step_ids) {
         sqlx::query(
-            "INSERT INTO workflow_profile_steps (profile_id, step_index, title, description) VALUES (?, ?, ?, ?)",
+            "INSERT INTO workflow_profile_steps (profile_id, step_index, step_id, title, description)
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(profile_id, step_id) DO UPDATE SET
+                step_index = excluded.step_index,
+                title = excluded.title,
+                description = excluded.description",
         )
         .bind(profile_id)
         .bind(step_index as i64)
+        .bind(step_id)
         .bind(&step.title)
         .bind(&step.description)
         .execute(&mut **transaction)
@@ -507,6 +580,43 @@ async fn replace_steps(
     Ok(())
 }
 
+async fn has_step_materials(
+    transaction: &mut Transaction<'_, Sqlite>,
+    profile_id: &str,
+    retained_step_ids: &[String],
+) -> Result<bool, WorkflowSpecificationError> {
+    let mut query = sqlx::QueryBuilder::<Sqlite>::new(
+        "SELECT EXISTS(SELECT 1 FROM workflow_profile_step_materials WHERE profile_id = ",
+    );
+    query.push_bind(profile_id);
+    if retained_step_ids.is_empty() {
+        query.push(")");
+    } else {
+        query.push(" AND step_id NOT IN (");
+        let mut separated = query.separated(", ");
+        for step_id in retained_step_ids {
+            separated.push_bind(step_id);
+        }
+        separated.push_unseparated("))");
+    }
+    Ok(query.build_query_scalar().fetch_one(&mut **transaction).await?)
+}
+
+async fn bump_materials_revision(
+    transaction: &mut Transaction<'_, Sqlite>,
+    profile_id: &str,
+) -> Result<(), WorkflowSpecificationError> {
+    sqlx::query(
+        "UPDATE workflow_profile_material_libraries \
+         SET materials_revision = materials_revision + 1, updated_at = CURRENT_TIMESTAMP \
+         WHERE profile_id = ?",
+    )
+    .bind(profile_id)
+    .execute(&mut **transaction)
+    .await?;
+    Ok(())
+}
+
 async fn load_specification(
     transaction: &mut Transaction<'_, Sqlite>,
     profile_id: &str,
@@ -522,7 +632,7 @@ async fn load_specification(
         return Ok(None);
     };
     let rows: Vec<BindingRow> = sqlx::query_as(
-        "SELECT step.step_index, step.title, step.description, binding.ref_id, binding.binding_policy,
+        "SELECT step.step_index, step.step_id, step.title, step.description, binding.ref_id, binding.binding_policy,
                 binding.expected_state_generation, binding.expected_capability_id
          FROM workflow_profile_steps step
          LEFT JOIN workflow_profile_step_bindings binding
@@ -545,6 +655,7 @@ async fn load_specification(
     let mut steps: BTreeMap<i64, StoredWorkflowStep> = BTreeMap::new();
     for row in rows {
         let step = steps.entry(row.step_index).or_insert_with(|| StoredWorkflowStep {
+            step_id: row.step_id,
             title: row.title,
             description: row.description,
             bindings: Vec::new(),
@@ -589,6 +700,7 @@ impl From<StoredWorkflowSpecification> for WorkflowSpecification {
                 .steps
                 .into_iter()
                 .map(|step| WorkflowStep {
+                    step_id: step.step_id,
                     title: step.title,
                     description: step.description,
                     bindings: step

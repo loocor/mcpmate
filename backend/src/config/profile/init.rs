@@ -24,6 +24,10 @@ async fn verify_profile_tables(pool: &Pool<Sqlite>) -> Result<()> {
         "workflow_profile_specifications",
         "workflow_profile_steps",
         "workflow_profile_step_bindings",
+        "workflow_profile_skills",
+        "workflow_profile_material_libraries",
+        "workflow_profile_materials",
+        "workflow_profile_step_materials",
     ] {
         sqlx::query(&format!(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='{table}'"

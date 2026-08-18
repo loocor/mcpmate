@@ -42,6 +42,7 @@ export async function submitProfileAuthoring(
 
 export interface ProfileFormDraft {
 	name: string;
+	skill_name: string;
 	description: string;
 	suit_type: string;
 	priority: number;
@@ -49,6 +50,10 @@ export interface ProfileFormDraft {
 	is_default: boolean;
 	clone_from_id: string;
 	profile_mode?: ProfileMode;
+}
+
+export function isValidSkillName(value: string): boolean {
+	return value.length <= 64 && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value);
 }
 
 export interface ProfileAuthoringResetIdentity {
@@ -109,7 +114,7 @@ export function buildProfileAuthoringSaveRequest({
 				? draft.clone_from_id
 				: null,
 		...(draft.profile_mode === "workflow"
-			? { profile_mode: "workflow" as const }
+			? { profile_mode: "workflow" as const, skill_name: draft.skill_name.trim() }
 			: {}),
 	};
 }
@@ -160,6 +165,7 @@ export function profileFormDraftFromAuthoringView(
 ): ProfileFormDraft {
 	return {
 		name: view.profile.name,
+		skill_name: view.skill_name ?? "",
 		description: view.profile.description || "",
 		suit_type: view.profile.suit_type,
 		priority: view.profile.priority,

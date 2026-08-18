@@ -7,21 +7,24 @@ use aide::axum::{
     ApiRouter,
     routing::{delete_with, get_with, post_with},
 };
+use axum::{extract::DefaultBodyLimit, routing::post};
 
 use super::AppState;
-use crate::api::handlers::profile;
 use crate::api::models::profile::{
     ProfileAuthoringSaveReq, ProfileAuthoringSaveResp, ProfileAuthoringViewResp, ProfileComponentListReq,
     ProfileComponentManageReq, ProfileDeleteReq, ProfileDetailsReq, ProfileDetailsResp, ProfileIdReq, ProfileListReq,
     ProfileListResp, ProfileManageReq, ProfileManageResp, ProfilePromptsListResp, ProfileResourceTemplatesListResp,
     ProfileResourcesListResp, ProfileServerManageReq, ProfileServerManageResp, ProfileServersListResp,
-    ProfileToolsListResp, WorkflowSpecificationDeleteReq, WorkflowSpecificationDeleteResp,
+    ProfileToolsListResp, WorkflowMaterialDeleteReq, WorkflowMaterialDeleteResp, WorkflowMaterialPreviewResp,
+    WorkflowMaterialSaveReq, WorkflowMaterialSaveResp, WorkflowMaterialsReorderReq, WorkflowMaterialsReorderResp,
+    WorkflowMaterialsViewResp, WorkflowSpecificationDeleteReq, WorkflowSpecificationDeleteResp,
     WorkflowSpecificationPreviewResp, WorkflowSpecificationSaveReq, WorkflowSpecificationSaveResp,
-    WorkflowSpecificationViewResp,
+    WorkflowSpecificationViewResp, WorkflowStepMaterialsSaveReq, WorkflowStepMaterialsSaveResp,
 };
 use crate::api::models::resp::ProfileApiErrorResp;
 use crate::api::models::token_estimate::{CapabilityTokenLedgerResponse, TokenEstimateQuery, TokenEstimateResponse};
 use crate::{aide_wrapper_payload, aide_wrapper_query};
+use crate::{api::handlers::profile, core::profile::materials::MAX_UPLOAD_BYTES};
 
 /// Create Profile management routes
 pub fn routes(state: Arc<AppState>) -> ApiRouter {
@@ -66,6 +69,38 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
                 workflow_specification_preview_aide,
                 workflow_specification_preview_contract_docs,
             ),
+        )
+        .api_route(
+            "/mcp/profile/workflow/materials/view",
+            get_with(workflow_materials_view_aide, workflow_materials_view_docs),
+        )
+        .api_route(
+            "/mcp/profile/workflow/materials/save",
+            post_with(workflow_material_save_aide, workflow_material_save_docs),
+        )
+        .api_route(
+            "/mcp/profile/workflow/materials/delete",
+            delete_with(workflow_material_delete_aide, workflow_material_delete_docs),
+        )
+        .api_route(
+            "/mcp/profile/workflow/materials/reorder",
+            post_with(workflow_materials_reorder_aide, workflow_materials_reorder_docs),
+        )
+        .api_route(
+            "/mcp/profile/workflow/step-materials/save",
+            post_with(workflow_step_materials_save_aide, workflow_step_materials_save_docs),
+        )
+        .api_route(
+            "/mcp/profile/workflow/materials/upload",
+            post(profile::workflow_material_upload).into(),
+        )
+        .api_route(
+            "/mcp/profile/workflow/materials/replace",
+            post(profile::workflow_material_replace).into(),
+        )
+        .api_route(
+            "/mcp/profile/workflow/materials/preview",
+            get_with(workflow_material_preview_aide, workflow_material_preview_docs),
         )
         .api_route(
             "/mcp/profile/delete",
@@ -127,6 +162,7 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
             "/mcp/profile/capability-token-ledger",
             get_with(capability_token_ledger_aide, capability_token_ledger_docs),
         )
+        .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES + 1024 * 1024))
         .with_state(state)
 }
 
@@ -185,6 +221,48 @@ aide_wrapper_query!(
     ProfileIdReq,
     WorkflowSpecificationPreviewResp,
     "Preview a Workflow Profile specification without publishing an MCP surface"
+);
+
+aide_wrapper_query!(
+    profile::workflow_materials_view,
+    ProfileIdReq,
+    WorkflowMaterialsViewResp,
+    "Load Workflow Profile Materials"
+);
+
+aide_wrapper_payload!(
+    profile::workflow_material_save,
+    WorkflowMaterialSaveReq,
+    WorkflowMaterialSaveResp,
+    "Create or update a Workflow Material"
+);
+
+aide_wrapper_payload!(
+    profile::workflow_material_delete,
+    WorkflowMaterialDeleteReq,
+    WorkflowMaterialDeleteResp,
+    "Delete a Workflow Material"
+);
+
+aide_wrapper_payload!(
+    profile::workflow_materials_reorder,
+    WorkflowMaterialsReorderReq,
+    WorkflowMaterialsReorderResp,
+    "Replace the ordered Workflow Materials library"
+);
+
+aide_wrapper_payload!(
+    profile::workflow_step_materials_save,
+    WorkflowStepMaterialsSaveReq,
+    WorkflowStepMaterialsSaveResp,
+    "Replace ordered Material references for a Workflow Step"
+);
+
+aide_wrapper_query!(
+    profile::workflow_material_preview,
+    profile::materials::MaterialPreviewReq,
+    WorkflowMaterialPreviewResp,
+    "Preview a text Workflow Material"
 );
 
 aide_wrapper_payload!(

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { HelpCircle, Loader2 } from "lucide-react";
 import {
 	useCallback,
 	useEffect,
@@ -22,6 +22,7 @@ import {
 	createProfileAuthoringConflictState,
 	profileFormDraftFromAuthoringView,
 	reduceProfileAuthoringConflict,
+	isValidSkillName,
 	shouldResetProfileAuthoringState,
 	submitProfileAuthoring,
 	type ProfileFormDraft,
@@ -56,6 +57,12 @@ import { Label } from "./ui/label";
 import { ScrollArea } from "./ui/scroll-area";
 import { Switch } from "./ui/switch";
 import { Textarea } from "./ui/textarea";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipProvider,
+	TooltipTrigger,
+} from "./ui/tooltip";
 import { Transfer, type TransferItem } from "./ui/transfer";
 import { Segment, type SegmentOption } from "./ui/segment";
 
@@ -68,6 +75,15 @@ const arraysEqual = (a: string[], b: string[]) => {
 	const setB = new Set(b);
 	return a.every((id) => setB.has(id));
 };
+
+const suggestedSkillName = (name: string) =>
+	name
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "")
+		.slice(0, 64)
+		.replace(/-+$/g, "");
 
 interface ProfileAuthoringConflictSummaryProps {
 	changes: ProfileServerAssignmentChanges;
@@ -188,6 +204,7 @@ export function ProfileFormDrawer({
 	// Form state
 	const [formData, setFormData] = useState<ProfileFormDraft>({
 		name: "",
+		skill_name: "",
 		description: "",
 		suit_type: restrictProfileType || "shared",
 		priority: 50,
@@ -199,6 +216,7 @@ export function ProfileFormDrawer({
 
 	// Generate unique IDs for form elements
 	const nameId = useId();
+	const skillNameId = useId();
 	const descriptionId = useId();
 	const validationNotesId = useId();
 	const avoidRulesId = useId();
@@ -229,6 +247,7 @@ export function ProfileFormDrawer({
 		profileId: suit?.id ?? null,
 	});
 	const workflowRulesHydrationRef = useRef<string | null>(null);
+	const skillNameTouchedRef = useRef(false);
 
 	const isHostAppProfile = restrictProfileType === "host_app" || suit?.suit_type === "host_app";
 	const isWorkflowProfile = formData.profile_mode === "workflow";
@@ -300,6 +319,7 @@ export function ProfileFormDrawer({
 		if (mode === "edit" && suit) {
 			setFormData({
 				name: suit.name,
+				skill_name: "",
 				description: suit.description || "",
 				suit_type: suit.suit_type,
 				priority: suit.priority,
@@ -312,6 +332,7 @@ export function ProfileFormDrawer({
 			// Create mode - reset to empty form
 			setFormData({
 				name: "",
+				skill_name: "",
 				description: "",
 				suit_type: restrictProfileType || "shared",
 				priority: 50,
@@ -383,6 +404,7 @@ export function ProfileFormDrawer({
 		);
 		resetIdentityRef.current = nextIdentity;
 		if (shouldReset) {
+			skillNameTouchedRef.current = false;
 			resetAllStates();
 		}
 		if (!open) {
@@ -447,6 +469,7 @@ export function ProfileFormDrawer({
 				return;
 			}
 			setFormData(profileFormDraftFromAuthoringView(authoringView));
+			skillNameTouchedRef.current = Boolean(authoringView.skill_name);
 			setSelectedServerIds(authoringView.server_ids);
 			dispatchConflict({ type: "baselineLoaded", view: authoringView });
 			setSelectionInitialized(true);
@@ -530,6 +553,13 @@ export function ProfileFormDrawer({
 			);
 			return;
 		}
+		if (isWorkflowProfile && !isValidSkillName(formData.skill_name.trim())) {
+			notifyError(
+				t("profiles:form.messages.validationFailed", { defaultValue: "Validation failed" }),
+				t("profiles:form.messages.skillNameInvalid"),
+			);
+			return;
+		}
 
 		if (step === "details" && isWorkflowProfile) {
 			setStep("workflow-rules");
@@ -608,7 +638,8 @@ export function ProfileFormDrawer({
 				formData.is_active !== current.is_active ||
 				formData.is_default !== current.is_default ||
 				formData.profile_mode !==
-					(authoringBaselineView.profile_mode ?? current.profile_mode ?? "capability");
+					(authoringBaselineView.profile_mode ?? current.profile_mode ?? "capability") ||
+				formData.skill_name !== (authoringBaselineView.skill_name ?? "");
 			if (!latestAuthoringView && !selectionChanged && !hasFieldUpdates) {
 				closeDrawer();
 				return;
@@ -628,7 +659,10 @@ export function ProfileFormDrawer({
 	const isMutating = authoringMutation.isPending;
 	const detailsStepValid =
 		isHostAppProfile ||
-		(formData.name.trim().length > 0 && (!isWorkflowProfile || formData.description.trim().length > 0));
+		(formData.name.trim().length > 0 &&
+			(!isWorkflowProfile ||
+				(formData.description.trim().length > 0 &&
+					isValidSkillName(formData.skill_name.trim()))));
 
 	const allServers = useMemo(
 		() => allServersResponse?.servers ?? [],
@@ -980,7 +1014,13 @@ export function ProfileFormDrawer({
 										id={nameId}
 										value={formData.name}
 										onChange={(e) =>
-											setFormData((prev) => ({ ...prev, name: e.target.value }))
+											setFormData((prev) => ({
+												...prev,
+												name: e.target.value,
+												...(prev.profile_mode === "workflow" && !skillNameTouchedRef.current
+													? { skill_name: suggestedSkillName(e.target.value) }
+													: {}),
+											}))
 										}
 										placeholder={t("profiles:form.placeholders.profileName", {
 											defaultValue: "Enter profile name",
@@ -989,6 +1029,50 @@ export function ProfileFormDrawer({
 										className="flex-1"
 									/>
 								</div>
+
+								{isWorkflowProfile && (
+									<div className="flex items-start gap-4">
+										<Label
+											htmlFor={skillNameId}
+											className="flex w-32 items-center gap-1 pt-2 text-sm font-medium text-slate-600 dark:text-slate-300"
+										>
+												{t("profiles:form.fields.skillName")}
+											<TooltipProvider delayDuration={200}>
+												<Tooltip>
+													<TooltipTrigger asChild>
+														<span
+															className="inline-flex cursor-help text-muted-foreground"
+														aria-label={t("profiles:form.fields.skillNameHelp")}
+														>
+															<HelpCircle className="size-3.5" />
+														</span>
+													</TooltipTrigger>
+													<TooltipContent side="right" className="max-w-xs">
+														{t("profiles:form.fields.skillNameHelp")}
+													</TooltipContent>
+												</Tooltip>
+											</TooltipProvider>
+										</Label>
+										<div className="min-w-0 flex-1">
+											<Input
+												id={skillNameId}
+												value={formData.skill_name}
+												onChange={(e) => {
+													skillNameTouchedRef.current = true;
+													setFormData((prev) => ({ ...prev, skill_name: e.target.value }));
+												}}
+											placeholder={t("profiles:form.placeholders.skillName")}
+												maxLength={64}
+												pattern="[a-z0-9]+(-[a-z0-9]+)*"
+												aria-invalid={
+													formData.skill_name.length > 0 &&
+													!isValidSkillName(formData.skill_name.trim())
+												}
+												required
+											/>
+										</div>
+									</div>
+								)}
 
 								<div className="flex items-start gap-4">
 									<Label
@@ -1025,10 +1109,28 @@ export function ProfileFormDrawer({
 								</div>
 
 								<div className="flex items-start gap-4" role="group" aria-labelledby={profileModeId}>
-									<Label id={profileModeId} className="w-32 pt-2 text-sm font-medium text-slate-600 dark:text-slate-300">
+									<Label id={profileModeId} className="flex w-32 items-center gap-1 pt-2 text-sm font-medium text-slate-600 dark:text-slate-300">
 										{t("profiles:form.fields.profileMode")}
+										<TooltipProvider delayDuration={200}>
+											<Tooltip>
+												<TooltipTrigger asChild>
+													<span
+														className="inline-flex cursor-help text-muted-foreground"
+														aria-label="Profile mode help"
+													>
+														<HelpCircle className="size-3.5" />
+													</span>
+												</TooltipTrigger>
+												<TooltipContent side="right" className="max-w-xs">
+													{isWorkflowProfile
+														? t("profiles:form.profileModes.workflowDescription")
+														: t("profiles:form.profileModes.capabilityDescription")}
+													{mode === "edit" ? ` ${t("profiles:form.profileModes.editLockedHint")}` : null}
+												</TooltipContent>
+											</Tooltip>
+										</TooltipProvider>
 									</Label>
-									<div className="min-w-0 flex-1 space-y-2">
+									<div className="min-w-0 flex-1">
 										<Segment
 											value={formData.profile_mode}
 											onValueChange={(value) => {
@@ -1036,6 +1138,9 @@ export function ProfileFormDrawer({
 												setFormData((prev) => ({
 													...prev,
 													profile_mode: value as "capability" | "workflow",
+													...(value === "workflow" && !skillNameTouchedRef.current
+														? { skill_name: suggestedSkillName(prev.name) }
+														: {}),
 													...(value === "workflow" ? { is_active: false, is_default: false } : {}),
 												}));
 											}}
@@ -1043,12 +1148,6 @@ export function ProfileFormDrawer({
 											showDots={false}
 											disabled={mode === "edit"}
 										/>
-										<p className="pl-1 text-xs leading-relaxed text-muted-foreground">
-											{isWorkflowProfile
-												? t("profiles:form.profileModes.workflowDescription")
-												: t("profiles:form.profileModes.capabilityDescription")}
-											{mode === "edit" ? ` ${t("profiles:form.profileModes.editLockedHint")}` : null}
-										</p>
 									</div>
 								</div>
 

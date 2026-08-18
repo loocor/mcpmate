@@ -27,6 +27,7 @@ export function capabilityRecordMatchesSearch(
 		item.unique_name,
 		item.tool_name,
 		item.prompt_name,
+		item.ref_id,
 		item.resource_uri,
 		item.uri,
 		item.uriTemplate,

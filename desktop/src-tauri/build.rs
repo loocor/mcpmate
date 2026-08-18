@@ -1,4 +1,4 @@
-use std::collections::{hash_map::DefaultHasher, HashMap};
+use std::collections::{HashMap, hash_map::DefaultHasher};
 use std::env;
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -267,7 +267,8 @@ fn ensure_backend_sidecar(context: &BackendBuildContext, binary_name: &str, side
         return;
     }
 
-    if sidecar_target.exists() && sidecar_plain.exists()
+    if sidecar_target.exists()
+        && sidecar_plain.exists()
         && let Ok(existing) = fs::read_to_string(&fingerprint_path)
         && existing.trim() == fingerprint
     {

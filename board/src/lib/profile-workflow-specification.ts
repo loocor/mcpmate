@@ -2,6 +2,7 @@ import type { WorkflowBinding, WorkflowSpecification, WorkflowStep } from "./typ
 
 export interface WorkflowCapabilityOption {
 	ref_id: string;
+	server_id: string;
 	label: string;
 	description?: string;
 }
@@ -33,6 +34,7 @@ function option(
 	item: unknown,
 	refKeys: string[],
 	labelKeys: string[],
+	serverId: string,
 ): WorkflowCapabilityOption | null {
 	if (!item || typeof item !== "object" || Array.isArray(item)) {
 		return null;
@@ -44,19 +46,22 @@ function option(
 	}
 	const label = readString(record, labelKeys) ?? refId;
 	const description = readString(record, ["description"]);
-	return description ? { ref_id: refId, label, description } : { ref_id: refId, label };
+	return description
+		? { ref_id: refId, server_id: serverId, label, description }
+		: { ref_id: refId, server_id: serverId, label };
 }
 
 export function buildWorkflowCapabilityOptions(
 	batches: WorkflowCapabilityBatch[],
 ): WorkflowCapabilityOption[] {
 	const options: WorkflowCapabilityOption[] = [];
-	for (const { lists } of batches) {
+	for (const { server, lists } of batches) {
 		for (const item of lists.tools.items ?? []) {
 			const mapped = option(
 				item,
 				["ref_id", "id"],
 				["unique_name", "tool_name", "name"],
+				server.id,
 			);
 			if (mapped) options.push(mapped);
 		}
@@ -65,6 +70,7 @@ export function buildWorkflowCapabilityOptions(
 				item,
 				["ref_id", "id"],
 				["unique_uri", "resource_uri", "uri"],
+				server.id,
 			);
 			if (mapped) options.push(mapped);
 		}
@@ -73,6 +79,7 @@ export function buildWorkflowCapabilityOptions(
 				item,
 				["ref_id", "id"],
 				["unique_name", "prompt_name", "name"],
+				server.id,
 			);
 			if (mapped) options.push(mapped);
 		}
@@ -81,6 +88,7 @@ export function buildWorkflowCapabilityOptions(
 				item,
 				["ref_id", "id"],
 				["unique_uri_template", "uri_template", "uriTemplate"],
+				server.id,
 			);
 			if (mapped) options.push(mapped);
 		}
@@ -89,9 +97,27 @@ export function buildWorkflowCapabilityOptions(
 }
 
 export interface WorkflowStepDraft {
+    step_id?: string;
 	title: string;
 	description: string;
 	bindings: WorkflowBinding[];
+}
+
+export function createEmptyWorkflowStep(): WorkflowStepDraft {
+	return {
+		step_id: crypto.randomUUID(),
+		title: "",
+		description: "",
+		bindings: [],
+	};
+}
+
+export function isUnsavedWorkflowStep(
+	step: WorkflowStepDraft | undefined,
+	persistedStepIds: ReadonlySet<string>,
+): boolean {
+	if (!step?.step_id) return true;
+	return !persistedStepIds.has(step.step_id);
 }
 
 export function withSingleWorkflowCapabilityBinding(
@@ -117,6 +143,7 @@ export function workflowDraftFromSpecification(
 	specification: WorkflowSpecification | undefined,
 ): WorkflowStepDraft[] {
 	return (specification?.steps ?? []).map((step) => ({
+		step_id: step.step_id,
 		title: step.title,
 		description: step.description ?? "",
 		bindings: step.bindings.map((binding) => ({ ...binding })),
@@ -125,6 +152,7 @@ export function workflowDraftFromSpecification(
 
 export function serializeWorkflowSteps(steps: WorkflowStepDraft[]): WorkflowStep[] {
 	return steps.map((step) => ({
+		step_id: step.step_id ?? crypto.randomUUID(),
 		title: step.title.trim(),
 		description: step.description.trim() || null,
 		bindings: step.bindings.map((binding) => ({
