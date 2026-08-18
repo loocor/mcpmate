@@ -139,6 +139,24 @@ async fn upgrades_workflow_steps_with_standard_uuid_ids() {
 }
 
 #[tokio::test]
+async fn rejects_incomplete_existing_workflow_materials_storage() {
+    let pool = memory_support::pool().await;
+    prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect("prepare current config database");
+    sqlx::query("DROP INDEX idx_workflow_profile_materials_ordinal")
+        .execute(&pool)
+        .await
+        .expect("remove a required Workflow Materials index");
+    rewind_config_to_version(&pool, 14).await;
+
+    let error = prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect_err("incomplete Workflow Materials storage must be rejected");
+    assert!(error.to_string().contains("does not match the versioned contract"));
+}
+
+#[tokio::test]
 async fn creates_config_and_audit_schema_through_independent_ledgers() {
     let config = memory_support::pool().await;
     prepare_config_database(&config, DatabaseSource::InMemory)

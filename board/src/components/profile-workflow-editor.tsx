@@ -32,6 +32,7 @@ import {
 } from "../lib/profile-workflow-specification";
 import type {
   WorkflowBindingPolicy,
+  WorkflowMaterial,
   WorkflowMaterialsView,
   WorkflowSpecification,
 } from "../lib/types";
@@ -317,8 +318,8 @@ export function ProfileWorkflowEditor({
   const selectedStepBinding = editingStep.bindings[0] ?? null;
   const selectedCapability = selectedStepBinding
     ? capabilities.find(
-      (capability) => capability.ref_id === selectedStepBinding.ref_id,
-    )
+        (capability) => capability.ref_id === selectedStepBinding.ref_id,
+      )
     : null;
   const editingStepMaterialIds = selectedStepIsUnsaved
     ? (selectedStep.step_id
@@ -393,9 +394,9 @@ export function ProfileWorkflowEditor({
     const draft =
       selectedStepIndex === null && steps.length === 0
         ? {
-          ...newStep,
-          step_id: newStep.step_id ?? crypto.randomUUID(),
-        }
+            ...newStep,
+            step_id: newStep.step_id ?? crypto.randomUUID(),
+          }
         : createEmptyWorkflowStep();
     const nextIndex = steps.length === 0 ? 0 : steps.length;
     setSteps((current) =>
@@ -619,7 +620,7 @@ export function ProfileWorkflowEditor({
                         <CapsuleStripeListItem
                           key={index}
                           className={`${PROFILE_EDITOR_SIDEBAR_ITEM_CLASS} ${isSelected ? "bg-primary/10" : "hover:bg-accent/50"
-                            }`}
+                          }`}
                           draggable
                           onDragEnd={() => setDraggedStepIndex(null)}
                           onDragOver={(event) => {
@@ -655,18 +656,18 @@ export function ProfileWorkflowEditor({
                           >
                             <span
                               className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md border text-sm font-semibold ${isSelected
-                                ? "border-primary bg-primary text-primary-foreground"
-                                : "border-slate-200 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300"
-                                }`}
+                                  ? "border-primary bg-primary text-primary-foreground"
+                                  : "border-slate-200 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300"
+                              }`}
                             >
                               {index + 1}
                             </span>
                             <span className="min-w-0 flex-1">
                               <span
                                 className={`block truncate font-medium ${isSelected
-                                  ? "text-primary"
-                                  : "text-slate-900 dark:text-slate-100"
-                                  }`}
+                                    ? "text-primary"
+                                    : "text-slate-900 dark:text-slate-100"
+                                }`}
                               >
                                 {step.title ||
                                   t("profiles:detail.workflow.untitledStep")}
@@ -740,8 +741,8 @@ export function ProfileWorkflowEditor({
                     {selectedStepIndex === null
                       ? t("profiles:detail.workflow.stepSettingsTitle")
                       : t("profiles:detail.workflow.step", {
-                        number: selectedStepIndex + 1,
-                      })}
+                          number: selectedStepIndex + 1,
+                        })}
                   </div>
                   <CardDescription className="truncate text-xs text-slate-500 dark:text-slate-400">
                     {selectedStepIndex === null
@@ -819,12 +820,12 @@ export function ProfileWorkflowEditor({
                                     bindings: current.bindings.map(
                                       (currentBinding) =>
                                         currentBinding.ref_id ===
-                                          selectedStepBinding.ref_id
+                                        selectedStepBinding.ref_id
                                           ? {
-                                            ...currentBinding,
-                                            binding_policy:
-                                              value as WorkflowBindingPolicy,
-                                          }
+                                              ...currentBinding,
+                                              binding_policy:
+                                                value as WorkflowBindingPolicy,
+                                            }
                                           : currentBinding,
                                     ),
                                   }))
@@ -1147,8 +1148,6 @@ export function ProfileWorkflowEditor({
     </div>
   );
 }
-
-
 const MATERIAL_PREVIEW_HOVER_BUTTON_CLASS =
   "h-8 w-8 bg-transparent opacity-0 shadow-none transition-opacity hover:bg-transparent group-hover:opacity-100 focus-visible:opacity-100";
 
@@ -1267,10 +1266,10 @@ export function ProfileWorkflowMaterials({
   // Do not copy it into React state — a parent re-render would rewrite the textarea.
   const markdownRef = useRef("");
   const applyMarkdownEditor = useCallback((content: string, editorKey: string) => {
-    markdownRef.current = content;
-    setHasMarkdownContent(content.trim().length > 0);
-    setMarkdownEditorSeed(content);
-    setMarkdownEditorKey(editorKey);
+      markdownRef.current = content;
+      setHasMarkdownContent(content.trim().length > 0);
+      setMarkdownEditorSeed(content);
+      setMarkdownEditorKey(editorKey);
   }, []);
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
@@ -1302,27 +1301,27 @@ export function ProfileWorkflowMaterials({
   const selected =
     materials.find((material) => material.material_id === selectedId) ?? null;
   const selectMaterial = useCallback((materialId: string) => {
-    const activeId = selectedIdRef.current;
-    const latestMarkdown = markdownRef.current;
-    if (activeId && activeId !== materialId) {
-      setDrafts((current) => {
-        let changed = false;
-        const next = current.map((draft) => {
-          if (draft.material_id !== activeId) return draft;
-          if (draft.markdown_content === latestMarkdown) return draft;
-          changed = true;
-          return { ...draft, markdown_content: latestMarkdown };
+      const activeId = selectedIdRef.current;
+      const latestMarkdown = markdownRef.current;
+      if (activeId && activeId !== materialId) {
+        setDrafts((current) => {
+          let changed = false;
+          const next = current.map((draft) => {
+            if (draft.material_id !== activeId) return draft;
+            if (draft.markdown_content === latestMarkdown) return draft;
+            changed = true;
+            return { ...draft, markdown_content: latestMarkdown };
+          });
+          return changed ? next : current;
         });
-        return changed ? next : current;
-      });
-    }
-    pendingMaterialSelectionRef.current = {
-      targetId: materialId,
-      staleId: selectedMaterialId,
-      staleIgnored: false,
-    };
-    setSelectedId(materialId);
-    onSelectedMaterialIdChange(materialId);
+      }
+      pendingMaterialSelectionRef.current = {
+        targetId: materialId,
+        staleId: selectedMaterialId,
+        staleIgnored: false,
+      };
+      setSelectedId(materialId);
+      onSelectedMaterialIdChange(materialId);
   }, [onSelectedMaterialIdChange, selectedMaterialId]);
   const updateSelectedDraft = (
     update: (draft: {
@@ -1355,16 +1354,16 @@ export function ProfileWorkflowMaterials({
   isPreviewOpenRef.current = isPreviewOpen;
 
   const flushMarkdownToDraft = useCallback((draftId: string, content: string) => {
-    setDrafts((current) => {
-      let changed = false;
-      const next = current.map((draft) => {
-        if (draft.material_id !== draftId) return draft;
-        if (draft.markdown_content === content) return draft;
-        changed = true;
-        return { ...draft, markdown_content: content };
+      setDrafts((current) => {
+        let changed = false;
+        const next = current.map((draft) => {
+          if (draft.material_id !== draftId) return draft;
+          if (draft.markdown_content === content) return draft;
+          changed = true;
+          return { ...draft, markdown_content: content };
+        });
+        return changed ? next : current;
       });
-      return changed ? next : current;
-    });
   }, []);
 
   const handleMarkdownChange = useCallback(
@@ -1457,6 +1456,31 @@ export function ProfileWorkflowMaterials({
       selectedIsText,
     ),
   });
+  const replaceCachedMaterial = useCallback(
+    (material: WorkflowMaterial) => {
+      queryClient.setQueryData<WorkflowMaterialsView>(
+        ["workflowMaterials", profileId],
+        (current) => {
+          if (!current) return current;
+          const existingMaterialIndex = current.materials.findIndex(
+            (item) => item.material_id === material.material_id,
+          );
+          const materials =
+            existingMaterialIndex < 0
+              ? [...current.materials, material]
+              : current.materials.map((item) =>
+                item.material_id === material.material_id ? material : item,
+              );
+          return {
+            ...current,
+            materials_revision: current.materials_revision + 1,
+            materials,
+          };
+        },
+      );
+    },
+    [profileId, queryClient],
+  );
   useEffect(() => {
     if (!isPreviewOpen) {
       return;
@@ -1504,16 +1528,7 @@ export function ProfileWorkflowMaterials({
     },
     onSuccess: (material) => {
       const draftId = selectedDraft?.material_id ?? null;
-      queryClient.setQueryData<WorkflowMaterialsView>(
-        ["workflowMaterials", profileId],
-        (current) => {
-          if (!current) return current;
-          const materials = current.materials.filter(
-            (item) => item.material_id !== material.material_id,
-          );
-          return { ...current, materials: [...materials, material] };
-        },
-      );
+      replaceCachedMaterial(material);
       if (draftId) {
         setDrafts((current) =>
           current.filter((draft) => draft.material_id !== draftId),
@@ -1561,6 +1576,7 @@ export function ProfileWorkflowMaterials({
     },
     onSuccess: (material) => {
       const draftId = selectedDraft?.material_id ?? null;
+      replaceCachedMaterial(material);
       if (draftId) {
         setDrafts((current) =>
           current.filter((draft) => draft.material_id !== draftId),
@@ -1593,8 +1609,8 @@ export function ProfileWorkflowMaterials({
     mutationFn: () =>
       selected
         ? configSuitsApi.deleteWorkflowMaterial({
-          profile_id: profileId,
-          material_id: selected.material_id,
+            profile_id: profileId,
+            material_id: selected.material_id,
           expected_material_revision: selected.material_revision,
           expected_materials_revision:
             materialsQuery.data?.materials_revision ?? -1,
@@ -1872,6 +1888,27 @@ export function ProfileWorkflowMaterials({
     },
   ];
 
+  if (materialsQuery.isError) {
+    return (
+      <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <CardContent className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+          <p className="text-sm text-destructive">
+            {materialsQuery.error instanceof Error
+              ? materialsQuery.error.message
+              : t("profiles:detail.workflow.materials.loadFailed")}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => materialsQuery.refetch()}
+          >
+            {t("common:retry", { defaultValue: "Retry" })}
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
   const listItems = [
     ...materials.map((material) => ({
       id: material.material_id,
@@ -1930,8 +1967,8 @@ export function ProfileWorkflowMaterials({
                       const persistedIndex = item.isDraft
                         ? -1
                         : materials.findIndex(
-                          (material) => material.material_id === item.id,
-                        );
+                            (material) => material.material_id === item.id,
+                          );
                       return (
                         <CapsuleStripeListItem
                           key={item.id}
@@ -2021,8 +2058,8 @@ export function ProfileWorkflowMaterials({
                     <CardDescription className="truncate text-xs text-slate-500 dark:text-slate-400">
                       {isCreating
                         ? t(
-                          "profiles:detail.workflow.materials.createDescription",
-                        )
+                            "profiles:detail.workflow.materials.createDescription",
+                          )
                         : `${(selected?.kind ?? "").replaceAll("_", " ")} · ${t("profiles:detail.workflow.materials.usedBy", { count: selected?.reference_step_ids.length ?? 0 })}`}
                     </CardDescription>
                   </div>
@@ -2053,8 +2090,8 @@ export function ProfileWorkflowMaterials({
                       <p className="text-sm text-muted-foreground">
                         {isCreating
                           ? t(
-                            "profiles:detail.workflow.materials.createDescription",
-                          )
+                              "profiles:detail.workflow.materials.createDescription",
+                            )
                           : `${(selected?.kind ?? "").replaceAll("_", " ")} · ${t("profiles:detail.workflow.materials.usedBy", { count: selected?.reference_step_ids.length ?? 0 })}`}
                       </p>
                     </div>
@@ -2087,9 +2124,14 @@ export function ProfileWorkflowMaterials({
                         value={creationKind}
                         onValueChange={(value) => {
                           const nextKind = value as
-                            | "external_url"
-                            | "markdown_file"
-                            | "uploaded_file";
+                            "external_url" | "markdown_file" | "uploaded_file";
+                          const markdownContent = markdownRef.current;
+                          if (creationKind === "markdown_file") {
+                            updateSelectedDraft((draft) => ({
+                              ...draft,
+                              markdown_content: markdownContent,
+                            }));
+                          }
                           setCreationKind(nextKind);
                           updateSelectedDraft((draft) => ({
                             ...draft,
@@ -2114,7 +2156,9 @@ export function ProfileWorkflowMaterials({
                           </SelectItem>
                           {selected?.kind !== "external_url" || isCreating ? (
                             <SelectItem value="uploaded_file">
-                              {t("profiles:detail.workflow.materials.uploadFile")}
+                              {t(
+                                "profiles:detail.workflow.materials.uploadFile",
+                              )}
                             </SelectItem>
                           ) : null}
                         </SelectContent>
@@ -2258,9 +2302,9 @@ export function ProfileWorkflowMaterials({
                 )}
               </div>
               {isPreviewOpen &&
-                (creationKind === "markdown_file" ||
-                  selected?.kind === "uploaded_file" ||
-                  selected?.kind === "markdown_file") ? (
+              (creationKind === "markdown_file" ||
+                selected?.kind === "uploaded_file" ||
+                selected?.kind === "markdown_file") ? (
                 // Transparent shell: only the rounded preview frame is opaque so it masks the form beneath.
                 <div className="absolute inset-x-0 bottom-0 top-[62px] z-20 flex min-h-0 flex-col bg-transparent">
                   {/*
@@ -2282,9 +2326,12 @@ export function ProfileWorkflowMaterials({
                       <div className="bg-background p-3">
                         {previewQuery.isError ? (
                           <p className="text-sm text-destructive">
-                            {t("profiles:detail.workflow.materials.previewFailed")}
+                            {t(
+                              "profiles:detail.workflow.materials.previewFailed",
+                            )}
                           </p>
-                        ) : creationKind === "markdown_file" || selectedIsText ? (
+                        ) : creationKind === "markdown_file" ||
+                          selectedIsText ? (
                           <MaterialFilePreview
                             content={previewContent}
                             extension={
@@ -2305,7 +2352,7 @@ export function ProfileWorkflowMaterials({
                     </CardListScrollBody>
                     <div className="absolute right-4 top-2 z-10 flex items-center gap-1">
                       {creationKind === "markdown_file" ||
-                        (selectedExtension === "md" && selectedIsText) ? (
+                      (selectedExtension === "md" && selectedIsText) ? (
                         <Button
                           type="button"
                           size="icon"
@@ -2313,13 +2360,21 @@ export function ProfileWorkflowMaterials({
                           className={MATERIAL_PREVIEW_HOVER_BUTTON_CLASS}
                           title={
                             markdownPreviewMode === "rendered"
-                              ? t("profiles:detail.workflow.materials.showSource")
-                              : t("profiles:detail.workflow.materials.showPreview")
+                              ? t(
+                                  "profiles:detail.workflow.materials.showSource",
+                                )
+                              : t(
+                                  "profiles:detail.workflow.materials.showPreview",
+                                )
                           }
                           aria-label={
                             markdownPreviewMode === "rendered"
-                              ? t("profiles:detail.workflow.materials.showSource")
-                              : t("profiles:detail.workflow.materials.showPreview")
+                              ? t(
+                                  "profiles:detail.workflow.materials.showSource",
+                                )
+                              : t(
+                                  "profiles:detail.workflow.materials.showPreview",
+                                )
                           }
                           onClick={() =>
                             setMarkdownPreviewMode((mode) =>
@@ -2335,8 +2390,8 @@ export function ProfileWorkflowMaterials({
                         </Button>
                       ) : null}
                       {desktopLocalFileActionsAvailable &&
-                        selected &&
-                        !isCreating ? (
+                      selected &&
+                      !isCreating ? (
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button
@@ -2344,7 +2399,9 @@ export function ProfileWorkflowMaterials({
                               size="icon"
                               variant="ghost"
                               className={`${MATERIAL_PREVIEW_HOVER_BUTTON_CLASS} data-[state=open]:opacity-100`}
-                              aria-label={t("profiles:detail.workflow.materials.fileActions")}
+                              aria-label={t(
+                                "profiles:detail.workflow.materials.fileActions",
+                              )}
                             >
                               <MoreHorizontal className="h-4 w-4" />
                             </Button>
@@ -2354,7 +2411,9 @@ export function ProfileWorkflowMaterials({
                               onSelect={() => void runDesktopFileAction("open")}
                             >
                               <FileText className="mr-2 h-4 w-4" />
-                              {t("profiles:detail.workflow.materials.openWithDefaultApp")}
+                              {t(
+                                "profiles:detail.workflow.materials.openWithDefaultApp",
+                              )}
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               onSelect={() =>
@@ -2362,7 +2421,9 @@ export function ProfileWorkflowMaterials({
                               }
                             >
                               <FolderOpen className="mr-2 h-4 w-4" />
-                              {t("profiles:detail.workflow.materials.revealInFileManager")}
+                              {t(
+                                "profiles:detail.workflow.materials.revealInFileManager",
+                              )}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -2372,7 +2433,9 @@ export function ProfileWorkflowMaterials({
                         size="icon"
                         variant="ghost"
                         className={MATERIAL_PREVIEW_HOVER_BUTTON_CLASS}
-                        aria-label={t("profiles:detail.workflow.materials.closePreview")}
+                        aria-label={t(
+                          "profiles:detail.workflow.materials.closePreview",
+                        )}
                         onClick={() => setIsPreviewOpen(false)}
                       >
                         <X className="h-4 w-4" />
@@ -2409,7 +2472,7 @@ export function ProfileWorkflowMaterials({
                     </Button>
                   ) : null}
                   {creationKind !== "uploaded_file" ||
-                    (selected && !isCreating) ? (
+                  (selected && !isCreating) ? (
                     <Button
                       type="button"
                       size="sm"
@@ -2421,8 +2484,8 @@ export function ProfileWorkflowMaterials({
                         ? creationKind === "external_url"
                           ? t("profiles:detail.workflow.materials.createUrl")
                           : t(
-                            "profiles:detail.workflow.materials.createMarkdown",
-                          )
+                              "profiles:detail.workflow.materials.createMarkdown",
+                            )
                         : t("profiles:detail.workflow.save")}
                     </Button>
                   ) : null}

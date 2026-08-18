@@ -64,6 +64,19 @@ describe("MaterialFilePreview", () => {
 		expect(html).toMatch(/alpha[\s\S]*\n\n[\s\S]*beta/);
 	});
 
+	it("keeps unlabeled fenced Markdown code as a block", () => {
+		const html = renderToStaticMarkup(
+			<MaterialFilePreview
+				content={"```\nalpha\n\nbeta\n```"}
+				extension="md"
+				markdownMode="rendered"
+			/>,
+		);
+
+		expect(html).toContain("<pre");
+		expect(html).toMatch(/alpha[\s\S]*beta/);
+	});
+
 	it("keeps the full document in large source mode instead of a windowed slice", () => {
 		const marker = "UNIQUE_END_MARKER_ZYX";
 		const content = `start\n${"x".repeat(LARGE_MATERIAL_PREVIEW_CHARS + 8)}\n${marker}`;

@@ -402,6 +402,81 @@ async fn workflow_specification_is_ordered_cas_aware_and_never_publishes_a_surfa
 }
 
 #[tokio::test]
+async fn workflow_specification_can_expand_while_retaining_and_reordering_steps() {
+    let pool = pool().await;
+    let ref_ids = add_server(&pool, "server-a", "Server A", 1).await;
+    let profile = workflow_authoring_service(&pool)
+        .save(workflow_profile_command(), "test")
+        .await
+        .expect("create workflow Profile");
+    let profile_id = profile.profile.id.expect("created workflow Profile ID");
+    let service = WorkflowSpecificationService::new(pool);
+    let first = service
+        .save(WorkflowSpecificationSaveCommand {
+            profile_id: profile_id.clone(),
+            expected_specification_revision: None,
+            validation_notes: None,
+            avoid_rules: None,
+            steps: vec![WorkflowStepCommand {
+                step_id: None,
+                title: "Retained".to_string(),
+                description: None,
+                bindings: vec![WorkflowBindingCommand {
+                    ref_id: ref_ids[0].clone(),
+                    binding_policy: WorkflowBindingPolicy::MetaOnDemand,
+                }],
+            }],
+        })
+        .await
+        .expect("save initial workflow step");
+
+    let saved = service
+        .save(WorkflowSpecificationSaveCommand {
+            profile_id,
+            expected_specification_revision: first.specification_revision,
+            validation_notes: None,
+            avoid_rules: None,
+            steps: vec![
+                WorkflowStepCommand {
+                    step_id: None,
+                    title: "Inserted first".to_string(),
+                    description: None,
+                    bindings: vec![WorkflowBindingCommand {
+                        ref_id: ref_ids[0].clone(),
+                        binding_policy: WorkflowBindingPolicy::MetaOnDemand,
+                    }],
+                },
+                WorkflowStepCommand {
+                    step_id: None,
+                    title: "Inserted second".to_string(),
+                    description: None,
+                    bindings: vec![WorkflowBindingCommand {
+                        ref_id: ref_ids[0].clone(),
+                        binding_policy: WorkflowBindingPolicy::MetaOnDemand,
+                    }],
+                },
+                WorkflowStepCommand {
+                    step_id: Some(first.steps[0].step_id.clone()),
+                    title: "Retained".to_string(),
+                    description: None,
+                    bindings: vec![WorkflowBindingCommand {
+                        ref_id: ref_ids[0].clone(),
+                        binding_policy: WorkflowBindingPolicy::MetaOnDemand,
+                    }],
+                },
+            ],
+        })
+        .await
+        .expect("expand and reorder workflow steps");
+
+    assert_eq!(
+        saved.steps.iter().map(|step| step.title.as_str()).collect::<Vec<_>>(),
+        ["Inserted first", "Inserted second", "Retained"]
+    );
+    assert_eq!(saved.steps[2].step_id, first.steps[0].step_id);
+}
+
+#[tokio::test]
 async fn workflow_authoring_and_specification_save_rolls_back_together() {
     let pool = pool().await;
     let ref_ids = add_server(&pool, "server-a", "Server A", 1).await;
@@ -660,10 +735,7 @@ async fn workflow_materials_keep_ordered_step_references_and_managed_files() {
         })
         .await
         .expect("create Markdown Material");
-    assert_eq!(
-        markdown.relative_path.as_deref(),
-        Some("references/local-evidence.md")
-    );
+    assert_eq!(markdown.relative_path.as_deref(), Some("references/local-evidence.md"));
     let markdown_path = temporary
         .path()
         .join(&initial.skill_name)

@@ -529,12 +529,13 @@ async fn replace_steps(
         if removed_step_materials {
             bump_materials_revision(transaction, profile_id).await?;
         }
-        let temporary_index_offset: i64 = sqlx::query_scalar(
+        let maximum_existing_step_index: i64 = sqlx::query_scalar(
             "SELECT COALESCE(MAX(step_index), -1) + 1 FROM workflow_profile_steps WHERE profile_id = ?",
         )
         .bind(profile_id)
         .fetch_one(&mut **transaction)
         .await?;
+        let temporary_index_offset = maximum_existing_step_index.max(steps.len() as i64);
         sqlx::query("UPDATE workflow_profile_steps SET step_index = step_index + ? WHERE profile_id = ?")
             .bind(temporary_index_offset)
             .bind(profile_id)

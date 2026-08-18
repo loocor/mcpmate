@@ -57,7 +57,7 @@ function RichMarkdownPreview({
 						</blockquote>
 					),
 					pre: ({ children }) => {
-						if (highlightFences) {
+						if (highlightFences && hasFencedCodeLanguage(children)) {
 							return <>{children}</>;
 						}
 						return (
@@ -108,7 +108,10 @@ export const MaterialFilePreview = memo(function MaterialFilePreview({
 	if (isRenderedPreview) {
 		return (
 			<div className={cn("min-w-0", className)}>
-				<RichMarkdownPreview content={content} highlightFences={highlightSource} />
+				<RichMarkdownPreview
+					content={content}
+					highlightFences={highlightSource}
+				/>
 			</div>
 		);
 	}
