@@ -550,6 +550,68 @@ async fn workflow_binding_rejects_globally_disabled_servers() {
 }
 
 #[tokio::test]
+async fn deleting_workflow_specification_bumps_materials_revision_for_cascaded_links() {
+    let pool = pool().await;
+    let ref_ids = add_server(&pool, "server-a", "Materials Server", 1).await;
+    let profile = workflow_authoring_service(&pool)
+        .save(workflow_profile_command(), "test")
+        .await
+        .expect("create workflow Profile");
+    let profile_id = profile.profile.id.expect("workflow Profile ID");
+    let specification = WorkflowSpecificationService::new(pool.clone())
+        .save(WorkflowSpecificationSaveCommand {
+            profile_id: profile_id.clone(),
+            expected_specification_revision: None,
+            validation_notes: None,
+            avoid_rules: None,
+            steps: workflow_steps(&ref_ids),
+        })
+        .await
+        .expect("save workflow specification");
+    let temporary = tempfile::tempdir().expect("create managed Skills directory");
+    let materials = WorkflowMaterialsService::new(pool.clone(), temporary.path().to_path_buf());
+    let initial = materials.view(&profile_id).await.expect("initialize Materials library");
+    let material = materials
+        .save(WorkflowMaterialSaveCommand {
+            profile_id: profile_id.clone(),
+            material_id: None,
+            expected_material_revision: None,
+            expected_materials_revision: initial.materials_revision,
+            title: "Evidence".to_string(),
+            kind: WorkflowMaterialKind::ExternalUrl,
+            external_url: Some("https://example.com/evidence".to_string()),
+            markdown_content: None,
+        })
+        .await
+        .expect("create Material");
+    let step_id = specification.steps[0].step_id.clone();
+    materials
+        .save_step_materials(WorkflowStepMaterialsSaveCommand {
+            profile_id: profile_id.clone(),
+            step_id,
+            material_ids: vec![material.material_id],
+            expected_materials_revision: initial.materials_revision + 1,
+        })
+        .await
+        .expect("attach Material to workflow step");
+    let before_delete = materials.view(&profile_id).await.expect("load linked Materials");
+
+    WorkflowSpecificationService::new(pool)
+        .delete(
+            &profile_id,
+            specification
+                .specification_revision
+                .expect("saved specification revision"),
+        )
+        .await
+        .expect("delete workflow specification");
+
+    let after_delete = materials.view(&profile_id).await.expect("reload Materials library");
+    assert_eq!(after_delete.materials_revision, before_delete.materials_revision + 1);
+    assert!(after_delete.step_material_ids.is_empty());
+}
+
+#[tokio::test]
 async fn workflow_materials_keep_ordered_step_references_and_managed_files() {
     let pool = pool().await;
     let ref_ids = add_server(&pool, "server-a", "Materials Server", 1).await;

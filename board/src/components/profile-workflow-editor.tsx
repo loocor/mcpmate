@@ -30,7 +30,11 @@ import {
   type WorkflowCapabilityOption,
   type WorkflowStepDraft,
 } from "../lib/profile-workflow-specification";
-import type { WorkflowBindingPolicy, WorkflowMaterialsView } from "../lib/types";
+import type {
+  WorkflowBindingPolicy,
+  WorkflowMaterialsView,
+  WorkflowSpecification,
+} from "../lib/types";
 import CapabilityCombobox from "./capability-combobox";
 import {
   ProfileSurfaceMetrics,
@@ -493,86 +497,77 @@ export function ProfileWorkflowEditor({
       withSingleWorkflowCapabilityBinding(current, refId),
     );
   };
+  const persistDraftStepMaterials = async (
+    specification: WorkflowSpecification,
+    pendingMaterialIdsByStepId: Record<string, string[]>,
+  ) => {
+    const persistedStepIds = new Set(
+      specification.steps.map((step) => step.step_id),
+    );
+    const pendingEntries = Object.entries(pendingMaterialIdsByStepId).filter(
+      ([stepId, materialIds]) =>
+        persistedStepIds.has(stepId) && materialIds.length > 0,
+    );
+    if (pendingEntries.length === 0) return;
+
+    const savedStepIds: string[] = [];
+    try {
+      for (const [stepId, materialIds] of pendingEntries) {
+        const materials = await configSuitsApi.getWorkflowMaterials(profileId);
+        await configSuitsApi.saveWorkflowStepMaterials({
+          profile_id: profileId,
+          step_id: stepId,
+          material_ids: materialIds,
+          expected_materials_revision: materials.materials_revision,
+        });
+        savedStepIds.push(stepId);
+      }
+    } catch (error) {
+      notifyError(
+        error instanceof Error
+          ? error.message
+          : t("profiles:detail.workflow.materials.saveStepMaterialsFailed"),
+      );
+    } finally {
+      if (savedStepIds.length > 0) {
+        setDraftMaterialIdsByStepId((current) => {
+          const next = { ...current };
+          for (const stepId of savedStepIds) delete next[stepId];
+          return next;
+        });
+        queryClient.invalidateQueries({
+          queryKey: ["workflowMaterials", profileId],
+        });
+      }
+    }
+  };
   const saveEditedSteps = () => {
+    const pendingMaterialIdsByStepId = Object.fromEntries(
+      Object.entries(draftMaterialIdsByStepId).map(([stepId, materialIds]) => [
+        stepId,
+        [...materialIds],
+      ]),
+    );
     if (selectedStepIndex === null) {
       const newStepIndex = steps.length;
-      const draftStepId = newStep.step_id;
-      const draftMaterialIds = draftStepId
-        ? (draftMaterialIdsByStepId[draftStepId] ?? [])
-        : [];
       saveMutation.mutate([...steps, newStep], {
         onSuccess: async (specification) => {
           setSelectedStepIndex(newStepIndex);
-          const stepId = workflowDraftFromSpecification(specification)[newStepIndex]?.step_id;
-          if (stepId && draftMaterialIds.length > 0) {
-            try {
-              const materials =
-                await configSuitsApi.getWorkflowMaterials(profileId);
-              await configSuitsApi.saveWorkflowStepMaterials({
-                profile_id: profileId,
-                step_id: stepId,
-                material_ids: draftMaterialIds,
-                expected_materials_revision: materials.materials_revision,
-              });
-              if (draftStepId) {
-                setDraftMaterialIdsByStepId((current) => {
-                  const next = { ...current };
-                  delete next[draftStepId];
-                  return next;
-                });
-              }
-              queryClient.invalidateQueries({
-                queryKey: ["workflowMaterials", profileId],
-              });
-            } catch (error) {
-              notifyError(
-                error instanceof Error
-                  ? error.message
-                  : t("profiles:detail.workflow.materials.saveStepMaterialsFailed"),
-              );
-            }
-          }
+          await persistDraftStepMaterials(
+            specification,
+            pendingMaterialIdsByStepId,
+          );
         },
       });
       return;
     }
 
-    const pendingDraftMaterials =
-      selectedStepIsUnsaved &&
-        selectedStep.step_id &&
-        (draftMaterialIdsByStepId[selectedStep.step_id]?.length ?? 0) > 0
-        ? {
-          stepId: selectedStep.step_id,
-          materialIds: [...(draftMaterialIdsByStepId[selectedStep.step_id] ?? [])],
-        }
-        : null;
     saveMutation.mutate(steps, {
-      onSuccess: async () => {
-        if (!pendingDraftMaterials) return;
-        try {
-          const materials =
-            await configSuitsApi.getWorkflowMaterials(profileId);
-          await configSuitsApi.saveWorkflowStepMaterials({
-            profile_id: profileId,
-            step_id: pendingDraftMaterials.stepId,
-            material_ids: pendingDraftMaterials.materialIds,
-            expected_materials_revision: materials.materials_revision,
-          });
-          setDraftMaterialIdsByStepId((current) => {
-            const next = { ...current };
-            delete next[pendingDraftMaterials.stepId];
-            return next;
-          });
-          queryClient.invalidateQueries({
-            queryKey: ["workflowMaterials", profileId],
-          });
-        } catch (error) {
-          notifyError(
-            error instanceof Error
-              ? error.message
-              : t("profiles:detail.workflow.materials.saveStepMaterialsFailed"),
-          );
-        }
+      onSuccess: async (specification) => {
+        await persistDraftStepMaterials(
+          specification,
+          pendingMaterialIdsByStepId,
+        );
       },
     });
   };
@@ -1581,6 +1576,9 @@ export function ProfileWorkflowMaterials({
       );
       selectMaterial(material.material_id);
       queryClient.invalidateQueries({
+        queryKey: ["workflowMaterialPreview", profileId, material.material_id],
+      });
+      queryClient.invalidateQueries({
         queryKey: ["workflowMaterials", profileId],
       });
     },
@@ -2199,7 +2197,9 @@ export function ProfileWorkflowMaterials({
                               accept=".md,.js,.mjs,.cjs,.py,.pdf,.json,.yaml,.yml,.toml,.docx,.xlsx"
                               disabled={uploadMutation.isPending}
                               onChange={(event) => {
-                                const file = event.target.files?.[0];
+                                const input = event.currentTarget;
+                                const file = input.files?.[0];
+                                input.value = "";
                                 if (file) uploadMutation.mutate(file);
                               }}
                             />
@@ -2240,7 +2240,9 @@ export function ProfileWorkflowMaterials({
                             accept=".md,.js,.mjs,.cjs,.py,.pdf,.json,.yaml,.yml,.toml,.docx,.xlsx"
                             disabled={uploadMutation.isPending}
                             onChange={(event) => {
-                              const file = event.target.files?.[0];
+                              const input = event.currentTarget;
+                              const file = input.files?.[0];
+                              input.value = "";
                               if (file) uploadMutation.mutate(file);
                             }}
                           />

@@ -196,6 +196,7 @@ impl WorkflowSpecificationService {
     ) -> Result<(), WorkflowSpecificationError> {
         let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         verify_workflow_profile(&mut transaction, profile_id).await?;
+        let removed_step_materials = has_step_materials(&mut transaction, profile_id, &[]).await?;
         let result = sqlx::query(
             "DELETE FROM workflow_profile_specifications WHERE profile_id = ? AND specification_revision = ?",
         )
@@ -205,6 +206,9 @@ impl WorkflowSpecificationService {
         .await?;
         if result.rows_affected() != 1 {
             return Err(load_specification_conflict(&mut transaction, profile_id).await?);
+        }
+        if removed_step_materials {
+            bump_materials_revision(&mut transaction, profile_id).await?;
         }
         transaction.commit().await?;
         Ok(())
