@@ -656,7 +656,9 @@ export function ProfileWorkflowGuide({
   return (
     <section
       className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
-      aria-label="Workflow Guide"
+      aria-label={t("profiles:detail.workflow.guide.regionLabel", {
+        defaultValue: "Workflow Guide",
+      })}
     >
       <header className="flex items-center justify-between border-b px-4 py-2">
         <div>
@@ -708,11 +710,18 @@ export function ProfileWorkflowGuide({
         maxLeftWidth={520}
         preferRightPanelSpace
       >
-        <nav className="overflow-auto border-r p-3" aria-label="Guide outline">
+        <nav
+          className="overflow-auto border-r p-3"
+          aria-label={t("profiles:detail.workflow.guide.outlineLabel", {
+            defaultValue: "Guide outline",
+          })}
+        >
           <ol className="space-y-0.5 text-sm">
             <li className="group">
               <button
-                aria-label="Open main Guide"
+                aria-label={t("profiles:detail.workflow.guide.openMainGuide", {
+                  defaultValue: "Open main Guide",
+                })}
                 className={cn(
                   "flex w-full items-center gap-1.5 rounded-sm px-1.5 py-1 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
                   activeDocumentPath === "SKILL.md" && "bg-muted",
@@ -788,7 +797,9 @@ export function ProfileWorkflowGuide({
                       {file.title}
                     </span>
                     <span className="shrink-0 rounded-sm bg-muted px-1 text-[10px] text-muted-foreground">
-                      Reference
+                      {t("profiles:detail.workflow.guide.reference", {
+                        defaultValue: "Reference",
+                      })}
                     </span>
                   </button>
                 </li>
@@ -797,7 +808,9 @@ export function ProfileWorkflowGuide({
         </nav>
         <div className="flex min-w-0 min-h-0 flex-col">
           <nav
-            aria-label="Guide document breadcrumb"
+            aria-label={t("profiles:detail.workflow.guide.breadcrumbLabel", {
+              defaultValue: "Guide document breadcrumb",
+            })}
             className="flex h-9 shrink-0 items-center gap-1 border-b px-4 text-xs text-muted-foreground"
           >
             <button
@@ -971,9 +984,16 @@ export function ProfileWorkflowGuide({
                                     }
                                   >
                                     <option value="meta_on_demand">
-                                      Meta on demand
+                                      {t(
+                                        "profiles:detail.workflow.guide.metaOnDemand",
+                                        { defaultValue: "Meta on demand" },
+                                      )}
                                     </option>
-                                    <option value="direct">Direct</option>
+                                    <option value="direct">
+                                      {t("profiles:detail.workflow.guide.direct", {
+                                        defaultValue: "Direct",
+                                      })}
+                                    </option>
                                   </select>
                                 </label>
                                 <label className="block space-y-1 text-xs font-medium text-muted-foreground">
@@ -1097,7 +1117,9 @@ export function ProfileWorkflowGuide({
             </div>
             <aside
               className="w-64 shrink-0 overflow-auto border-l px-3 py-3"
-              aria-label="Guide inspector"
+              aria-label={t("profiles:detail.workflow.guide.inspectorLabel", {
+                defaultValue: "Guide inspector",
+              })}
             >
               <section>
                 <h4 className="px-1.5 text-xs font-medium">
@@ -1396,6 +1418,7 @@ function GuideBoundaryInsert({
   creatingPackageFile: boolean;
   onSetInsertionPoint: (offset: number) => void;
 }) {
+  const { t } = useTranslation(["profiles", "common"]);
   const [activeInsert, setActiveInsert] = useState<
     | "external_markdown"
     | "reference"
@@ -1430,7 +1453,9 @@ function GuideBoundaryInsert({
       <Popover>
         <PopoverTrigger asChild>
           <Button
-            aria-label="Insert at this position"
+            aria-label={t("profiles:detail.workflow.guide.insertAtPosition", {
+              defaultValue: "Insert at this position",
+            })}
             className="mx-1 h-5 w-5 rounded-full border bg-background p-0 opacity-0 shadow-none transition-opacity group-hover/boundary:opacity-100 group-focus-within/boundary:opacity-100"
             onClick={() => onSetInsertionPoint(offset)}
             size="icon"
@@ -1442,7 +1467,9 @@ function GuideBoundaryInsert({
         <PopoverContent align="center" className="w-72 p-2">
           <div className="space-y-1">
             <p className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-              Insert
+              {t("profiles:detail.workflow.guide.insert", {
+                defaultValue: "Insert",
+              })}
             </p>
             <Button
               className="w-full justify-start"
@@ -1451,7 +1478,9 @@ function GuideBoundaryInsert({
               variant="ghost"
             >
               <FileText className="mr-2 h-3.5 w-3.5" />
-              In-Place Markdown
+              {t("profiles:detail.workflow.guide.inPlaceMarkdown", {
+                defaultValue: "In-Place Markdown",
+              })}
             </Button>
             <Button
               className="w-full justify-start"
@@ -1460,7 +1489,9 @@ function GuideBoundaryInsert({
               variant="ghost"
             >
               <FilePlus2 className="mr-2 h-3.5 w-3.5" />
-              External Markdown
+              {t("profiles:detail.workflow.guide.externalMarkdown", {
+                defaultValue: "External Markdown",
+              })}
             </Button>
             <Button
               className="w-full justify-start"
@@ -1469,7 +1500,9 @@ function GuideBoundaryInsert({
               variant="ghost"
             >
               <FileText className="mr-2 h-3.5 w-3.5" />
-              Reference
+              {t("profiles:detail.workflow.guide.reference", {
+                defaultValue: "Reference",
+              })}
             </Button>
             <Button
               className="w-full justify-start"
@@ -1478,7 +1511,9 @@ function GuideBoundaryInsert({
               variant="ghost"
             >
               <Wrench className="mr-2 h-3.5 w-3.5" />
-              Capability
+              {t("profiles:detail.workflow.guide.capability", {
+                defaultValue: "Capability",
+              })}
             </Button>
             <Button
               className="w-full justify-start"
@@ -1487,7 +1522,9 @@ function GuideBoundaryInsert({
               variant="ghost"
             >
               <FileText className="mr-2 h-3.5 w-3.5" />
-              Script
+              {t("profiles:detail.workflow.guide.script", {
+                defaultValue: "Script",
+              })}
             </Button>
             <Button
               className="w-full justify-start"
@@ -1496,43 +1533,47 @@ function GuideBoundaryInsert({
               variant="ghost"
             >
               <FileText className="mr-2 h-3.5 w-3.5" />
-              Asset
+              {t("profiles:detail.workflow.guide.asset", {
+                defaultValue: "Asset",
+              })}
             </Button>
           </div>
           {activeInsert === "capability" ? (
             <div className="mt-2 border-t pt-2">
               <div className="max-h-40 space-y-1 overflow-auto">
-              {capabilitiesLoading ? (
-                <p className="px-2 py-1 text-xs text-muted-foreground">
-                  Loading…
-                </p>
-              ) : (
-                capabilities.map((capability) => (
-                  <Button
-                    className="w-full justify-start"
-                    key={capability.ref_id}
-                    onClick={() => setSelectedCapability(capability)}
-                    size="sm"
-                    variant={
-                      selectedCapability?.ref_id === capability.ref_id
-                        ? "secondary"
-                        : "ghost"
-                    }
-                  >
-                    {capability.label}
-                  </Button>
-                ))
-              )}
-            </div>
-            {selectedCapability ? (
-              <div className="mt-2 space-y-2 border-t px-2 pt-2">
+                {capabilitiesLoading ? (
+                  <p className="px-2 py-1 text-xs text-muted-foreground">
+                    {t("common:loading", { defaultValue: "Loading..." })}
+                  </p>
+                ) : (
+                  capabilities.map((capability) => (
+                    <Button
+                      className="w-full justify-start"
+                      key={capability.ref_id}
+                      onClick={() => setSelectedCapability(capability)}
+                      size="sm"
+                      variant={
+                        selectedCapability?.ref_id === capability.ref_id
+                          ? "secondary"
+                          : "ghost"
+                      }
+                    >
+                      {capability.label}
+                    </Button>
+                  ))
+                )}
+              </div>
+              {selectedCapability ? (
+                <div className="mt-2 space-y-2 border-t px-2 pt-2">
                 <p className="text-xs font-medium">
                   {selectedCapability.label}
                 </p>
                 {selectedCapability.description ? (
                   <p className="text-[11px] leading-4 text-muted-foreground">
                     <span className="font-medium">
-                      Tool usage description:{" "}
+                      {t("profiles:detail.workflow.guide.toolUsageDescription", {
+                        defaultValue: "Tool usage description:",
+                      })}{" "}
                     </span>
                     {selectedCapability.description}
                   </p>
@@ -1541,10 +1582,15 @@ function GuideBoundaryInsert({
                   className="block text-[11px] font-medium text-muted-foreground"
                   htmlFor={`capability-exposure-${offset}`}
                 >
-                  Exposure
+                  {t("profiles:detail.workflow.guide.exposure", {
+                    defaultValue: "Exposure",
+                  })}
                 </label>
                 <select
-                  aria-label="Capability exposure"
+                  aria-label={t(
+                    "profiles:detail.workflow.guide.capabilityExposure",
+                    { defaultValue: "Capability exposure" },
+                  )}
                   className="h-8 w-full rounded-md border bg-background px-2 text-xs"
                   id={`capability-exposure-${offset}`}
                   value={bindingPolicy}
@@ -1554,21 +1600,34 @@ function GuideBoundaryInsert({
                     )
                   }
                 >
-                  <option value="meta_on_demand">Meta on demand</option>
-                  <option value="direct">Direct exposure</option>
+                  <option value="meta_on_demand">
+                    {t("profiles:detail.workflow.guide.metaOnDemand", {
+                      defaultValue: "Meta on demand",
+                    })}
+                  </option>
+                  <option value="direct">
+                    {t("profiles:detail.workflow.guide.directExposure", {
+                      defaultValue: "Direct exposure",
+                    })}
+                  </option>
                 </select>
                 <label
                   className="block text-[11px] font-medium text-muted-foreground"
                   htmlFor={`capability-guide-${offset}`}
                 >
-                  Guide
+                  {t("profiles:detail.workflow.guide.capabilityGuide", {
+                    defaultValue: "Guide",
+                  })}
                 </label>
                 <Textarea
                   className="min-h-20 resize-y text-xs"
                   id={`capability-guide-${offset}`}
                   value={capabilityGuide}
                   onChange={(event) => setCapabilityGuide(event.target.value)}
-                  placeholder="How this occurrence should be used"
+                  placeholder={t(
+                    "profiles:detail.workflow.guide.capabilityGuidePlaceholder",
+                    { defaultValue: "How this occurrence should be used" },
+                  )}
                 />
                 <Button
                   className="w-full justify-start"
@@ -1582,10 +1641,12 @@ function GuideBoundaryInsert({
                   size="sm"
                 >
                   <Plus className="mr-2 h-3.5 w-3.5" />
-                  Insert capability
+                  {t("profiles:detail.workflow.guide.insertCapability", {
+                    defaultValue: "Insert capability",
+                  })}
                 </Button>
-              </div>
-            ) : null}
+                </div>
+              ) : null}
             </div>
           ) : null}
           {activeInsert === "external_markdown" ? (
@@ -1594,7 +1655,9 @@ function GuideBoundaryInsert({
                 className="block text-[11px] font-medium text-muted-foreground"
                 htmlFor={`external-document-${offset}`}
               >
-                New external Markdown
+                {t("profiles:detail.workflow.guide.newExternalMarkdown", {
+                  defaultValue: "New external Markdown",
+                })}
               </label>
               <div className="mt-1 flex gap-1">
                 <Input
@@ -1603,10 +1666,15 @@ function GuideBoundaryInsert({
                   onChange={(event) =>
                     setExternalDocumentTitle(event.target.value)
                   }
-                  placeholder="Section name"
+                  placeholder={t("profiles:detail.workflow.guide.sectionName", {
+                    defaultValue: "Section name",
+                  })}
                 />
                 <Button
-                  aria-label="Create external Markdown"
+                  aria-label={t(
+                    "profiles:detail.workflow.guide.createExternalMarkdown",
+                    { defaultValue: "Create external Markdown" },
+                  )}
                   disabled={
                     !externalDocumentTitle.trim() || creatingExternalDocument
                   }
@@ -1627,36 +1695,45 @@ function GuideBoundaryInsert({
           activeInsert === "asset" ? (
             <div className="mt-2 border-t pt-2">
               <div className="max-h-40 space-y-1 overflow-auto">
-              {visibleFiles.map((file) => (
-                <Button
-                  className="w-full justify-start"
-                  key={file.package_file_id}
-                  onClick={() =>
-                    onInsert(`[${file.title}](${file.relative_path})`)
-                  }
-                  size="sm"
-                  variant="ghost"
-                >
-                  {file.title}
-                </Button>
-              ))}
-              {visibleFiles.length === 0 ? (
-                <p className="px-2 py-1 text-xs text-muted-foreground">
-                  No package files yet.
-                </p>
-              ) : null}
-            </div>
-            <div className="mt-2 space-y-2 border-t px-2 pt-2">
+                {visibleFiles.map((file) => (
+                  <Button
+                    className="w-full justify-start"
+                    key={file.package_file_id}
+                    onClick={() =>
+                      onInsert(`[${file.title}](${file.relative_path})`)
+                    }
+                    size="sm"
+                    variant="ghost"
+                  >
+                    {file.title}
+                  </Button>
+                ))}
+                {visibleFiles.length === 0 ? (
+                  <p className="px-2 py-1 text-xs text-muted-foreground">
+                    {t("profiles:detail.workflow.guide.noPackageFiles", {
+                      defaultValue: "No package files yet.",
+                    })}
+                  </p>
+                ) : null}
+              </div>
+              <div className="mt-2 space-y-2 border-t px-2 pt-2">
               <p className="text-[11px] font-medium text-muted-foreground">
-                Upload package file
+                {t("profiles:detail.workflow.guide.uploadPackageFile", {
+                  defaultValue: "Upload package file",
+                })}
               </p>
               <Input
                 value={packageTitle}
                 onChange={(event) => setPackageTitle(event.target.value)}
-                placeholder="File title"
+                placeholder={t("profiles:detail.workflow.guide.fileTitle", {
+                  defaultValue: "File title",
+                })}
               />
               <Input
-                aria-label="Package file upload"
+                aria-label={t(
+                  "profiles:detail.workflow.guide.packageFileUpload",
+                  { defaultValue: "Package file upload" },
+                )}
                 accept={acceptedExtensions(packageCategory)}
                 type="file"
                 onChange={(event) =>
@@ -1679,9 +1756,11 @@ function GuideBoundaryInsert({
                 size="sm"
               >
                 <Upload className="mr-2 h-3.5 w-3.5" />
-                Upload and insert
+                {t("profiles:detail.workflow.guide.uploadAndInsert", {
+                  defaultValue: "Upload and insert",
+                })}
               </Button>
-            </div>
+              </div>
             </div>
           ) : null}
         </PopoverContent>
