@@ -971,6 +971,13 @@ export interface ProfileAuthoringSaveRequest {
   clone_from_id: string | null;
   profile_mode?: ProfileMode;
   skill_name?: string | null;
+  workflow_guidance?: WorkflowGuidanceSaveRequest;
+}
+
+export interface WorkflowGuidanceSaveRequest {
+  expected_specification_revision: number | null;
+  validation_notes: string | null;
+  avoid_rules: string | null;
 }
 
 export interface ProfileAuthoringSaveResponse {

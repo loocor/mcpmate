@@ -43,6 +43,7 @@ pub async fn profile_authoring_save(
         clone_from_id: request.clone_from_id,
         profile_mode: request.profile_mode,
         skill_name: request.skill_name,
+        workflow_guidance: request.workflow_guidance,
     };
     let service = ProfileAuthoringService::with_skills_root(
         db.pool.clone(),
@@ -139,6 +140,7 @@ fn profile_authoring_error(error: ProfileAuthoringError) -> ApiError {
         ProfileAuthoringError::SkillDirectory(
             crate::core::profile::materials::WorkflowMaterialsError::InvalidRequest(message),
         ) => ApiError::BadRequest(message),
+        ProfileAuthoringError::WorkflowGuidance(error) => super::workflow::workflow_specification_error(error),
         ProfileAuthoringError::Persistence(_)
         | ProfileAuthoringError::Database(_)
         | ProfileAuthoringError::SkillDirectory(_)

@@ -5,6 +5,7 @@ import type {
 	ProfileAuthoringView,
 	ProfileMode,
 	ServerSummary,
+	WorkflowGuidanceSaveRequest,
 } from "./types";
 
 export type ProfileAuthoringSubmission =
@@ -80,6 +81,7 @@ interface BuildProfileAuthoringSaveRequestInput {
 	serverIds: string[];
 	authoringView?: ProfileAuthoringView;
 	expectedAuthoringGeneration?: number;
+	workflowGuidance?: WorkflowGuidanceSaveRequest;
 }
 
 export function buildProfileAuthoringSaveRequest({
@@ -89,6 +91,7 @@ export function buildProfileAuthoringSaveRequest({
 	serverIds,
 	authoringView,
 	expectedAuthoringGeneration,
+	workflowGuidance,
 }: BuildProfileAuthoringSaveRequestInput): ProfileAuthoringSaveRequest {
 	if (mode === "edit" && (!profileId || !authoringView)) {
 		throw new Error("Profile authoring state is not loaded");
@@ -114,7 +117,11 @@ export function buildProfileAuthoringSaveRequest({
 				? draft.clone_from_id
 				: null,
 		...(draft.profile_mode === "workflow"
-			? { profile_mode: "workflow" as const, skill_name: draft.skill_name.trim() }
+			? {
+					profile_mode: "workflow" as const,
+					skill_name: draft.skill_name.trim(),
+					...(workflowGuidance ? { workflow_guidance: workflowGuidance } : {}),
+				}
 			: {}),
 	};
 }

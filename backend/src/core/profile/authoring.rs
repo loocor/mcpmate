@@ -14,6 +14,9 @@ use crate::core::capability::materializer::{
 use crate::core::profile::materials::{
     SkillDirectoryRename, WorkflowMaterialsError, WorkflowMaterialsService, rollback_skill_directory_rename,
 };
+use crate::core::profile::workflow::{
+    WorkflowGuidanceSaveCommand, WorkflowSpecificationError, WorkflowSpecificationService,
+};
 use crate::core::profile::workflow_guide::{WorkflowGuideError, ensure_guide, stage_projection_in_transaction};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -30,6 +33,7 @@ pub struct ProfileAuthoringCommand {
     pub clone_from_id: Option<String>,
     pub profile_mode: Option<ProfileMode>,
     pub skill_name: Option<String>,
+    pub workflow_guidance: Option<WorkflowGuidanceSaveCommand>,
 }
 
 #[derive(Debug)]
@@ -77,6 +81,8 @@ pub enum ProfileAuthoringError {
     SkillDirectory(#[source] WorkflowMaterialsError),
     #[error("Workflow Guide projection failed")]
     WorkflowGuideProjection(#[source] WorkflowGuideError),
+    #[error("Workflow guidance persistence failed")]
+    WorkflowGuidance(#[source] WorkflowSpecificationError),
 }
 
 impl From<sqlx::Error> for ProfileAuthoringError {
@@ -255,6 +261,16 @@ impl ProfileAuthoringService {
                     .await?;
                 return Err(ProfileAuthoringError::WorkflowGuideProjection(error));
             }
+            if let Some(guidance) = command.workflow_guidance.as_ref() {
+                if let Err(error) =
+                    WorkflowSpecificationService::save_guidance_in_transaction(&mut transaction, &profile_id, guidance)
+                        .await
+                {
+                    self.rollback_skill_directory_change(skill_directory_change, error.to_string())
+                        .await?;
+                    return Err(ProfileAuthoringError::WorkflowGuidance(error));
+                }
+            }
             match stage_projection_in_transaction(&mut transaction, &profile_id, self.pool.clone(), skills_root).await {
                 Ok((_, projection)) => staged_projection = Some(projection),
                 Err(error) => {
@@ -395,6 +411,11 @@ fn validate_profile_mode_command(
             ));
         }
         (ProfileMode::Capability, None) => {}
+    }
+    if profile_mode == ProfileMode::Capability && command.workflow_guidance.is_some() {
+        return Err(ProfileAuthoringError::InvalidRequest(
+            "Workflow guidance is only supported by Workflow Profiles".to_string(),
+        ));
     }
     if profile_mode == ProfileMode::Workflow && (command.is_active || command.is_default) {
         return Err(ProfileAuthoringError::InvalidRequest(
@@ -855,6 +876,7 @@ mod tests {
                     clone_from_id: None,
                     profile_mode: Some(ProfileMode::Workflow),
                     skill_name: Some("metadata-workflow".to_string()),
+                    workflow_guidance: None,
                 },
                 "test",
             )
@@ -876,6 +898,7 @@ mod tests {
                     clone_from_id: None,
                     profile_mode: Some(ProfileMode::Workflow),
                     skill_name: Some("metadata-workflow".to_string()),
+                    workflow_guidance: None,
                 },
                 "test",
             )
@@ -904,6 +927,7 @@ mod tests {
                     clone_from_id: None,
                     profile_mode: Some(ProfileMode::Workflow),
                     skill_name: Some("metadata-workflow".to_string()),
+                    workflow_guidance: None,
                 },
                 "test",
             )
@@ -946,6 +970,7 @@ mod tests {
                     clone_from_id: None,
                     profile_mode: Some(ProfileMode::Workflow),
                     skill_name: Some("rename-before".to_string()),
+                    workflow_guidance: None,
                 },
                 "test",
             )
@@ -972,6 +997,7 @@ mod tests {
                     clone_from_id: None,
                     profile_mode: Some(ProfileMode::Workflow),
                     skill_name: Some("rename-after".to_string()),
+                    workflow_guidance: None,
                 },
                 "test",
             )
@@ -1040,6 +1066,7 @@ mod tests {
                     clone_from_id: None,
                     profile_mode: None,
                     skill_name: None,
+                    workflow_guidance: None,
                 },
                 "test",
             ),

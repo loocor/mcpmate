@@ -58,6 +58,65 @@ async fn pool() -> sqlx::SqlitePool {
 }
 
 #[tokio::test]
+async fn profile_authoring_saves_workflow_guidance_without_replacing_guide_steps() {
+    let pool = pool().await;
+    add_server(&pool, "server-a", "Server A", 1).await;
+    let profile = workflow_authoring_service(&pool)
+        .save(workflow_profile_command(), "test")
+        .await
+        .expect("create Workflow Profile");
+    let profile_id = profile.profile.id.expect("created Workflow Profile ID");
+    let skills_root = tempfile::tempdir().expect("create temporary Skills root");
+    let guide = WorkflowGuideService::new(pool.clone());
+    guide.view(&profile_id).await.expect("initialize Workflow Guide");
+    guide
+        .save_and_project(
+            WorkflowGuideSaveCommand {
+                profile_id: profile_id.clone(),
+                expected_guide_revision: 0,
+                markdown: "# Investigate incident\n\n:::capability {\"name\":\"server_a__lookup\",\"exposure\":\"direct\"}\nCollect evidence before deciding.\n:::\n".to_string(),
+                reclamation_confirmation: None,
+            },
+            skills_root.path().to_path_buf(),
+        )
+        .await
+        .expect("save Guide-derived Workflow Step");
+    let specification_before = WorkflowSpecificationService::new(pool.clone())
+        .view(&profile_id)
+        .await
+        .expect("load Workflow specification before guidance save");
+    assert_eq!(specification_before.steps.len(), 1);
+
+    let mut command = workflow_profile_command();
+    command.id = Some(profile_id.clone());
+    command.expected_authoring_generation = Some(profile.profile.authoring_generation);
+    command.workflow_guidance = Some(mcpmate::core::profile::workflow::WorkflowGuidanceSaveCommand {
+        expected_specification_revision: specification_before.specification_revision,
+        validation_notes: Some("Verify all release evidence.".to_string()),
+        avoid_rules: Some("Do not infer unpublished release content.".to_string()),
+    });
+
+    workflow_authoring_service(&pool)
+        .save(command, "test")
+        .await
+        .expect("save Workflow Profile guidance");
+    let specification = WorkflowSpecificationService::new(pool)
+        .view(&profile_id)
+        .await
+        .expect("load Workflow guidance");
+
+    assert_eq!(
+        specification.validation_notes.as_deref(),
+        Some("Verify all release evidence.")
+    );
+    assert_eq!(
+        specification.avoid_rules.as_deref(),
+        Some("Do not infer unpublished release content.")
+    );
+    assert_eq!(specification.steps, specification_before.steps);
+}
+
+#[tokio::test]
 async fn workflow_guide_capability_binding_projects_readable_skill_and_normalizes_step_policy() {
     let pool = pool().await;
     let ref_ids = add_server(&pool, "server-a", "Server A", 1).await;
@@ -385,6 +444,7 @@ fn workflow_profile_command() -> ProfileAuthoringCommand {
         clone_from_id: None,
         profile_mode: Some(ProfileMode::Workflow),
         skill_name: Some("investigate-incident".to_string()),
+        workflow_guidance: None,
     }
 }
 

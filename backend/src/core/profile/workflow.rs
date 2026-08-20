@@ -64,6 +64,13 @@ pub struct WorkflowSpecificationSaveCommand {
     pub steps: Vec<WorkflowStepCommand>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, schemars::JsonSchema, serde::Deserialize, serde::Serialize)]
+pub struct WorkflowGuidanceSaveCommand {
+    pub expected_specification_revision: Option<i64>,
+    pub validation_notes: Option<String>,
+    pub avoid_rules: Option<String>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, schemars::JsonSchema, serde::Serialize)]
 pub struct WorkflowSpecification {
     pub profile_id: String,
@@ -187,6 +194,32 @@ impl WorkflowSpecificationService {
             .expect("workflow specification exists after save");
         debug_assert_eq!(specification.specification_revision, specification_revision);
         Ok(specification.into())
+    }
+
+    pub(crate) async fn save_guidance_in_transaction(
+        transaction: &mut Transaction<'_, Sqlite>,
+        profile_id: &str,
+        command: &WorkflowGuidanceSaveCommand,
+    ) -> Result<(), WorkflowSpecificationError> {
+        verify_workflow_profile(transaction, profile_id).await?;
+        let existing = load_specification(transaction, profile_id).await?;
+        match (command.expected_specification_revision, existing.as_ref()) {
+            (None, None) => {}
+            (Some(expected), Some(specification)) if specification.specification_revision == expected => {}
+            _ => return Err(load_specification_conflict(transaction, profile_id).await?),
+        }
+        save_specification(
+            transaction,
+            &WorkflowSpecificationSaveCommand {
+                profile_id: profile_id.to_string(),
+                expected_specification_revision: command.expected_specification_revision,
+                validation_notes: command.validation_notes.clone(),
+                avoid_rules: command.avoid_rules.clone(),
+                steps: Vec::new(),
+            },
+        )
+        .await?;
+        Ok(())
     }
 
     pub async fn delete(

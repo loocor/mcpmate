@@ -10,7 +10,9 @@ use crate::core::profile::materials::{
     WorkflowMaterial, WorkflowMaterialKind, WorkflowMaterialsReorderCommand, WorkflowMaterialsView,
     WorkflowStepMaterialsSaveCommand,
 };
-use crate::core::profile::workflow::{WorkflowSpecification, WorkflowSpecificationPreview};
+use crate::core::profile::workflow::{
+    WorkflowGuidanceSaveCommand, WorkflowSpecification, WorkflowSpecificationPreview,
+};
 use crate::core::profile::workflow_guide::{
     RenderedWorkflowSkill, WorkflowGuideCapability, WorkflowGuideExternalDocument, WorkflowGuidePackageFile,
     WorkflowGuideView,
@@ -447,6 +449,8 @@ pub struct ProfileAuthoringSaveReq {
     pub profile_mode: Option<ProfileMode>,
     #[serde(default)]
     pub skill_name: Option<String>,
+    #[serde(default)]
+    pub workflow_guidance: Option<WorkflowGuidanceSaveCommand>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
