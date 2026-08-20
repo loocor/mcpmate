@@ -19,9 +19,6 @@ test("Workflow Guide notebook documents and preview persist the intended Markdow
   await page.route("**/__mcpmate/dev-core-source", (route) => {
     return route.fulfill({ json: { apiBaseUrl } });
   });
-  await page.addInitScript((isolatedApiBaseUrl) => {
-    window.localStorage.setItem("mcpmate.api_base_override", isolatedApiBaseUrl);
-  }, apiBaseUrl!);
 
   const onboardingResponse = await request.post(`${apiBaseUrl}/api/onboarding/complete`, {
     data: { completed: true },
