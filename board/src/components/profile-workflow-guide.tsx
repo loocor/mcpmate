@@ -26,12 +26,12 @@ import remarkGfm from "remark-gfm";
 
 import { ApiRequestError, configSuitsApi } from "../lib/api";
 import {
+  capabilitySource,
   parseWorkflowGuide,
   splitWorkflowGuideDocument,
   type WorkflowGuideDocumentCell,
 } from "../lib/workflow-guide-directive";
 import type {
-  WorkflowGuideCapabilitySaveRequest,
   WorkflowGuideCapability,
   WorkflowGuideExternalDocument,
   WorkflowGuidePackageCategory,
@@ -86,9 +86,6 @@ export function ProfileWorkflowGuide({
   const [externalDocuments, setExternalDocuments] = useState<
     Record<string, WorkflowGuideExternalDocument>
   >({});
-  const [capabilityBindings, setCapabilityBindings] = useState<
-    WorkflowGuideCapabilitySaveRequest[]
-  >([]);
   const [editorMode, setEditorMode] = useState<"notebook" | "preview">(
     "notebook",
   );
@@ -115,7 +112,6 @@ export function ProfileWorkflowGuide({
         start: normalizedMarkdown.length,
         end: normalizedMarkdown.length,
       };
-      setCapabilityBindings(guideQuery.data.capabilities);
       setEditingCellId(null);
       loadedGuideRevisionRef.current = guideQuery.data.guide_revision;
     }
@@ -188,23 +184,6 @@ export function ProfileWorkflowGuide({
       ?.scrollIntoView({ behavior: "smooth", block: "center" });
     setPendingLocation(null);
   }, [activeDocumentPath, documentCells, pendingLocation]);
-  const capabilityNames = useMemo(
-    () =>
-      Object.fromEntries(
-        capabilityBindings.map((binding) => [
-          binding.alias,
-          binding.display_name,
-        ]),
-      ),
-    [capabilityBindings],
-  );
-  const capabilitiesByRef = useMemo(
-    () =>
-      new Map(
-        capabilities.map((capability) => [capability.ref_id, capability]),
-      ),
-    [capabilities],
-  );
   const documentSources = useMemo(
     () => [
       { path: "SKILL.md", title: "SKILL.md", markdown },
@@ -217,11 +196,7 @@ export function ProfileWorkflowGuide({
     [markdown, reachableExternalDocuments],
   );
   const capabilityOccurrences = useMemo(
-    () =>
-      collectOccurrences(
-        documentSources,
-        /\{\{capability:([a-z0-9][a-z0-9-]{0,62})\}\}/g,
-      ),
+    () => collectCapabilityOccurrences(documentSources),
     [documentSources],
   );
   const materialOccurrences = useMemo(
@@ -245,6 +220,27 @@ export function ProfileWorkflowGuide({
     });
     return true;
   };
+  const captureCommittedCleanup = (error: unknown) => {
+    if (
+      !(error instanceof ApiRequestError) ||
+      error.code !== "workflow_guide_trash_cleanup_pending"
+    ) {
+      return false;
+    }
+    void queryClient.invalidateQueries({
+      queryKey: ["workflowGuide", profileId],
+    });
+    void queryClient.invalidateQueries({
+      queryKey: ["workflowSpecification", profileId],
+    });
+    notifyError(
+      t("profiles:detail.workflow.guide.cleanupPending", {
+        defaultValue:
+          "Changes were saved, but Trash cleanup is pending. Run Repair to finish cleanup.",
+      }),
+    );
+    return true;
+  };
   const saveMutation = useMutation({
     mutationFn: (
       reclamationConfirmation?: WorkflowGuideReclamationConfirmation,
@@ -253,7 +249,6 @@ export function ProfileWorkflowGuide({
         profile_id: profileId,
         expected_guide_revision: guideQuery.data!.guide_revision,
         markdown,
-        capabilities: capabilityBindings,
         reclamation_confirmation: reclamationConfirmation,
       }),
     onSuccess: async (saved) => {
@@ -272,6 +267,7 @@ export function ProfileWorkflowGuide({
       setPendingReclamation(null);
     },
     onError: (error) => {
+      if (captureCommittedCleanup(error)) return;
       if (captureReclamation(error, "root")) return;
       notifyError(
         error instanceof Error
@@ -288,16 +284,17 @@ export function ProfileWorkflowGuide({
         profile_id: profileId,
         relative_path: activeExternalDocument?.relative_path,
         markdown: activeMarkdown,
-        capabilities: capabilityBindings,
       }),
-    onError: (error) =>
+    onError: (error) => {
+      if (captureCommittedCleanup(error)) return;
       notifyError(
         error instanceof Error
           ? error.message
           : t("profiles:detail.workflow.guide.previewFailed", {
               defaultValue: "Failed to render Skill Preview",
             }),
-      ),
+      );
+    },
   });
   const externalDocumentMutation = useMutation({
     mutationFn: (file: WorkflowGuidePackageFile) =>
@@ -314,14 +311,16 @@ export function ProfileWorkflowGuide({
       setEditorMode("notebook");
       setEditingCellId(null);
     },
-    onError: (error) =>
+    onError: (error) => {
+      if (captureCommittedCleanup(error)) return;
       notifyError(
         error instanceof Error
           ? error.message
           : t("profiles:detail.workflow.guide.documentLoadFailed", {
               defaultValue: "Failed to load external Markdown document",
             }),
-      ),
+      );
+    },
   });
   const packageFileMutation = useMutation({
     mutationFn: (draft: {
@@ -341,13 +340,7 @@ export function ProfileWorkflowGuide({
       formData.append("file", draft.file);
       return configSuitsApi
         .uploadWorkflowGuidePackageFile(formData)
-        .then(async (saved) => ({
-          saved: {
-            ...saved,
-            guide: await configSuitsApi.getWorkflowGuide(profileId),
-          },
-          draft,
-        }));
+        .then((saved) => ({ saved, draft }));
     },
     onSuccess: ({ saved, draft }) => {
       const knownPackageFileIds = new Set(draft.knownPackageFileIds);
@@ -371,14 +364,16 @@ export function ProfileWorkflowGuide({
         }),
       );
     },
-    onError: (error) =>
+    onError: (error) => {
+      if (captureCommittedCleanup(error)) return;
       notifyError(
         error instanceof Error
           ? error.message
           : t("profiles:detail.workflow.guide.fileSaveFailed", {
               defaultValue: "Failed to save package file",
             }),
-      ),
+      );
+    },
   });
   const saveExternalDocumentMutation = useMutation({
     mutationFn: (
@@ -400,7 +395,6 @@ export function ProfileWorkflowGuide({
         "expected_guide_revision",
         String(guideQuery.data!.guide_revision),
       );
-      formData.append("capabilities", JSON.stringify(capabilityBindings));
       if (reclamationConfirmation) {
         formData.append(
           "reclamation_confirmation",
@@ -445,6 +439,7 @@ export function ProfileWorkflowGuide({
       setPendingReclamation(null);
     },
     onError: (error) => {
+      if (captureCommittedCleanup(error)) return;
       if (captureReclamation(error, "external")) return;
       notifyError(
         error instanceof Error
@@ -475,17 +470,16 @@ export function ProfileWorkflowGuide({
       );
       const saved =
         await configSuitsApi.uploadWorkflowGuidePackageFile(formData);
-      const guide = await configSuitsApi.getWorkflowGuide(profileId);
       const knownPackageFileIds = new Set(
         packageFiles.map((file) => file.package_file_id),
       );
-      const file = guide.package_files.find(
+      const file = saved.guide.package_files.find(
         (candidate) => !knownPackageFileIds.has(candidate.package_file_id),
       );
       if (!file)
         throw new Error("Created external Markdown document was not returned");
       return {
-        saved: { ...saved, guide },
+        saved,
         document: {
           package_file_id: file.package_file_id,
           file_revision: file.file_revision,
@@ -512,19 +506,16 @@ export function ProfileWorkflowGuide({
         }),
       );
     },
-    onSettled: async () => {
-      const guide = await configSuitsApi.getWorkflowGuide(profileId);
-      queryClient.setQueryData(["workflowGuide", profileId], guide);
-      setPackageFiles(guide.package_files);
-    },
-    onError: (error) =>
+    onError: (error) => {
+      if (captureCommittedCleanup(error)) return;
       notifyError(
         error instanceof Error
           ? error.message
           : t("profiles:detail.workflow.guide.documentCreateFailed", {
               defaultValue: "Failed to create external Markdown document",
             }),
-      ),
+      );
+    },
   });
   const repairMutation = useMutation({
     mutationFn: () => configSuitsApi.repairWorkflowGuide(profileId),
@@ -571,22 +562,20 @@ export function ProfileWorkflowGuide({
     );
   };
 
-  const updateWorkflowStep = (
+  const updateCapability = (
     cell: WorkflowGuideDocumentCell,
-    title: string,
-    body: string,
+    name: string,
+    exposure: "direct" | "meta_on_demand",
+    guide: string,
   ) => {
-    if (!cell.step) return;
-    updateCell(cell, workflowStepSource(cell.step.key, title, body));
+    if (!cell.capability) return;
+    updateCell(cell, `${capabilitySource(name, exposure, guide)}\n`);
   };
 
   const beginCellEdit = (cell: WorkflowGuideDocumentCell) => {
-    const offset = cell.step
-      ? cell.startOffset +
-        workflowStepOpening(cell.step.key, cell.step.title).length
-      : cell.startOffset;
+    const offset = cell.startOffset;
     editorOffsetRef.current = offset;
-    const cursor = cell.step ? offset + cell.step.body.length : cell.endOffset;
+    const cursor = cell.endOffset;
     selectionRef.current = { start: cursor, end: cursor };
     setEditingCellId(cell.id);
   };
@@ -603,50 +592,12 @@ export function ProfileWorkflowGuide({
     };
   };
 
-  const insertWorkflowStep = () => {
-    const existingKeys = new Set(guide.steps.map((step) => step.key));
-    let ordinal = 1;
-    let key = "new-step";
-    while (existingKeys.has(key)) {
-      ordinal += 1;
-      key = `new-step-${ordinal}`;
-    }
-    insert(
-      workflowStepSource(
-        key,
-        "New workflow step",
-        "Describe the action and insert references here.",
-      ),
-    );
-  };
-
   const insertCapability = (
     capability: WorkflowCapabilityOption,
-    bindingPolicy: "direct" | "meta_on_demand",
+    exposure: "direct" | "meta_on_demand",
+    guide: string,
   ) => {
-    const existing = capabilityBindings.find(
-      (binding) => binding.ref_id === capability.ref_id,
-    );
-    const alias =
-      existing?.alias ?? nextAlias(capability.label, capabilityBindings);
-    setCapabilityBindings((current) =>
-      existing
-        ? current.map((binding) =>
-            binding.ref_id === capability.ref_id
-              ? { ...binding, binding_policy: bindingPolicy }
-              : binding,
-          )
-        : [
-            ...current,
-            {
-              alias,
-              display_name: capability.label,
-              ref_id: capability.ref_id,
-              binding_policy: bindingPolicy,
-            },
-          ],
-    );
-    insert(`{{capability:${alias}}}`);
+    insert(`\n${capabilitySource(capability.label, exposure, guide)}\n`);
   };
   const openOccurrence = (path: string, offset: number) => {
     setEditingCellId(null);
@@ -672,8 +623,8 @@ export function ProfileWorkflowGuide({
         package_file_id: file.package_file_id,
         file_revision: file.file_revision,
       })),
-      capability_aliases: pendingReclamation.capabilities.map(
-        (capability) => capability.alias,
+      capability_names: pendingReclamation.capabilities.map(
+        (capability) => capability.name,
       ),
     };
     const target = pendingReclamation.target;
@@ -903,9 +854,10 @@ export function ProfileWorkflowGuide({
                 ) : (
                   <div
                     className="space-y-0"
-                    aria-label={t("profiles:detail.workflow.guide.notebook", {
-                      defaultValue: "Workflow Guide notebook",
-                    })}
+                    aria-label={t(
+                      "profiles:detail.workflow.guide.notebookRegion",
+                      { defaultValue: "Workflow Guide notebook" },
+                    )}
                   >
                     <GuideBoundaryInsert
                       capabilities={capabilities}
@@ -913,7 +865,6 @@ export function ProfileWorkflowGuide({
                       files={packageFiles}
                       onInsert={insert}
                       onInsertCapability={insertCapability}
-                      onInsertStep={insertWorkflowStep}
                       onCreateExternalDocument={(title) =>
                         createExternalDocumentMutation.mutate(title)
                       }
@@ -945,10 +896,10 @@ export function ProfileWorkflowGuide({
                         >
                           <header className="absolute right-2 top-1 flex items-center gap-2 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                             <span className="text-[10px] text-muted-foreground">
-                              {cell.kind === "workflow_step"
+                              {cell.kind === "capability"
                                 ? t(
-                                    "profiles:detail.workflow.guide.workflowStep",
-                                    { defaultValue: "Workflow step" },
+                                    "profiles:detail.workflow.guide.capability",
+                                    { defaultValue: "Capability" },
                                   )
                                 : cell.kind === "external_reference"
                                   ? t(
@@ -986,76 +937,70 @@ export function ProfileWorkflowGuide({
                           </header>
                           <div className="min-w-0 pr-8">
                             {editingCellId === cell.id &&
-                            cell.kind === "workflow_step" &&
-                            cell.step ? (
+                            cell.kind === "capability" &&
+                            cell.capability ? (
                               <div className="space-y-3">
                                 <div className="grid gap-2 sm:grid-cols-[10rem_minmax(0,1fr)] sm:items-center">
                                   <p className="text-xs font-medium text-muted-foreground">
                                     {t(
-                                      "profiles:detail.workflow.guide.stepKey",
-                                      { defaultValue: "Step key" },
+                                      "profiles:detail.workflow.guide.capabilityName",
+                                      { defaultValue: "Capability name" },
                                     )}
                                   </p>
                                   <code className="truncate font-mono text-xs">
-                                    {cell.step.key}
+                                    {cell.capability.name}
                                   </code>
                                 </div>
                                 <label className="block space-y-1 text-xs font-medium text-muted-foreground">
                                   {t(
-                                    "profiles:detail.workflow.guide.stepTitle",
-                                    { defaultValue: "Step title" },
+                                    "profiles:detail.workflow.guide.exposure",
+                                    { defaultValue: "Exposure" },
                                   )}
-                                  <Input
-                                    value={cell.step.title}
+                                  <select
+                                    className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                                    value={cell.capability.exposure}
                                     onChange={(event) =>
-                                      updateWorkflowStep(
+                                      updateCapability(
                                         cell,
-                                        event.target.value,
-                                        cell.step!.body,
+                                        cell.capability!.name,
+                                        event.target.value as
+                                          | "direct"
+                                          | "meta_on_demand",
+                                        cell.capability!.guide,
                                       )
                                     }
-                                  />
+                                  >
+                                    <option value="meta_on_demand">
+                                      Meta on demand
+                                    </option>
+                                    <option value="direct">Direct</option>
+                                  </select>
                                 </label>
                                 <label className="block space-y-1 text-xs font-medium text-muted-foreground">
                                   {t(
-                                    "profiles:detail.workflow.guide.stepInstructions",
-                                    { defaultValue: "Instructions" },
+                                    "profiles:detail.workflow.guide.capabilityGuide",
+                                    { defaultValue: "Guide" },
                                   )}
                                   <Textarea
                                     autoFocus
                                     ref={editorRef}
                                     aria-label={t(
-                                      "profiles:detail.workflow.guide.stepInstructions",
-                                      {
-                                        defaultValue:
-                                          "Workflow step instructions",
-                                      },
+                                      "profiles:detail.workflow.guide.capabilityGuide",
+                                      { defaultValue: "Capability guide" },
                                     )}
                                     className="min-h-36 resize-y font-mono text-sm"
-                                    value={cell.step.body}
+                                    value={cell.capability.guide}
                                     onChange={(event) => {
-                                      const bodyOffset =
-                                        cell.startOffset +
-                                        workflowStepOpening(
-                                          cell.step!.key,
-                                          cell.step!.title,
-                                        ).length;
-                                      trackSelection(event, bodyOffset);
-                                      updateWorkflowStep(
+                                      trackSelection(event, cell.startOffset);
+                                      updateCapability(
                                         cell,
-                                        cell.step!.title,
+                                        cell.capability!.name,
+                                        cell.capability!.exposure,
                                         event.target.value,
                                       );
                                     }}
                                     onSelect={(event) =>
-                                      trackSelection(
-                                        event,
-                                        cell.startOffset +
-                                          workflowStepOpening(
-                                            cell.step!.key,
-                                            cell.step!.title,
-                                          ).length,
-                                      )
+                                      trackSelection(event, cell.startOffset)
                                     }
                                   />
                                 </label>
@@ -1078,10 +1023,9 @@ export function ProfileWorkflowGuide({
                                   trackSelection(event, cell.startOffset)
                                 }
                               />
-                            ) : cell.kind === "workflow_step" && cell.step ? (
+                            ) : cell.kind === "capability" && cell.capability ? (
                               <GuideMarkdownPreview
-                                capabilityNames={capabilityNames}
-                                content={`## ${cell.step.title}\n\n${cell.step.body}`}
+                                content={`**Capability: ${cell.capability.name}**  \nExposure: ${cell.capability.exposure === "direct" ? "Direct" : "Meta on demand"}${cell.capability.guide ? `\n\n${cell.capability.guide}` : ""}`}
                               />
                             ) : cell.kind === "external_reference" &&
                               cell.externalReference ? (
@@ -1102,7 +1046,6 @@ export function ProfileWorkflowGuide({
                               </button>
                             ) : (
                               <GuideMarkdownPreview
-                                capabilityNames={capabilityNames}
                                 content={cell.source}
                                 emptyLabel={t(
                                   "profiles:detail.workflow.guide.emptyMarkdownBlock",
@@ -1118,7 +1061,6 @@ export function ProfileWorkflowGuide({
                           files={packageFiles}
                           onInsert={insert}
                           onInsertCapability={insertCapability}
-                          onInsertStep={insertWorkflowStep}
                           onCreateExternalDocument={(title) =>
                             createExternalDocumentMutation.mutate(title)
                           }
@@ -1166,21 +1108,18 @@ export function ProfileWorkflowGuide({
                 </h4>
                 <div className="mt-1 space-y-0.5">
                   {[...capabilityOccurrences.entries()].map(
-                    ([alias, occurrences]) => {
-                      const binding = capabilityBindings.find(
-                        (candidate) => candidate.alias === alias,
-                      );
-                      const description = binding
-                        ? capabilitiesByRef.get(binding.ref_id)?.description
-                        : undefined;
+                    ([name, occurrences]) => {
+                      const description = capabilities.find(
+                        (capability) => capability.label === name,
+                      )?.description;
                       return (
                         <div
                           className="group rounded-sm px-1.5 py-1 hover:bg-muted focus-within:bg-muted"
-                          key={alias}
+                          key={name}
                         >
                           <div className="flex items-center gap-1.5">
                             <p className="min-w-0 flex-1 truncate text-xs font-medium">
-                              {capabilityNames[alias] ?? alias}
+                              {name}
                             </p>
                             <span className="shrink-0 text-[10px] text-muted-foreground">
                               {occurrences.length}
@@ -1195,9 +1134,7 @@ export function ProfileWorkflowGuide({
                                   </p>
                                 ) : null}
                                 <p className="text-[11px] text-muted-foreground">
-                                  {binding?.binding_policy === "direct"
-                                    ? "Direct exposure"
-                                    : "Meta on demand"}
+                                  {effectiveExposure(occurrences)}
                                 </p>
                                 <div className="flex flex-wrap gap-1">
                                   {occurrences.map((occurrence, index) => (
@@ -1388,7 +1325,7 @@ export function ProfileWorkflowGuide({
                 </h4>
                 <ul className="flex flex-col gap-1 text-muted-foreground">
                   {pendingReclamation.capabilities.map((capability) => (
-                    <li key={capability.alias}>{capability.display_name}</li>
+                    <li key={capability.name}>{capability.name}</li>
                   ))}
                 </ul>
               </section>
@@ -1433,7 +1370,6 @@ function GuideBoundaryInsert({
   offset,
   onInsert,
   onInsertCapability,
-  onInsertStep,
   onCreateExternalDocument,
   creatingExternalDocument,
   onCreatePackageFile,
@@ -1447,9 +1383,9 @@ function GuideBoundaryInsert({
   onInsert: (value: string) => void;
   onInsertCapability: (
     capability: WorkflowCapabilityOption,
-    bindingPolicy: "direct" | "meta_on_demand",
+    exposure: "direct" | "meta_on_demand",
+    guide: string,
   ) => void;
-  onInsertStep: () => void;
   onCreateExternalDocument: (title: string) => void;
   creatingExternalDocument: boolean;
   onCreatePackageFile: (draft: {
@@ -1460,16 +1396,29 @@ function GuideBoundaryInsert({
   creatingPackageFile: boolean;
   onSetInsertionPoint: (offset: number) => void;
 }) {
+  const [activeInsert, setActiveInsert] = useState<
+    | "external_markdown"
+    | "reference"
+    | "capability"
+    | "script"
+    | "asset"
+    | null
+  >(null);
   const [externalDocumentTitle, setExternalDocumentTitle] = useState("");
   const [packageTitle, setPackageTitle] = useState("");
-  const [packageCategory, setPackageCategory] =
-    useState<WorkflowGuidePackageCategory>("reference");
   const [packageUpload, setPackageUpload] = useState<File | null>(null);
   const [selectedCapability, setSelectedCapability] =
     useState<WorkflowCapabilityOption | null>(null);
   const [bindingPolicy, setBindingPolicy] = useState<
     "direct" | "meta_on_demand"
   >("meta_on_demand");
+  const [capabilityGuide, setCapabilityGuide] = useState("");
+  const packageCategory = packageCategoryForInsert(activeInsert);
+  const visibleFiles = files.filter(
+    (file) =>
+      file.category === packageCategory &&
+      !(packageCategory === "reference" && file.extension === "md"),
+  );
 
   return (
     <div
@@ -1490,7 +1439,7 @@ function GuideBoundaryInsert({
             <Plus className="h-3 w-3" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent align="center" className="w-64 p-2">
+        <PopoverContent align="center" className="w-72 p-2">
           <div className="space-y-1">
             <p className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
               Insert
@@ -1502,23 +1451,57 @@ function GuideBoundaryInsert({
               variant="ghost"
             >
               <FileText className="mr-2 h-3.5 w-3.5" />
-              Markdown section
+              In-Place Markdown
             </Button>
             <Button
               className="w-full justify-start"
-              onClick={onInsertStep}
+              onClick={() => setActiveInsert("external_markdown")}
               size="sm"
               variant="ghost"
             >
               <FilePlus2 className="mr-2 h-3.5 w-3.5" />
-              Workflow step
+              External Markdown
+            </Button>
+            <Button
+              className="w-full justify-start"
+              onClick={() => setActiveInsert("reference")}
+              size="sm"
+              variant="ghost"
+            >
+              <FileText className="mr-2 h-3.5 w-3.5" />
+              Reference
+            </Button>
+            <Button
+              className="w-full justify-start"
+              onClick={() => setActiveInsert("capability")}
+              size="sm"
+              variant="ghost"
+            >
+              <Wrench className="mr-2 h-3.5 w-3.5" />
+              Capability
+            </Button>
+            <Button
+              className="w-full justify-start"
+              onClick={() => setActiveInsert("script")}
+              size="sm"
+              variant="ghost"
+            >
+              <FileText className="mr-2 h-3.5 w-3.5" />
+              Script
+            </Button>
+            <Button
+              className="w-full justify-start"
+              onClick={() => setActiveInsert("asset")}
+              size="sm"
+              variant="ghost"
+            >
+              <FileText className="mr-2 h-3.5 w-3.5" />
+              Asset
             </Button>
           </div>
-          <details className="mt-2 border-t pt-2">
-            <summary className="cursor-pointer px-2 py-1 text-xs font-medium">
-              Capabilities
-            </summary>
-            <div className="mt-1 max-h-40 space-y-1 overflow-auto">
+          {activeInsert === "capability" ? (
+            <div className="mt-2 border-t pt-2">
+              <div className="max-h-40 space-y-1 overflow-auto">
               {capabilitiesLoading ? (
                 <p className="px-2 py-1 text-xs text-muted-foreground">
                   Loading…
@@ -1574,10 +1557,27 @@ function GuideBoundaryInsert({
                   <option value="meta_on_demand">Meta on demand</option>
                   <option value="direct">Direct exposure</option>
                 </select>
+                <label
+                  className="block text-[11px] font-medium text-muted-foreground"
+                  htmlFor={`capability-guide-${offset}`}
+                >
+                  Guide
+                </label>
+                <Textarea
+                  className="min-h-20 resize-y text-xs"
+                  id={`capability-guide-${offset}`}
+                  value={capabilityGuide}
+                  onChange={(event) => setCapabilityGuide(event.target.value)}
+                  placeholder="How this occurrence should be used"
+                />
                 <Button
                   className="w-full justify-start"
                   onClick={() =>
-                    onInsertCapability(selectedCapability, bindingPolicy)
+                    onInsertCapability(
+                      selectedCapability,
+                      bindingPolicy,
+                      capabilityGuide,
+                    )
                   }
                   size="sm"
                 >
@@ -1586,31 +1586,9 @@ function GuideBoundaryInsert({
                 </Button>
               </div>
             ) : null}
-          </details>
-          <details className="mt-2 border-t pt-2">
-            <summary className="cursor-pointer px-2 py-1 text-xs font-medium">
-              Materials
-            </summary>
-            <div className="mt-1 max-h-40 space-y-1 overflow-auto">
-              {files.map((file) => (
-                <Button
-                  className="w-full justify-start"
-                  key={file.package_file_id}
-                  onClick={() =>
-                    onInsert(`[${file.title}](${file.relative_path})`)
-                  }
-                  size="sm"
-                  variant="ghost"
-                >
-                  {file.title}
-                </Button>
-              ))}
-              {files.length === 0 ? (
-                <p className="px-2 py-1 text-xs text-muted-foreground">
-                  No package files yet.
-                </p>
-              ) : null}
             </div>
+          ) : null}
+          {activeInsert === "external_markdown" ? (
             <div className="mt-2 border-t px-2 pt-2">
               <label
                 className="block text-[11px] font-medium text-muted-foreground"
@@ -1643,6 +1621,31 @@ function GuideBoundaryInsert({
                 </Button>
               </div>
             </div>
+          ) : null}
+          {activeInsert === "reference" ||
+          activeInsert === "script" ||
+          activeInsert === "asset" ? (
+            <div className="mt-2 border-t pt-2">
+              <div className="max-h-40 space-y-1 overflow-auto">
+              {visibleFiles.map((file) => (
+                <Button
+                  className="w-full justify-start"
+                  key={file.package_file_id}
+                  onClick={() =>
+                    onInsert(`[${file.title}](${file.relative_path})`)
+                  }
+                  size="sm"
+                  variant="ghost"
+                >
+                  {file.title}
+                </Button>
+              ))}
+              {visibleFiles.length === 0 ? (
+                <p className="px-2 py-1 text-xs text-muted-foreground">
+                  No package files yet.
+                </p>
+              ) : null}
+            </div>
             <div className="mt-2 space-y-2 border-t px-2 pt-2">
               <p className="text-[11px] font-medium text-muted-foreground">
                 Upload package file
@@ -1652,22 +1655,6 @@ function GuideBoundaryInsert({
                 onChange={(event) => setPackageTitle(event.target.value)}
                 placeholder="File title"
               />
-              <select
-                aria-label="Package file category"
-                className="h-8 w-full rounded-md border bg-background px-2 text-xs"
-                value={packageCategory}
-                onChange={(event) =>
-                  setPackageCategory(
-                    event.target.value as WorkflowGuidePackageCategory,
-                  )
-                }
-              >
-                <option value="reference">
-                  Reference (.md, .json, .yaml, .toml)
-                </option>
-                <option value="script">Script (.js, .mjs, .cjs, .py)</option>
-                <option value="asset">Asset (.pdf, .docx, .xlsx)</option>
-              </select>
               <Input
                 aria-label="Package file upload"
                 accept={acceptedExtensions(packageCategory)}
@@ -1695,7 +1682,8 @@ function GuideBoundaryInsert({
                 Upload and insert
               </Button>
             </div>
-          </details>
+            </div>
+          ) : null}
         </PopoverContent>
       </Popover>
       <div className="h-px flex-1 bg-transparent transition-colors group-hover/boundary:bg-border group-focus-within/boundary:bg-border" />
@@ -1704,9 +1692,17 @@ function GuideBoundaryInsert({
 }
 
 function acceptedExtensions(category: WorkflowGuidePackageCategory) {
-  if (category === "reference") return ".md,.json,.yaml,.yml,.toml";
+  if (category === "reference") return ".json,.yaml,.yml,.toml";
   if (category === "script") return ".js,.mjs,.cjs,.py";
   return ".pdf,.docx,.xlsx";
+}
+
+function packageCategoryForInsert(
+  activeInsert: "external_markdown" | "reference" | "capability" | "script" | "asset" | null,
+): WorkflowGuidePackageCategory {
+  if (activeInsert === "script") return "script";
+  if (activeInsert === "asset") return "asset";
+  return "reference";
 }
 
 function collectOccurrences(
@@ -1755,30 +1751,56 @@ function collectMaterialOccurrences(
   return occurrences;
 }
 
-function workflowStepOpening(key: string, title: string) {
-  return `:::workflow-step {key="${key}" title="${title}"}\n`;
+function collectCapabilityOccurrences(
+  documents: Array<{ path: string; title: string; markdown: string }>,
+) {
+  const occurrences = new Map<
+    string,
+    Array<{
+      path: string;
+      offset: number;
+      exposure: "direct" | "meta_on_demand";
+      guide: string;
+    }>
+  >();
+  for (const document of documents) {
+    const parsed = parseWorkflowGuide(document.markdown);
+    const lineOffsets = [0];
+    for (let index = 0; index < document.markdown.length; index += 1) {
+      if (document.markdown[index] === "\n") lineOffsets.push(index + 1);
+    }
+    for (const capability of parsed.capabilities) {
+      const occurrence = {
+        path: document.path,
+        offset: lineOffsets[capability.startLine - 1] ?? 0,
+        exposure: capability.exposure,
+        guide: capability.guide,
+      };
+      occurrences.set(capability.name, [
+        ...(occurrences.get(capability.name) ?? []),
+        occurrence,
+      ]);
+    }
+  }
+  return occurrences;
 }
 
-function workflowStepSource(key: string, title: string, body: string) {
-  return `${workflowStepOpening(key, title)}${body}\n:::\n`;
+function effectiveExposure(
+  occurrences: Array<{ exposure: "direct" | "meta_on_demand" }>,
+) {
+  return occurrences.some((occurrence) => occurrence.exposure === "direct")
+    ? "Direct exposure"
+    : "Meta on demand";
 }
 
 function GuideMarkdownPreview({
-  capabilityNames,
   content,
   emptyLabel,
 }: {
-  capabilityNames: Record<string, string>;
   content: string;
   emptyLabel?: string;
 }) {
-  const renderedContent = content.replace(
-    /\{\{capability:([a-z0-9][a-z0-9-]{0,62})\}\}/g,
-    (_reference, alias: string) => {
-      return `**Capability: ${capabilityNames[alias] ?? alias}**`;
-    },
-  );
-  if (!renderedContent.trim()) {
+  if (!content.trim()) {
     return (
       <p className="text-sm italic text-muted-foreground">
         {emptyLabel ?? "Empty"}
@@ -1813,7 +1835,7 @@ function GuideMarkdownPreview({
           ),
         }}
       >
-        {renderedContent}
+        {content}
       </ReactMarkdown>
     </div>
   );
@@ -1839,7 +1861,7 @@ function SkillPreview({ content }: { content: string }) {
           {frontMatter.description ?? "—"}
         </dd>
       </dl>
-      <GuideMarkdownPreview capabilityNames={{}} content={body} />
+      <GuideMarkdownPreview content={body} />
     </div>
   );
 }
@@ -1850,30 +1872,45 @@ function stripLeadingSkillFrontMatter(content: string) {
   const closingOffset = content.indexOf("\n---\n", 4);
   if (closingOffset < 0)
     return { frontMatter: {} as Record<string, string>, body: content };
-  const frontMatter = Object.fromEntries(
-    content
-      .slice(4, closingOffset)
-      .split("\n")
-      .flatMap((line) => {
-        const match = /^(name|description):\s*(.+)$/.exec(line);
-        return match ? [[match[1], match[2].replace(/^['"]|['"]$/g, "")]] : [];
-      }),
+  const frontMatter = parseSkillFrontMatter(
+    content.slice(4, closingOffset),
   );
   return { frontMatter, body: content.slice(closingOffset + 5) };
 }
 
-function nextAlias(
-  label: string,
-  existing: WorkflowGuideCapabilitySaveRequest[],
-) {
-  const base =
-    label
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "capability";
-  const aliases = new Set(existing.map((binding) => binding.alias));
-  for (let ordinal = 1; ; ordinal += 1) {
-    const candidate = ordinal === 1 ? base : `${base}-${ordinal}`;
-    if (!aliases.has(candidate)) return candidate;
+function parseSkillFrontMatter(source: string) {
+  const values: Record<string, string> = {};
+  const lines = source.split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = /^(name|description):(?:\s*(.*))?$/.exec(lines[index]);
+    if (!match) continue;
+    const key = match[1];
+    const scalar = match[2] ?? "";
+    if (/^[|>][-+]?$/.test(scalar)) {
+      const block: string[] = [];
+      while (index + 1 < lines.length && /^\s+/.test(lines[index + 1])) {
+        block.push(lines[(index += 1)].replace(/^\s{2}/, ""));
+      }
+      values[key] = scalar.startsWith(">")
+        ? block.join(" ").trim()
+        : block.join("\n");
+      continue;
+    }
+    values[key] = parseYamlScalar(scalar);
   }
+  return values;
+}
+
+function parseYamlScalar(value: string) {
+  if (value.startsWith('"') && value.endsWith('"')) {
+    try {
+      return JSON.parse(value) as string;
+    } catch {
+      return value.slice(1, -1);
+    }
+  }
+  if (value.startsWith("'") && value.endsWith("'")) {
+    return value.slice(1, -1).replace(/''/g, "'");
+  }
+  return value;
 }

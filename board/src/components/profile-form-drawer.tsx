@@ -66,7 +66,7 @@ import {
 import { Transfer, type TransferItem } from "./ui/transfer";
 import { Segment, type SegmentOption } from "./ui/segment";
 
-type DrawerStep = "details" | "workflow-rules" | "servers";
+type DrawerStep = "details" | "servers";
 
 const arraysEqual = (a: string[], b: string[]) => {
 	if (a.length !== b.length) {
@@ -218,15 +218,11 @@ export function ProfileFormDrawer({
 	const nameId = useId();
 	const skillNameId = useId();
 	const descriptionId = useId();
-	const validationNotesId = useId();
-	const avoidRulesId = useId();
 	const isActiveId = useId();
 	const isDefaultId = useId();
 	const profileModeId = useId();
 
 	const [step, setStep] = useState<DrawerStep>("details");
-	const [validationNotes, setValidationNotes] = useState("");
-	const [avoidRules, setAvoidRules] = useState("");
 	const [selectedServerIds, setSelectedServerIds] = useState<string[]>([]);
 	const [selectionInitialized, setSelectionInitialized] = useState(false);
 	const [, setServerSelectionTouched] = useState(false);
@@ -246,18 +242,10 @@ export function ProfileFormDrawer({
 		mode,
 		profileId: suit?.id ?? null,
 	});
-	const workflowRulesHydrationRef = useRef<string | null>(null);
 	const skillNameTouchedRef = useRef(false);
 
 	const isHostAppProfile = restrictProfileType === "host_app" || suit?.suit_type === "host_app";
 	const isWorkflowProfile = formData.profile_mode === "workflow";
-	const isWorkflowEdit = mode === "edit" && isWorkflowProfile;
-	const workflowSpecificationQuery = useQuery({
-		queryKey: ["workflowSpecification", suit?.id],
-		queryFn: () => configSuitsApi.getWorkflowSpecification(suit!.id),
-		enabled: open && isWorkflowEdit && Boolean(suit?.id),
-		retry: false,
-	});
 	const profileModeOptions = useMemo<SegmentOption[]>(
 		() => [
 			{
@@ -283,14 +271,9 @@ export function ProfileFormDrawer({
 		: isWorkflowProfile
 			? [
 					{
-						id: "details",
+						id: "details" as const,
 						label: t("profiles:form.steps.profile", { defaultValue: "Profile" }),
 						hint: t("profiles:form.steps.hints.basics", { defaultValue: "Basics" }),
-					},
-					{
-						id: "workflow-rules",
-						label: t("profiles:form.steps.workflow", { defaultValue: "Workflow" }),
-						hint: t("profiles:form.steps.hints.rules", { defaultValue: "Rules" }),
 					},
 				]
 			: [
@@ -309,8 +292,6 @@ export function ProfileFormDrawer({
 	// 完全重置所有状态的函数
 	const resetAllStates = useCallback(() => {
 		setStep(isHostAppProfile ? "servers" : "details");
-		setValidationNotes("");
-		setAvoidRules("");
 		setSelectionInitialized(false);
 		setServerSelectionTouched(false);
 		setSelectedServerIds([]);
@@ -343,26 +324,6 @@ export function ProfileFormDrawer({
 			});
 		}
 	}, [mode, suit, restrictProfileType, isHostAppProfile]);
-
-	useEffect(() => {
-		if (
-			!open ||
-			step !== "workflow-rules" ||
-			!suit?.id ||
-			!workflowSpecificationQuery.data
-		)
-			return;
-		if (workflowRulesHydrationRef.current === suit.id) return;
-		setValidationNotes(workflowSpecificationQuery.data.validation_notes ?? "");
-		setAvoidRules(workflowSpecificationQuery.data.avoid_rules ?? "");
-		workflowRulesHydrationRef.current = suit.id;
-	}, [open, step, suit?.id, workflowSpecificationQuery.data]);
-
-	useEffect(() => {
-		if (!open) {
-			workflowRulesHydrationRef.current = null;
-		}
-	}, [open]);
 
 	// Overlay close handler (immediate, no delay)
 	const handleOverlayClose = useCallback(() => {
@@ -561,53 +522,8 @@ export function ProfileFormDrawer({
 			return;
 		}
 
-		if (step === "details" && isWorkflowProfile) {
-			setStep("workflow-rules");
-			return;
-		}
-
 		if (step === "details" && !isWorkflowProfile) {
 			setStep("servers");
-			return;
-		}
-
-		if (step === "workflow-rules" && isWorkflowEdit) {
-			if (latestAuthoringView) {
-				dispatchConflict({ type: "saveRequested" });
-				return;
-			}
-			if (!workflowSpecificationQuery.data) {
-				notifyError(
-					t("profiles:detail.workflow.messages.saveFailed"),
-					t("profiles:detail.workflow.loading"),
-				);
-				return;
-			}
-			if (!suit || !authoringBaselineView) {
-				notifyError(
-					t("profiles:detail.workflow.messages.saveFailed"),
-					t("profiles:detail.workflow.loading"),
-				);
-				return;
-			}
-			const request = buildProfileAuthoringSaveRequest({
-				mode: "edit",
-				profileId: suit.id,
-				draft: formData,
-				serverIds: selectedServerIds,
-				authoringView: authoringBaselineView,
-			});
-			authoringMutation.mutate({
-				...request,
-				workflow_specification: {
-					profile_id: suit.id,
-					expected_specification_revision:
-						workflowSpecificationQuery.data.specification_revision,
-					validation_notes: validationNotes.trim() || null,
-					avoid_rules: avoidRules.trim() || null,
-					steps: workflowSpecificationQuery.data.steps,
-				},
-			});
 			return;
 		}
 
@@ -942,8 +858,7 @@ export function ProfileFormDrawer({
 								const isActive = step === item.id;
 								const canNavigate =
 									item.id === "details" ||
-									(item.id === "workflow-rules" && detailsStepValid) ||
-									(item.id === "servers" && detailsStepValid);
+					(item.id === "servers" && detailsStepValid);
 
 								return (
 									<div key={item.id} className="flex items-center gap-2">
@@ -1152,41 +1067,6 @@ export function ProfileFormDrawer({
 								</div>
 
 								{detailsModeContent}
-							</div>
-						)}
-		{step === "workflow-rules" && isWorkflowProfile && (
-							<div className="space-y-4">
-								<div className="flex items-start gap-4">
-									<Label
-										htmlFor={validationNotesId}
-										className="w-32 pt-2 text-sm font-medium text-slate-600 dark:text-slate-300"
-									>
-										{t("profiles:detail.workflow.brief.validationNotes")}
-									</Label>
-									<Textarea
-										id={validationNotesId}
-										value={validationNotes}
-										onChange={(event) => setValidationNotes(event.target.value)}
-										rows={6}
-										className="flex-1"
-									/>
-								</div>
-
-								<div className="flex items-start gap-4">
-									<Label
-										htmlFor={avoidRulesId}
-										className="w-32 pt-2 text-sm font-medium text-slate-600 dark:text-slate-300"
-									>
-										{t("profiles:detail.workflow.brief.avoidRules")}
-									</Label>
-									<Textarea
-										id={avoidRulesId}
-										value={avoidRules}
-										onChange={(event) => setAvoidRules(event.target.value)}
-										rows={6}
-										className="flex-1"
-									/>
-								</div>
 							</div>
 						)}
 						{step === "servers" && (

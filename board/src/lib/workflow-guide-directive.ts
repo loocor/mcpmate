@@ -1,44 +1,35 @@
-export interface WorkflowGuideReference {
-  kind: "capability" | "package_file";
-  value: string;
-}
-
-export interface WorkflowGuideStepBlock {
-  key: string;
-  title: string;
-  body: string;
-  references: WorkflowGuideReference[];
+export interface WorkflowGuideCapabilityBlock {
+  name: string;
+  exposure: "direct" | "meta_on_demand";
+  guide: string;
   startLine: number;
   endLine: number;
 }
 
 export interface WorkflowGuideParseResult {
   headings: Array<{ level: number; text: string; offset: number }>;
-  steps: WorkflowGuideStepBlock[];
+  capabilities: WorkflowGuideCapabilityBlock[];
   errors: string[];
 }
 
 export interface WorkflowGuideDocumentCell {
   id: string;
-  kind: "markdown" | "external_reference" | "workflow_step";
+  kind: "markdown" | "external_reference" | "capability";
   source: string;
   startOffset: number;
   endOffset: number;
-  step?: WorkflowGuideStepBlock;
+  capability?: WorkflowGuideCapabilityBlock;
   externalReference?: { title: string; relativePath: string };
 }
 
-const STEP_START = /^:::workflow-step\s+\{key="([a-z0-9][a-z0-9-]{0,62})"\s+title="([^"\n]{1,120})"\}\s*$/;
-const STEP_END = /^:::\s*$/;
-const CAPABILITY_REFERENCE = /\{\{capability:([a-z0-9][a-z0-9-]{0,62})\}\}/g;
-const PACKAGE_REFERENCE = /\[[^\]]+\]\((references|scripts|assets)\/([^\s)#]+)(?:#[^\s)]+)?\)/g;
+const CAPABILITY_START = /^:::capability\s+(\{.*\})\s*$/;
+const DIRECTIVE_END = /^:::\s*$/;
 const UUID_REFERENCE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i;
 
 export function parseWorkflowGuide(markdown: string): WorkflowGuideParseResult {
   const headings: Array<{ level: number; text: string; offset: number }> = [];
-  const steps: WorkflowGuideStepBlock[] = [];
+  const capabilities: WorkflowGuideCapabilityBlock[] = [];
   const errors: string[] = [];
-  const keys = new Set<string>();
   const lines = markdown.split("\n");
   const lineOffsets: number[] = [];
   let nextOffset = 0;
@@ -47,7 +38,12 @@ export function parseWorkflowGuide(markdown: string): WorkflowGuideParseResult {
     nextOffset += line.length + 1;
   }
   let fenced = false;
-  let active: { key: string; title: string; startLine: number; lines: string[] } | null = null;
+  let active: {
+    name: string;
+    exposure: "direct" | "meta_on_demand";
+    startLine: number;
+    lines: string[];
+  } | null = null;
 
   lines.forEach((line, index) => {
     const lineNumber = index + 1;
@@ -73,28 +69,42 @@ export function parseWorkflowGuide(markdown: string): WorkflowGuideParseResult {
           offset: lineOffsets[index],
         });
       }
-      const start = STEP_START.exec(line);
+      const start = CAPABILITY_START.exec(line);
       if (start) {
-        if (keys.has(start[1])) errors.push(`line ${lineNumber}: duplicate workflow step key '${start[1]}'`);
-        keys.add(start[1]);
-        active = { key: start[1], title: start[2], startLine: lineNumber, lines: [] };
-      } else if (line.trimStart().startsWith(":::workflow-step")) {
-        errors.push(`line ${lineNumber}: invalid workflow step directive; expected key and title attributes`);
-      } else if (STEP_END.test(line)) {
-        errors.push(`line ${lineNumber}: workflow step end directive has no matching start`);
+        try {
+          const header = JSON.parse(start[1]) as { name?: unknown; exposure?: unknown };
+          if (typeof header.name !== "string" || !header.name.trim()) {
+            errors.push(`line ${lineNumber}: Capability name must not be empty`);
+          } else if (header.exposure !== "direct" && header.exposure !== "meta_on_demand") {
+            errors.push(`line ${lineNumber}: Capability exposure must be direct or meta_on_demand`);
+          } else {
+            active = {
+              name: header.name,
+              exposure: header.exposure,
+              startLine: lineNumber,
+              lines: [],
+            };
+          }
+        } catch (error) {
+          errors.push(
+            `line ${lineNumber}: invalid Capability directive: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      } else if (line.trimStart().startsWith(":::capability")) {
+        errors.push(`line ${lineNumber}: invalid Capability directive; expected JSON name and exposure`);
+      } else if (DIRECTIVE_END.test(line)) {
+        errors.push(`line ${lineNumber}: Capability directive end has no matching start`);
       }
       return;
     }
 
-    if (STEP_END.test(line)) {
-      const body = active.lines.join("\n").trim();
-      steps.push({
-        key: active.key,
-        title: active.title,
-        body,
+    if (DIRECTIVE_END.test(line)) {
+      capabilities.push({
+        name: active.name,
+        exposure: active.exposure,
+        guide: active.lines.join("\n").trim(),
         startLine: active.startLine,
         endLine: lineNumber,
-        references: collectReferences(body),
       });
       active = null;
       return;
@@ -102,32 +112,33 @@ export function parseWorkflowGuide(markdown: string): WorkflowGuideParseResult {
     active.lines.push(line);
   });
 
-  if (active) errors.push(`line ${active.startLine}: workflow step '${active.key}' is not closed`);
+  if (active) errors.push(`line ${active.startLine}: Capability '${active.name}' directive is not closed`);
   lines.forEach((line, index) => {
     if (UUID_REFERENCE.test(line)) errors.push(`line ${index + 1}: opaque identifiers are not allowed in a Workflow Guide`);
     if (line.includes("skill://")) errors.push(`line ${index + 1}: skill:// references are not allowed in a Workflow Guide`);
   });
-  return { headings, steps, errors };
+  return { headings, capabilities, errors };
 }
 
-export function renderWorkflowSkill(markdown: string, capabilityNames: Record<string, string>) {
+export function renderWorkflowSkill(markdown: string) {
   const parsed = parseWorkflowGuide(markdown);
   if (parsed.errors.length > 0) return { markdown: "", errors: parsed.errors };
 
-  const stepsByStartLine = new Map(parsed.steps.map((step) => [step.startLine, step]));
+  const capabilitiesByStartLine = new Map(
+    parsed.capabilities.map((capability) => [capability.startLine, capability]),
+  );
   const lines = markdown.split("\n");
   const output: string[] = [];
 
   for (let index = 0; index < lines.length; index += 1) {
     const lineNumber = index + 1;
-    const step = stepsByStartLine.get(lineNumber);
-    if (step) {
-      output.push(`## ${step.title}`);
-      output.push(replaceCapabilityReferences(step.body, capabilityNames));
-      index = step.endLine - 1;
+    const capability = capabilitiesByStartLine.get(lineNumber);
+    if (capability) {
+      output.push(renderCapability(capability));
+      index = capability.endLine - 1;
       continue;
     }
-    output.push(replaceCapabilityReferences(lines[index], capabilityNames));
+    output.push(lines[index]);
   }
 
   return { markdown: output.join("\n").replace(/\n{3,}/g, "\n\n").trim(), errors: [] };
@@ -145,9 +156,9 @@ export function splitWorkflowGuideDocument(
 
   const cells: WorkflowGuideDocumentCell[] = [];
   let cursor = 0;
-  for (const step of parsed.steps) {
-    const startOffset = lineOffsets[step.startLine - 1] ?? markdown.length;
-    const endOffset = lineOffsets[step.endLine] ?? markdown.length;
+  for (const capability of parsed.capabilities) {
+    const startOffset = lineOffsets[capability.startLine - 1] ?? markdown.length;
+    const endOffset = lineOffsets[capability.endLine] ?? markdown.length;
     if (cursor < startOffset) {
       cells.push({
         id: `markdown-${cursor}`,
@@ -158,12 +169,12 @@ export function splitWorkflowGuideDocument(
       });
     }
     cells.push({
-      id: `workflow-step-${step.key}-${startOffset}`,
-      kind: "workflow_step",
+      id: `capability-${startOffset}`,
+      kind: "capability",
       source: markdown.slice(startOffset, endOffset),
       startOffset,
       endOffset,
-      step,
+      capability,
     });
     cursor = endOffset;
   }
@@ -273,17 +284,9 @@ function resolveExternalMarkdownPath(sourcePath: string, target: string): string
   return `${parent}/${target.replace(/^\.\//, "")}`;
 }
 
-function collectReferences(body: string): WorkflowGuideReference[] {
-  const references: WorkflowGuideReference[] = [];
-  for (const match of body.matchAll(CAPABILITY_REFERENCE)) references.push({ kind: "capability", value: match[1] });
-  for (const match of body.matchAll(PACKAGE_REFERENCE)) references.push({ kind: "package_file", value: `${match[1]}/${match[2]}` });
-  return references;
-}
-
 function containsReservedWorkflowGuideSyntax(line: string) {
-  return line.trimStart().startsWith(":::workflow-step")
-    || STEP_END.test(line)
-    || /\{\{capability:[a-z0-9][a-z0-9-]{0,62}\}\}/.test(line)
+  return line.trimStart().startsWith(":::capability")
+    || DIRECTIVE_END.test(line)
     || /\[[^\]]+\]\((references|scripts|assets)\/[^\s)]+\)/.test(line);
 }
 
@@ -292,9 +295,17 @@ function isFenceMarker(line: string) {
   return trimmed.startsWith("```") || trimmed.startsWith("~~~");
 }
 
-function replaceCapabilityReferences(body: string, capabilityNames: Record<string, string>) {
-  return body.replace(CAPABILITY_REFERENCE, (_reference, key: string) => {
-    const name = capabilityNames[key];
-    return name ? `**Capability: ${name}**` : `**Capability: ${key}**`;
-  });
+export function capabilitySource(
+  name: string,
+  exposure: "direct" | "meta_on_demand",
+  guide: string,
+) {
+  const header = JSON.stringify({ name, exposure });
+  return `:::capability ${header}\n${guide.trim()}\n:::`;
+}
+
+function renderCapability(capability: WorkflowGuideCapabilityBlock) {
+  const exposure = capability.exposure === "direct" ? "Direct" : "Meta on demand";
+  const header = `**Capability: ${capability.name}**  \nExposure: ${exposure}`;
+  return capability.guide ? `${header}\n\n${capability.guide}` : header;
 }

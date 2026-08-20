@@ -50,7 +50,6 @@ import type {
 	ProfileMode,
 	WorkflowSpecification,
 	WorkflowSpecificationPreview,
-	WorkflowSpecificationSaveRequest,
 	WorkflowGuide,
 	WorkflowGuideExternalDocument,
 	WorkflowGuidePreviewRequest,
@@ -2682,19 +2681,6 @@ export const configSuitsApi = {
 		const query = new URLSearchParams({ id: profileId });
 		const response = await fetchApi<ApiWrapper<{ specification: WorkflowSpecification }>>(
 			`/api/mcp/profile/workflow/specification/view?${query}`,
-		);
-		return extractApiData(response).specification;
-	},
-
-	saveWorkflowSpecification: async (
-		request: WorkflowSpecificationSaveRequest,
-	): Promise<WorkflowSpecification> => {
-		const response = await fetchApi<ApiWrapper<{ specification: WorkflowSpecification }>>(
-			"/api/mcp/profile/workflow/specification/save",
-			{
-				method: "POST",
-				body: JSON.stringify(request),
-			},
 		);
 		return extractApiData(response).specification;
 	},

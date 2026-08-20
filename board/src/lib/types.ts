@@ -948,6 +948,7 @@ export interface ApiConflictDetails {
   dependencyServerIds?: string[];
   packageFiles?: WorkflowGuidePackageFile[];
   capabilities?: WorkflowGuideCapability[];
+  relativePaths?: string[];
 }
 
 export interface ProfileAuthoringView {
@@ -970,7 +971,6 @@ export interface ProfileAuthoringSaveRequest {
   clone_from_id: string | null;
   profile_mode?: ProfileMode;
   skill_name?: string | null;
-  workflow_specification?: WorkflowSpecificationSaveRequest;
 }
 
 export interface ProfileAuthoringSaveResponse {
@@ -1002,14 +1002,6 @@ export interface WorkflowSpecification {
   steps: WorkflowStep[];
 }
 
-export interface WorkflowSpecificationSaveRequest {
-  profile_id: string;
-  expected_specification_revision: number | null;
-  validation_notes: string | null;
-  avoid_rules: string | null;
-  steps: WorkflowStep[];
-}
-
 export interface WorkflowBindingPreview extends WorkflowBinding {
   validation: WorkflowBindingValidation;
 }
@@ -1032,10 +1024,11 @@ export interface WorkflowSpecificationPreview {
 export type WorkflowGuidePackageCategory = "reference" | "script" | "asset";
 
 export interface WorkflowGuideCapability {
-  alias: string;
-  display_name: string;
-  ref_id: string;
-  binding_policy: WorkflowBindingPolicy;
+  name: string;
+  exposure: WorkflowBindingPolicy;
+  guide: string;
+  start_line: number;
+  end_line: number;
 }
 
 export interface WorkflowGuidePackageFile {
@@ -1058,15 +1051,10 @@ export interface WorkflowGuide {
   documents: WorkflowGuideExternalDocument[];
 }
 
-export interface WorkflowGuideCapabilitySaveRequest extends WorkflowGuideCapability {
-  ref_id: string;
-}
-
 export interface WorkflowGuideSaveRequest {
   profile_id: string;
   expected_guide_revision: number;
   markdown: string;
-  capabilities: WorkflowGuideCapabilitySaveRequest[];
   reclamation_confirmation?: WorkflowGuideReclamationConfirmation;
 }
 
@@ -1075,7 +1063,7 @@ export interface WorkflowGuideReclamationConfirmation {
     package_file_id: string;
     file_revision: number;
   }>;
-  capability_aliases: string[];
+  capability_names: string[];
 }
 
 export interface WorkflowGuideSaveResponse {
@@ -1087,7 +1075,6 @@ export interface WorkflowGuidePreviewRequest {
   profile_id: string;
   relative_path?: string;
   markdown: string;
-  capabilities: WorkflowGuideCapabilitySaveRequest[];
 }
 
 export interface WorkflowGuidePreviewResponse {
