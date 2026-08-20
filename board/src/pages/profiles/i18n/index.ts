@@ -200,11 +200,13 @@ export const profilesTranslations = {
 			workflow: {
 				guide: {
 					title: "Workflow Guide",
+					regionLabel: "Workflow Guide", outlineLabel: "Guide outline", openMainGuide: "Open main Guide",
+					breadcrumbLabel: "Guide document breadcrumb", inspectorLabel: "Guide inspector", packageFileUpload: "Package file upload",
 					description: "Write the Skill narrative and insert readable references where they are needed.",
 					notebook: "Notebook", notebookRegion: "Workflow Guide notebook", preview: "Preview", previewDescription: "Rendered from the current draft without saving.",
 					insertAtPosition: "Insert at this position", insert: "Insert", inPlaceMarkdown: "In-Place Markdown", externalMarkdown: "External Markdown",
 					reference: "Reference", script: "Script", asset: "Asset", toolUsageDescription: "Tool usage description:",
-					capabilityExposure: "Capability exposure", metaOnDemand: "Meta on demand", directExposure: "Direct exposure",
+					capabilityExposure: "Capability exposure", metaOnDemand: "Meta on demand", direct: "Direct", directExposure: "Direct exposure",
 					capabilityGuidePlaceholder: "How this occurrence should be used", insertCapability: "Insert capability",
 					newExternalMarkdown: "New external Markdown", sectionName: "Section name", createExternalMarkdown: "Create external Markdown",
 					noPackageFiles: "No package files yet.", uploadPackageFile: "Upload package file", fileTitle: "File title", uploadAndInsert: "Upload and insert",
@@ -706,11 +708,13 @@ export const profilesTranslations = {
 			},
 			workflow: {
 				guide: {
-					title: "工作流指南", description: "编写 Skill 叙述，并在需要的位置插入可读引用。",
+					title: "工作流指南", regionLabel: "工作流指南", outlineLabel: "指南大纲", openMainGuide: "打开主指南",
+					breadcrumbLabel: "指南文档路径", inspectorLabel: "指南检查器", packageFileUpload: "包文件上传",
+					description: "编写 Skill 叙述，并在需要的位置插入可读引用。",
 					notebook: "笔记本", notebookRegion: "Workflow Guide 笔记本", preview: "预览", previewDescription: "从当前草稿渲染，不保存更改。",
 					insertAtPosition: "在此位置插入", insert: "插入", inPlaceMarkdown: "行内 Markdown", externalMarkdown: "外部 Markdown",
 					reference: "参考资料", script: "脚本", asset: "资产", toolUsageDescription: "工具使用说明：",
-					capabilityExposure: "能力暴露方式", metaOnDemand: "按需 Meta", directExposure: "直接暴露",
+					capabilityExposure: "能力暴露方式", metaOnDemand: "按需 Meta", direct: "直接", directExposure: "直接暴露",
 					capabilityGuidePlaceholder: "说明此处应如何使用该能力", insertCapability: "插入能力",
 					newExternalMarkdown: "新建外部 Markdown", sectionName: "章节名称", createExternalMarkdown: "创建外部 Markdown",
 					noPackageFiles: "暂无包文件。", uploadPackageFile: "上传包文件", fileTitle: "文件标题", uploadAndInsert: "上传并插入",
@@ -1205,11 +1209,13 @@ export const profilesTranslations = {
 			},
 			workflow: {
 				guide: {
-					title: "ワークフローガイド", description: "Skill の説明を記述し、必要な位置に読みやすい参照を挿入します。",
+					title: "ワークフローガイド", regionLabel: "ワークフローガイド", outlineLabel: "ガイドアウトライン", openMainGuide: "メインガイドを開く",
+					breadcrumbLabel: "ガイド文書のパンくず", inspectorLabel: "ガイドインスペクター", packageFileUpload: "パッケージファイルのアップロード",
+					description: "Skill の説明を記述し、必要な位置に読みやすい参照を挿入します。",
 					notebook: "ノートブック", notebookRegion: "Workflow Guide ノートブック", preview: "プレビュー", previewDescription: "保存せずに現在の下書きからレンダリングします。",
 					insertAtPosition: "この位置に挿入", insert: "挿入", inPlaceMarkdown: "インプレース Markdown", externalMarkdown: "外部 Markdown",
 					reference: "リファレンス", script: "スクリプト", asset: "アセット", toolUsageDescription: "ツール使用説明:",
-					capabilityExposure: "ケイパビリティの公開方法", metaOnDemand: "オンデマンド Meta", directExposure: "直接公開",
+					capabilityExposure: "ケイパビリティの公開方法", metaOnDemand: "オンデマンド Meta", direct: "直接", directExposure: "直接公開",
 					capabilityGuidePlaceholder: "この箇所での使用方法", insertCapability: "ケイパビリティを挿入",
 					newExternalMarkdown: "新しい外部 Markdown", sectionName: "セクション名", createExternalMarkdown: "外部 Markdown を作成",
 					noPackageFiles: "パッケージファイルはまだありません。", uploadPackageFile: "パッケージファイルをアップロード", fileTitle: "ファイル名", uploadAndInsert: "アップロードして挿入",

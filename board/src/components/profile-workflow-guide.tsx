@@ -1156,7 +1156,15 @@ export function ProfileWorkflowGuide({
                                   </p>
                                 ) : null}
                                 <p className="text-[11px] text-muted-foreground">
-                                  {effectiveExposure(occurrences)}
+                                  {effectiveExposure(occurrences) === "direct"
+                                    ? t(
+                                        "profiles:detail.workflow.guide.directExposure",
+                                        { defaultValue: "Direct exposure" },
+                                      )
+                                    : t(
+                                        "profiles:detail.workflow.guide.metaOnDemand",
+                                        { defaultValue: "Meta on demand" },
+                                      )}
                                 </p>
                                 <div className="flex flex-wrap gap-1">
                                   {occurrences.map((occurrence, index) => (
@@ -1868,8 +1876,8 @@ function effectiveExposure(
   occurrences: Array<{ exposure: "direct" | "meta_on_demand" }>,
 ) {
   return occurrences.some((occurrence) => occurrence.exposure === "direct")
-    ? "Direct exposure"
-    : "Meta on demand";
+    ? "direct"
+    : "meta_on_demand";
 }
 
 function GuideMarkdownPreview({
