@@ -259,8 +259,15 @@ impl WorkflowGuideService {
             .await
             .map_err(|error| WorkflowGuideError::Projection(error.to_string()))?;
         let registered_paths = sqlx::query_scalar::<_, String>(
-            "SELECT relative_path FROM workflow_profile_package_files WHERE profile_id = ?",
+            "SELECT relative_path
+             FROM workflow_profile_package_files
+             WHERE profile_id = ?
+             UNION
+             SELECT relative_path
+             FROM workflow_profile_materials
+             WHERE profile_id = ? AND relative_path IS NOT NULL",
         )
+        .bind(profile_id)
         .bind(profile_id)
         .fetch_all(&mut *transaction)
         .await?
@@ -2795,6 +2802,63 @@ mod tests {
         .await
         .expect("load projection fingerprint");
         assert!(fingerprint.is_some());
+    }
+
+    #[tokio::test]
+    async fn repair_preserves_files_owned_by_legacy_material_rows() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open in-memory database");
+        crate::test_helpers::prepare_config_database(&pool).await;
+        sqlx::query(
+            "INSERT INTO profile (id, name, description, type, role, profile_mode)
+             VALUES ('workflow-profile', 'Release investigation', '', 'shared', 'user', 'workflow')",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert Workflow Profile");
+        sqlx::query(
+            "INSERT INTO workflow_profile_skills (profile_id, skill_name)
+             VALUES ('workflow-profile', 'release-investigation-guide')",
+        )
+        .execute(&pool)
+        .await
+        .expect("configure friendly Skill name");
+        let service = WorkflowGuideService::new(pool.clone());
+        service.view("workflow-profile").await.expect("initialize Guide");
+        let temporary = tempfile::tempdir().expect("create skills directory");
+        service
+            .project("workflow-profile", temporary.path().to_path_buf())
+            .await
+            .expect("create Skill projection");
+
+        let legacy_path = temporary
+            .path()
+            .join("release-investigation-guide/references/legacy-notes.md");
+        std::fs::write(&legacy_path, "# Legacy notes\n").expect("write legacy Material file");
+        sqlx::query(
+            "INSERT INTO workflow_profile_materials (
+                material_id, profile_id, ordinal, title, kind, relative_path
+             ) VALUES (
+                'legacy-material', 'workflow-profile', 0, 'Legacy notes',
+                'uploaded_file', 'references/legacy-notes.md'
+             )",
+        )
+        .execute(&pool)
+        .await
+        .expect("register legacy Material file");
+
+        service
+            .project("workflow-profile", temporary.path().to_path_buf())
+            .await
+            .expect("repair Skill projection");
+
+        assert_eq!(
+            std::fs::read_to_string(legacy_path).expect("read preserved legacy Material file"),
+            "# Legacy notes\n"
+        );
     }
 
     #[tokio::test]
