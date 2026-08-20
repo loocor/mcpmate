@@ -45,7 +45,7 @@ async fn preparation_applies_the_complete_config_stream_once() {
         .fetch_one(&pool)
         .await
         .expect("count applied config migrations");
-    assert_eq!(applied, 15);
+    assert_eq!(applied, 16);
 
     for table in [
         "workflow_profile_skills",
@@ -54,6 +54,17 @@ async fn preparation_applies_the_complete_config_stream_once() {
         "workflow_profile_step_materials",
     ] {
         assert!(table_exists(&pool, table).await, "{table} should be created by v0015");
+    }
+    for table in [
+        "workflow_profile_guides",
+        "workflow_profile_guide_steps",
+        "workflow_profile_capability_aliases",
+        "workflow_profile_package_files",
+        "workflow_profile_external_guides",
+        "workflow_profile_guide_step_package_files",
+        "workflow_profile_skill_projections",
+    ] {
+        assert!(table_exists(&pool, table).await, "{table} should be created by v0016");
     }
     for referenced_table in ["workflow_profile_steps", "workflow_profile_materials"] {
         let foreign_key_count: i64 = sqlx::query_scalar(

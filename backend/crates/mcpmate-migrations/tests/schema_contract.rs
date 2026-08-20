@@ -76,7 +76,14 @@ async fn upgrades_workflow_steps_with_standard_uuid_ids() {
         .await
         .expect("prepare current config database");
     sqlx::raw_sql(
-        "DROP TABLE workflow_profile_step_materials;
+        "DROP TABLE workflow_profile_external_guides;
+         DROP TABLE workflow_profile_guide_step_package_files;
+         DROP TABLE workflow_profile_skill_projections;
+         DROP TABLE workflow_profile_package_files;
+         DROP TABLE workflow_profile_capability_aliases;
+         DROP TABLE workflow_profile_guide_steps;
+         DROP TABLE workflow_profile_guides;
+         DROP TABLE workflow_profile_step_materials;
          DROP TABLE workflow_profile_materials;
          DROP TABLE workflow_profile_material_libraries;
          DROP TABLE workflow_profile_skills;
@@ -136,6 +143,177 @@ async fn upgrades_workflow_steps_with_standard_uuid_ids() {
             .chars()
             .all(|character| character == '-' || character.is_ascii_hexdigit())
     );
+}
+
+#[tokio::test]
+async fn creates_guide_schema_without_copying_existing_workflow_authoring() {
+    let pool = memory_support::pool().await;
+    prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect("prepare current config database");
+    sqlx::raw_sql(
+        "DROP TABLE workflow_profile_guide_step_package_files;
+         DROP TABLE workflow_profile_skill_projections;
+         DROP TABLE workflow_profile_external_guides;
+         DROP TABLE workflow_profile_package_files;
+         DROP TABLE workflow_profile_capability_aliases;
+         DROP TABLE workflow_profile_guide_steps;
+         DROP TABLE workflow_profile_guides;",
+    )
+    .execute(&pool)
+    .await
+    .expect("restore the version fifteen Workflow schema");
+    rewind_config_to_version(&pool, 15).await;
+
+    sqlx::query(
+        "INSERT INTO profile (id, name, description, type, role, profile_mode)
+         VALUES ('workflow-profile', 'Release investigation', '', 'shared', 'user', 'workflow')",
+    )
+    .execute(&pool)
+    .await
+    .expect("insert Workflow Profile");
+    sqlx::query("INSERT INTO workflow_profile_specifications (profile_id) VALUES ('workflow-profile')")
+        .execute(&pool)
+        .await
+        .expect("insert Workflow specification");
+    sqlx::query(
+        "INSERT INTO workflow_profile_steps (profile_id, step_index, step_id, title, description)
+         VALUES ('workflow-profile', 0, '550e8400-e29b-41d4-a716-446655440000', 'Collect evidence', 'Read the logs first.')",
+    )
+    .execute(&pool)
+    .await
+    .expect("insert legacy Workflow step");
+    sqlx::query(
+        "INSERT INTO workflow_profile_materials (
+            material_id, profile_id, ordinal, title, kind, external_url
+         ) VALUES ('660e8400-e29b-41d4-a716-446655440000', 'workflow-profile', 0, 'Release notes', 'external_url', 'https://example.com/release-notes')",
+    )
+    .execute(&pool)
+    .await
+    .expect("insert legacy URL Material");
+    sqlx::query(
+        "INSERT INTO workflow_profile_step_materials (profile_id, step_id, material_id, ordinal)
+         VALUES (
+            'workflow-profile', '550e8400-e29b-41d4-a716-446655440000',
+            '660e8400-e29b-41d4-a716-446655440000', 0
+         )",
+    )
+    .execute(&pool)
+    .await
+    .expect("associate legacy URL Material with Workflow step");
+
+    prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect("create Workflow Guide schema");
+
+    for table in [
+        "workflow_profile_guides",
+        "workflow_profile_guide_steps",
+        "workflow_profile_capability_aliases",
+        "workflow_profile_package_files",
+        "workflow_profile_external_guides",
+        "workflow_profile_guide_step_package_files",
+        "workflow_profile_skill_projections",
+    ] {
+        let row_count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+            .fetch_one(&pool)
+            .await
+            .expect("count newly created Guide records");
+        assert_eq!(row_count, 0, "v0016 must not copy legacy data into {table}");
+    }
+
+    let material_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM workflow_profile_materials WHERE profile_id = 'workflow-profile'")
+            .fetch_one(&pool)
+            .await
+            .expect("retain existing Materials rows");
+    assert_eq!(material_count, 1);
+}
+
+#[tokio::test]
+async fn guide_package_file_foreign_keys_preserve_profile_ownership() {
+    let pool = memory_support::pool().await;
+    prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect("prepare current config database");
+
+    for profile_id in ["profile-a", "profile-b"] {
+        sqlx::query(
+            "INSERT INTO profile (id, name, description, type, role, profile_mode)
+             VALUES (?, ?, '', 'shared', 'user', 'workflow')",
+        )
+        .bind(profile_id)
+        .bind(profile_id)
+        .execute(&pool)
+        .await
+        .expect("insert Workflow Profile");
+    }
+    sqlx::query("INSERT INTO workflow_profile_specifications (profile_id) VALUES ('profile-b')")
+        .execute(&pool)
+        .await
+        .expect("insert Workflow specification");
+    sqlx::query(
+        "INSERT INTO workflow_profile_steps (profile_id, step_index, step_id, title)
+         VALUES ('profile-b', 0, '550e8400-e29b-41d4-a716-446655440000', 'Read reference')",
+    )
+    .execute(&pool)
+    .await
+    .expect("insert Workflow step");
+    sqlx::query(
+        "INSERT INTO workflow_profile_guide_steps (profile_id, step_key, step_id, ordinal)
+         VALUES ('profile-b', 'read-reference', '550e8400-e29b-41d4-a716-446655440000', 0)",
+    )
+    .execute(&pool)
+    .await
+    .expect("insert Guide step");
+    sqlx::query(
+        "INSERT INTO workflow_profile_package_files (
+            package_file_id, profile_id, ordinal, title, category, relative_path
+         ) VALUES ('package-a', 'profile-a', 0, 'Reference', 'reference', 'references/reference.md')",
+    )
+    .execute(&pool)
+    .await
+    .expect("insert package file for Profile A");
+
+    let external_error = sqlx::query(
+        "INSERT INTO workflow_profile_external_guides (package_file_id, profile_id, markdown)
+         VALUES ('package-a', 'profile-b', '# Invalid')",
+    )
+    .execute(&pool)
+    .await
+    .expect_err("an external guide cannot claim another Profile's package file");
+    assert!(external_error.to_string().contains("FOREIGN KEY constraint failed"));
+
+    let step_error = sqlx::query(
+        "INSERT INTO workflow_profile_guide_step_package_files (
+            profile_id, step_key, package_file_id, ordinal
+         ) VALUES ('profile-b', 'read-reference', 'package-a', 0)",
+    )
+    .execute(&pool)
+    .await
+    .expect_err("a Guide step cannot claim another Profile's package file");
+    assert!(step_error.to_string().contains("FOREIGN KEY constraint failed"));
+}
+
+#[tokio::test]
+async fn rejects_incomplete_existing_workflow_guide_storage() {
+    let pool = memory_support::pool().await;
+    prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect("prepare current config database");
+    sqlx::raw_sql(
+        "DROP TABLE workflow_profile_guides;
+         CREATE TABLE workflow_profile_guides (profile_id TEXT PRIMARY KEY);",
+    )
+    .execute(&pool)
+    .await
+    .expect("replace Guide storage with an incomplete table");
+    rewind_config_to_version(&pool, 15).await;
+
+    let error = prepare_config_database(&pool, DatabaseSource::InMemory)
+        .await
+        .expect_err("incomplete Workflow Guide storage must be rejected");
+    assert!(error.to_string().contains("does not match the versioned contract"));
 }
 
 #[tokio::test]
@@ -774,7 +952,7 @@ async fn adopts_complete_epoch_four_capability_storage_without_losing_data() {
     .fetch_one(&pool)
     .await
     .expect("load adopted migration version");
-    assert_eq!(version, 15);
+    assert_eq!(version, 16);
 }
 
 #[tokio::test]

@@ -15,11 +15,14 @@ use crate::api::models::profile::{
     ProfileComponentManageReq, ProfileDeleteReq, ProfileDetailsReq, ProfileDetailsResp, ProfileIdReq, ProfileListReq,
     ProfileListResp, ProfileManageReq, ProfileManageResp, ProfilePromptsListResp, ProfileResourceTemplatesListResp,
     ProfileResourcesListResp, ProfileServerManageReq, ProfileServerManageResp, ProfileServersListResp,
-    ProfileToolsListResp, WorkflowMaterialDeleteReq, WorkflowMaterialDeleteResp, WorkflowMaterialPreviewResp,
-    WorkflowMaterialSaveReq, WorkflowMaterialSaveResp, WorkflowMaterialsReorderReq, WorkflowMaterialsReorderResp,
-    WorkflowMaterialsViewResp, WorkflowSpecificationDeleteReq, WorkflowSpecificationDeleteResp,
-    WorkflowSpecificationPreviewResp, WorkflowSpecificationSaveReq, WorkflowSpecificationSaveResp,
-    WorkflowSpecificationViewResp, WorkflowStepMaterialsSaveReq, WorkflowStepMaterialsSaveResp,
+    ProfileToolsListResp, WorkflowGuideExternalDocumentReq, WorkflowGuideExternalDocumentResp,
+    WorkflowGuidePackageFileDeleteReq, WorkflowGuidePreviewReq, WorkflowGuidePreviewResp, WorkflowGuideRepairReq,
+    WorkflowGuideSaveReq, WorkflowGuideSaveResp, WorkflowGuideViewResp, WorkflowMaterialDeleteReq,
+    WorkflowMaterialDeleteResp, WorkflowMaterialPreviewResp, WorkflowMaterialSaveReq, WorkflowMaterialSaveResp,
+    WorkflowMaterialsReorderReq, WorkflowMaterialsReorderResp, WorkflowMaterialsViewResp,
+    WorkflowSpecificationDeleteReq, WorkflowSpecificationDeleteResp, WorkflowSpecificationPreviewResp,
+    WorkflowSpecificationSaveReq, WorkflowSpecificationSaveResp, WorkflowSpecificationViewResp,
+    WorkflowStepMaterialsSaveReq, WorkflowStepMaterialsSaveResp,
 };
 use crate::api::models::resp::ProfileApiErrorResp;
 use crate::api::models::token_estimate::{CapabilityTokenLedgerResponse, TokenEstimateQuery, TokenEstimateResponse};
@@ -69,6 +72,40 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
                 workflow_specification_preview_aide,
                 workflow_specification_preview_contract_docs,
             ),
+        )
+        .api_route(
+            "/mcp/profile/workflow/guide/view",
+            get_with(workflow_guide_view_aide, workflow_guide_view_docs),
+        )
+        .api_route(
+            "/mcp/profile/workflow/guide/save",
+            post_with(workflow_guide_save_aide, workflow_guide_save_docs),
+        )
+        .api_route(
+            "/mcp/profile/workflow/guide/preview",
+            post_with(workflow_guide_preview_aide, workflow_guide_preview_docs),
+        )
+        .api_route(
+            "/mcp/profile/workflow/guide/external-document",
+            get_with(
+                workflow_guide_external_document_view_aide,
+                workflow_guide_external_document_view_docs,
+            ),
+        )
+        .api_route(
+            "/mcp/profile/workflow/guide/package-files/upload",
+            post(profile::workflow_guide_package_file_upload).into(),
+        )
+        .api_route(
+            "/mcp/profile/workflow/guide/package-files/delete",
+            delete_with(
+                workflow_guide_package_file_delete_aide,
+                workflow_guide_package_file_delete_docs,
+            ),
+        )
+        .api_route(
+            "/mcp/profile/workflow/guide/repair",
+            post_with(workflow_guide_repair_aide, workflow_guide_repair_docs),
         )
         .api_route(
             "/mcp/profile/workflow/materials/view",
@@ -172,6 +209,48 @@ aide_wrapper_query!(
     ProfileListReq,
     ProfileListResp,
     "List all profile with optional filtering"
+);
+
+aide_wrapper_query!(
+    profile::workflow_guide_view,
+    ProfileIdReq,
+    WorkflowGuideViewResp,
+    "Load a document-first Workflow Guide and its readable reference palette"
+);
+
+aide_wrapper_payload!(
+    profile::workflow_guide_repair,
+    WorkflowGuideRepairReq,
+    WorkflowGuideSaveResp,
+    "Repair the projected Workflow Guide Skill package"
+);
+
+aide_wrapper_query!(
+    profile::workflow_guide_external_document_view,
+    WorkflowGuideExternalDocumentReq,
+    WorkflowGuideExternalDocumentResp,
+    "Load an editable external Markdown reference document"
+);
+
+aide_wrapper_payload!(
+    profile::workflow_guide_package_file_delete,
+    WorkflowGuidePackageFileDeleteReq,
+    WorkflowGuideSaveResp,
+    "Delete an unreferenced Workflow Guide package file"
+);
+
+aide_wrapper_payload!(
+    profile::workflow_guide_save,
+    WorkflowGuideSaveReq,
+    WorkflowGuideSaveResp,
+    "Save a Workflow Guide and atomically project its managed Skill package"
+);
+
+aide_wrapper_payload!(
+    profile::workflow_guide_preview,
+    WorkflowGuidePreviewReq,
+    WorkflowGuidePreviewResp,
+    "Render the current Workflow Guide draft without saving it"
 );
 
 aide_wrapper_query!(

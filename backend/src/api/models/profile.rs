@@ -11,6 +11,10 @@ use crate::core::profile::materials::{
     WorkflowStepMaterialsSaveCommand,
 };
 use crate::core::profile::workflow::{WorkflowSpecification, WorkflowSpecificationPreview, WorkflowStepCommand};
+use crate::core::profile::workflow_guide::{
+    RenderedWorkflowSkill, WorkflowGuideCapability, WorkflowGuideExternalDocument, WorkflowGuidePackageFile,
+    WorkflowGuideView,
+};
 
 // Import the unified response macro
 use crate::macros::resp::api_resp;
@@ -489,6 +493,86 @@ pub struct WorkflowSpecificationPreviewData {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct WorkflowGuideSaveReq {
+    pub profile_id: String,
+    pub expected_guide_revision: i64,
+    pub markdown: String,
+    pub capabilities: Vec<WorkflowGuideCapabilitySaveReq>,
+    pub reclamation_confirmation: Option<WorkflowGuideReclamationConfirmationReq>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WorkflowGuidePreviewReq {
+    pub profile_id: String,
+    pub relative_path: Option<String>,
+    pub markdown: String,
+    pub capabilities: Vec<WorkflowGuideCapabilitySaveReq>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WorkflowGuideCapabilitySaveReq {
+    pub alias: String,
+    pub display_name: String,
+    pub ref_id: String,
+    pub binding_policy: crate::core::profile::workflow::WorkflowBindingPolicy,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WorkflowGuideReclamationConfirmationReq {
+    pub package_files: Vec<WorkflowGuidePackageFileRevisionReq>,
+    pub capability_aliases: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WorkflowGuidePackageFileRevisionReq {
+    pub package_file_id: String,
+    pub file_revision: i64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WorkflowGuidePackageFileDeleteReq {
+    pub profile_id: String,
+    pub package_file_id: String,
+    pub expected_file_revision: i64,
+    pub expected_guide_revision: i64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WorkflowGuideExternalDocumentReq {
+    pub profile_id: String,
+    pub package_file_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct WorkflowGuideRepairReq {
+    pub profile_id: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct WorkflowGuideViewData {
+    pub guide: WorkflowGuideView,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct WorkflowGuideSaveData {
+    pub guide: WorkflowGuideView,
+    pub projected_skill: RenderedWorkflowSkill,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct WorkflowGuidePreviewData {
+    pub projected_skill: RenderedWorkflowSkill,
+    pub active_document: RenderedWorkflowSkill,
+    pub orphaned_package_files: Vec<WorkflowGuidePackageFile>,
+    pub orphaned_capabilities: Vec<WorkflowGuideCapability>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct WorkflowGuideExternalDocumentData {
+    pub document: WorkflowGuideExternalDocument,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct WorkflowMaterialSaveReq {
     pub profile_id: String,
     pub material_id: Option<String>,
@@ -737,6 +821,26 @@ api_resp!(
     WorkflowSpecificationPreviewResp,
     WorkflowSpecificationPreviewData,
     "Workflow specification preview API response"
+);
+api_resp!(
+    WorkflowGuideViewResp,
+    WorkflowGuideViewData,
+    "Workflow Guide view API response"
+);
+api_resp!(
+    WorkflowGuideSaveResp,
+    WorkflowGuideSaveData,
+    "Workflow Guide save API response"
+);
+api_resp!(
+    WorkflowGuidePreviewResp,
+    WorkflowGuidePreviewData,
+    "Workflow Guide preview API response"
+);
+api_resp!(
+    WorkflowGuideExternalDocumentResp,
+    WorkflowGuideExternalDocumentData,
+    "Workflow Guide external Markdown document API response"
 );
 api_resp!(
     WorkflowMaterialsViewResp,

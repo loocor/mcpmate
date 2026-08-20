@@ -6,6 +6,10 @@ pub use self::{
     authoring::{profile_authoring_save, profile_authoring_view},
     capabilities::{component_manage, prompts_list, resource_templates_list, resources_list, tools_list},
     capability_token_ledger::capability_token_ledger,
+    guide::{
+        workflow_guide_external_document_view, workflow_guide_package_file_delete, workflow_guide_package_file_upload,
+        workflow_guide_preview, workflow_guide_repair, workflow_guide_save, workflow_guide_view,
+    },
     helpers::{get_profile_or_error, get_tool_or_error, get_tool_with_details_or_error},
     materials::{
         workflow_material_delete, workflow_material_preview, workflow_material_replace, workflow_material_save,
@@ -24,6 +28,7 @@ pub use self::{
 mod authoring;
 mod capabilities;
 mod capability_token_ledger;
+mod guide;
 pub mod helpers;
 pub(crate) mod materials;
 mod mgmt;

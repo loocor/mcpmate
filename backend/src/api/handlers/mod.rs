@@ -74,6 +74,13 @@ pub enum ApiError {
     Conflict(String),
     /// Profile-scoped coded conflict.
     ProfileConflict(ProfileConflict),
+    /// Workflow Guide save needs explicit reclamation confirmation.
+    WorkflowGuideReclamationRequired(crate::core::profile::workflow_guide::WorkflowGuideReclamationPlan),
+    /// Workflow Guide save committed but managed Trash cleanup needs Repair.
+    WorkflowGuideTrashCleanupPending {
+        relative_paths: Vec<String>,
+        message: String,
+    },
     /// Profile target validation failure.
     InvalidProfileTarget(Vec<String>),
     /// Forbidden error
@@ -100,6 +107,12 @@ impl fmt::Display for ApiError {
             ApiError::ServiceUnavailable(msg) => write!(f, "Service unavailable: {msg}"),
             ApiError::Conflict(msg) => write!(f, "Conflict: {msg}"),
             ApiError::ProfileConflict(conflict) => write!(f, "Conflict: {}", conflict.message),
+            ApiError::WorkflowGuideReclamationRequired(_) => {
+                write!(f, "Conflict: Workflow Guide save requires reclamation confirmation")
+            }
+            ApiError::WorkflowGuideTrashCleanupPending { message, .. } => {
+                write!(f, "Internal error: Workflow Guide Trash cleanup is pending: {message}")
+            }
             ApiError::InvalidProfileTarget(_) => write!(f, "Bad request: invalid Profile target"),
             ApiError::Forbidden(msg) => write!(f, "Forbidden: {msg}"),
             ApiError::Timeout(msg) => write!(f, "Timeout: {msg}"),
@@ -134,6 +147,42 @@ impl IntoResponse for ApiError {
                 )
                     .into_response();
             }
+            ApiError::WorkflowGuideReclamationRequired(plan) => {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(json!({
+                        "error": {
+                            "message": "Workflow Guide save requires reclamation confirmation",
+                            "status": StatusCode::CONFLICT.as_u16(),
+                            "code": "workflow_guide_reclamation_required",
+                            "details": {
+                                "packageFiles": plan.package_files,
+                                "capabilities": plan.capabilities,
+                            },
+                        }
+                    })),
+                )
+                    .into_response();
+            }
+            ApiError::WorkflowGuideTrashCleanupPending {
+                relative_paths,
+                message,
+            } => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "error": {
+                            "message": format!(
+                                "Workflow Guide save committed, but Trash cleanup is pending: {message}"
+                            ),
+                            "status": StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                            "code": "workflow_guide_trash_cleanup_pending",
+                            "details": { "relativePaths": relative_paths },
+                        }
+                    })),
+                )
+                    .into_response();
+            }
             ApiError::InvalidProfileTarget(dependency_server_ids) => {
                 return (
                     StatusCode::BAD_REQUEST,
@@ -156,7 +205,10 @@ impl IntoResponse for ApiError {
             ApiError::InternalError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
             ApiError::ServiceUnavailable(msg) => (StatusCode::SERVICE_UNAVAILABLE, msg),
             ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg),
-            ApiError::ProfileConflict(_) | ApiError::InvalidProfileTarget(_) => unreachable!(),
+            ApiError::ProfileConflict(_)
+            | ApiError::WorkflowGuideReclamationRequired(_)
+            | ApiError::WorkflowGuideTrashCleanupPending { .. }
+            | ApiError::InvalidProfileTarget(_) => unreachable!(),
             ApiError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg),
             ApiError::Timeout(msg) => (StatusCode::REQUEST_TIMEOUT, msg),
             ApiError::GatewayTimeout(msg) => (StatusCode::GATEWAY_TIMEOUT, msg),
@@ -251,6 +303,61 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["error"]["code"], "profile_authoring_changed");
         assert_eq!(json["error"]["details"]["currentAuthoringGeneration"], 13);
+    }
+
+    #[tokio::test]
+    async fn workflow_guide_reclamation_conflict_returns_structured_candidates() {
+        use crate::core::profile::workflow::WorkflowBindingPolicy;
+        use crate::core::profile::workflow_guide::{
+            WorkflowGuideCapability, WorkflowGuidePackageCategory, WorkflowGuidePackageFile,
+            WorkflowGuideReclamationPlan,
+        };
+
+        let response = ApiError::WorkflowGuideReclamationRequired(WorkflowGuideReclamationPlan {
+            package_files: vec![WorkflowGuidePackageFile {
+                package_file_id: "file-1".to_string(),
+                file_revision: 3,
+                title: "Policy".to_string(),
+                category: WorkflowGuidePackageCategory::Reference,
+                relative_path: "references/policy.md".to_string(),
+                mime_type: Some("text/markdown".to_string()),
+                extension: Some("md".to_string()),
+                file_size: Some(10),
+            }],
+            capabilities: vec![WorkflowGuideCapability {
+                alias: "lookup".to_string(),
+                display_name: "Lookup".to_string(),
+                ref_id: "ref-1".to_string(),
+                binding_policy: WorkflowBindingPolicy::Direct,
+            }],
+        })
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"]["code"], "workflow_guide_reclamation_required");
+        assert_eq!(json["error"]["details"]["packageFiles"][0]["file_revision"], 3);
+        assert_eq!(json["error"]["details"]["capabilities"][0]["alias"], "lookup");
+    }
+
+    #[tokio::test]
+    async fn workflow_guide_trash_cleanup_pending_returns_stable_repair_contract() {
+        let response = ApiError::WorkflowGuideTrashCleanupPending {
+            relative_paths: vec!["references/policy.md".to_string()],
+            message: "native Trash is unavailable".to_string(),
+        }
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"]["code"], "workflow_guide_trash_cleanup_pending");
+        assert_eq!(
+            json["error"]["details"]["relativePaths"],
+            json!(["references/policy.md"])
+        );
+        assert!(json["error"]["message"].as_str().unwrap().contains("save committed"));
     }
 
     #[tokio::test]
