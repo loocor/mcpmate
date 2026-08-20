@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BookOpenText,
   Check,
+  ChevronLeft,
   ChevronRight,
   Eye,
   FilePlus2,
@@ -73,7 +74,11 @@ export function ProfileWorkflowGuide({
   const queryClient = useQueryClient();
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const selectionRef = useRef({ start: 0, end: 0 });
-  const loadedGuideRevisionRef = useRef<number | null>(null);
+  const loadedGuideRef = useRef<{
+    profileId: string;
+    guideRevision: number;
+  } | null>(null);
+  const rootDirtyRef = useRef(false);
   const guideQuery = useQuery({
     queryKey: ["workflowGuide", profileId],
     queryFn: () => configSuitsApi.getWorkflowGuide(profileId),
@@ -103,7 +108,10 @@ export function ProfileWorkflowGuide({
   useEffect(() => {
     if (!guideQuery.data) return;
     setPackageFiles(guideQuery.data.package_files);
-    if (loadedGuideRevisionRef.current !== guideQuery.data.guide_revision) {
+    const profileChanged = loadedGuideRef.current?.profileId !== profileId;
+    const revisionChanged =
+      loadedGuideRef.current?.guideRevision !== guideQuery.data.guide_revision;
+    if (profileChanged || (revisionChanged && !rootDirtyRef.current)) {
       const normalizedMarkdown = stripLeadingSkillFrontMatter(
         guideQuery.data.markdown,
       ).body;
@@ -113,9 +121,20 @@ export function ProfileWorkflowGuide({
         end: normalizedMarkdown.length,
       };
       setEditingCellId(null);
-      loadedGuideRevisionRef.current = guideQuery.data.guide_revision;
+      rootDirtyRef.current = false;
     }
-  }, [guideQuery.data]);
+    if (profileChanged) {
+      setActiveDocumentPath("SKILL.md");
+      setExternalDocuments({});
+      setEditorMode("notebook");
+      setPendingLocation(null);
+      setPendingReclamation(null);
+    }
+    loadedGuideRef.current = {
+      profileId,
+      guideRevision: guideQuery.data.guide_revision,
+    };
+  }, [guideQuery.data, profileId]);
 
   const loadedExternalDocuments = useMemo(
     () =>
@@ -157,7 +176,8 @@ export function ProfileWorkflowGuide({
       }));
       return;
     }
-    setMarkdown(updater);
+    setMarkdown((current) => updater(current));
+    rootDirtyRef.current = true;
   };
   const guide = useMemo(
     () => parseWorkflowGuide(notebookMarkdown),
@@ -264,6 +284,7 @@ export function ProfileWorkflowGuide({
         }),
       );
       setMarkdown(saved.guide.markdown);
+      rootDirtyRef.current = false;
       setPendingReclamation(null);
     },
     onError: (error) => {
@@ -327,7 +348,6 @@ export function ProfileWorkflowGuide({
       title: string;
       category: WorkflowGuidePackageCategory;
       file: File;
-      knownPackageFileIds: string[];
     }) => {
       const formData = new FormData();
       formData.append("profile_id", profileId);
@@ -338,23 +358,10 @@ export function ProfileWorkflowGuide({
       formData.append("title", draft.title.trim() || draft.file.name);
       formData.append("category", draft.category);
       formData.append("file", draft.file);
-      return configSuitsApi
-        .uploadWorkflowGuidePackageFile(formData)
-        .then((saved) => ({ saved, draft }));
+      return configSuitsApi.uploadWorkflowGuidePackageFile(formData);
     },
-    onSuccess: ({ saved, draft }) => {
-      const knownPackageFileIds = new Set(draft.knownPackageFileIds);
-      const file = saved.guide.package_files.find(
-        (candidate) => !knownPackageFileIds.has(candidate.package_file_id),
-      );
-      if (!file) {
-        notifyError(
-          t("profiles:detail.workflow.guide.fileSaveFailed", {
-            defaultValue: "Failed to save package file",
-          }),
-        );
-        return;
-      }
+    onSuccess: (saved) => {
+      const file = saved.package_file;
       queryClient.setQueryData(["workflowGuide", profileId], saved.guide);
       setPackageFiles(saved.guide.package_files);
       insert(`[${file.title}](${file.relative_path})`);
@@ -414,12 +421,9 @@ export function ProfileWorkflowGuide({
       );
       return configSuitsApi.uploadWorkflowGuidePackageFile(formData);
     },
-    onSuccess: (saved) => {
-      const file = saved.guide.package_files.find(
-        (candidate) =>
-          candidate.package_file_id === activeExternalDocument?.package_file_id,
-      );
-      if (!file || !activeExternalDocument) return;
+    onSuccess: async (saved) => {
+      const file = saved.package_file;
+      if (!activeExternalDocument) return;
       setExternalDocuments((current) => ({
         ...current,
         [file.relative_path]: {
@@ -431,6 +435,9 @@ export function ProfileWorkflowGuide({
       }));
       queryClient.setQueryData(["workflowGuide", profileId], saved.guide);
       setPackageFiles(saved.guide.package_files);
+      await queryClient.invalidateQueries({
+        queryKey: ["workflowSpecification", profileId],
+      });
       notifySuccess(
         t("profiles:detail.workflow.guide.documentSaved", {
           defaultValue: "External Markdown document saved",
@@ -470,14 +477,7 @@ export function ProfileWorkflowGuide({
       );
       const saved =
         await configSuitsApi.uploadWorkflowGuidePackageFile(formData);
-      const knownPackageFileIds = new Set(
-        packageFiles.map((file) => file.package_file_id),
-      );
-      const file = saved.guide.package_files.find(
-        (candidate) => !knownPackageFileIds.has(candidate.package_file_id),
-      );
-      if (!file)
-        throw new Error("Created external Markdown document was not returned");
+      const file = saved.package_file;
       return {
         saved,
         document: {
@@ -879,18 +879,15 @@ export function ProfileWorkflowGuide({
                       onInsert={insert}
                       onInsertCapability={insertCapability}
                       onCreateExternalDocument={(title) =>
-                        createExternalDocumentMutation.mutate(title)
+                        createExternalDocumentMutation
+                          .mutateAsync(title)
+                          .then(() => undefined)
                       }
                       creatingExternalDocument={
                         createExternalDocumentMutation.isPending
                       }
                       onCreatePackageFile={(draft) =>
-                        packageFileMutation.mutate({
-                          ...draft,
-                          knownPackageFileIds: packageFiles.map(
-                            (file) => file.package_file_id,
-                          ),
-                        })
+                        packageFileMutation.mutateAsync(draft).then(() => undefined)
                       }
                       creatingPackageFile={packageFileMutation.isPending}
                       onSetInsertionPoint={(offset) => {
@@ -1082,18 +1079,17 @@ export function ProfileWorkflowGuide({
                           onInsert={insert}
                           onInsertCapability={insertCapability}
                           onCreateExternalDocument={(title) =>
-                            createExternalDocumentMutation.mutate(title)
+                            createExternalDocumentMutation
+                              .mutateAsync(title)
+                              .then(() => undefined)
                           }
                           creatingExternalDocument={
                             createExternalDocumentMutation.isPending
                           }
                           onCreatePackageFile={(draft) =>
-                            packageFileMutation.mutate({
-                              ...draft,
-                              knownPackageFileIds: packageFiles.map(
-                                (file) => file.package_file_id,
-                              ),
-                            })
+                            packageFileMutation
+                              .mutateAsync(draft)
+                              .then(() => undefined)
                           }
                           creatingPackageFile={packageFileMutation.isPending}
                           onSetInsertionPoint={(offset) => {
@@ -1416,17 +1412,18 @@ function GuideBoundaryInsert({
     exposure: "direct" | "meta_on_demand",
     guide: string,
   ) => void;
-  onCreateExternalDocument: (title: string) => void;
+  onCreateExternalDocument: (title: string) => Promise<void>;
   creatingExternalDocument: boolean;
   onCreatePackageFile: (draft: {
     title: string;
     category: WorkflowGuidePackageCategory;
     file: File;
-  }) => void;
+  }) => Promise<void>;
   creatingPackageFile: boolean;
   onSetInsertionPoint: (offset: number) => void;
 }) {
   const { t } = useTranslation(["profiles", "common"]);
+  const [open, setOpen] = useState(false);
   const [activeInsert, setActiveInsert] = useState<
     | "external_markdown"
     | "reference"
@@ -1450,6 +1447,19 @@ function GuideBoundaryInsert({
       file.category === packageCategory &&
       !(packageCategory === "reference" && file.extension === "md"),
   );
+  const resetInsert = () => {
+    setActiveInsert(null);
+    setExternalDocumentTitle("");
+    setPackageTitle("");
+    setPackageUpload(null);
+    setSelectedCapability(null);
+    setBindingPolicy("meta_on_demand");
+    setCapabilityGuide("");
+  };
+  const closeInsert = () => {
+    setOpen(false);
+    resetInsert();
+  };
 
   return (
     <div
@@ -1458,7 +1468,13 @@ function GuideBoundaryInsert({
       onMouseEnter={() => onSetInsertionPoint(offset)}
     >
       <div className="h-px flex-1 bg-transparent transition-colors group-hover/boundary:bg-border group-focus-within/boundary:bg-border" />
-      <Popover>
+      <Popover
+        open={open}
+        onOpenChange={(nextOpen) => {
+          setOpen(nextOpen);
+          if (!nextOpen) resetInsert();
+        }}
+      >
         <PopoverTrigger asChild>
           <Button
             aria-label={t("profiles:detail.workflow.guide.insertAtPosition", {
@@ -1473,79 +1489,96 @@ function GuideBoundaryInsert({
           </Button>
         </PopoverTrigger>
         <PopoverContent align="center" className="w-72 p-2">
-          <div className="space-y-1">
-            <p className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-              {t("profiles:detail.workflow.guide.insert", {
-                defaultValue: "Insert",
-              })}
-            </p>
+          {activeInsert === null ? (
+            <div className="space-y-1">
+              <p className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                {t("profiles:detail.workflow.guide.insert", {
+                  defaultValue: "Insert",
+                })}
+              </p>
+              <Button
+                className="w-full justify-start"
+                onClick={() => {
+                  onInsert("\n\n## New section\n\n");
+                  closeInsert();
+                }}
+                size="sm"
+                variant="ghost"
+              >
+                <FileText className="mr-2 h-3.5 w-3.5" />
+                {t("profiles:detail.workflow.guide.inPlaceMarkdown", {
+                  defaultValue: "In-Place Markdown",
+                })}
+              </Button>
+              <Button
+                className="w-full justify-start"
+                onClick={() => setActiveInsert("external_markdown")}
+                size="sm"
+                variant="ghost"
+              >
+                <FilePlus2 className="mr-2 h-3.5 w-3.5" />
+                {t("profiles:detail.workflow.guide.externalMarkdown", {
+                  defaultValue: "External Markdown",
+                })}
+              </Button>
+              <Button
+                className="w-full justify-start"
+                onClick={() => setActiveInsert("reference")}
+                size="sm"
+                variant="ghost"
+              >
+                <FileText className="mr-2 h-3.5 w-3.5" />
+                {t("profiles:detail.workflow.guide.reference", {
+                  defaultValue: "Reference",
+                })}
+              </Button>
+              <Button
+                className="w-full justify-start"
+                onClick={() => setActiveInsert("capability")}
+                size="sm"
+                variant="ghost"
+              >
+                <Wrench className="mr-2 h-3.5 w-3.5" />
+                {t("profiles:detail.workflow.guide.capability", {
+                  defaultValue: "Capability",
+                })}
+              </Button>
+              <Button
+                className="w-full justify-start"
+                onClick={() => setActiveInsert("script")}
+                size="sm"
+                variant="ghost"
+              >
+                <FileText className="mr-2 h-3.5 w-3.5" />
+                {t("profiles:detail.workflow.guide.script", {
+                  defaultValue: "Script",
+                })}
+              </Button>
+              <Button
+                className="w-full justify-start"
+                onClick={() => setActiveInsert("asset")}
+                size="sm"
+                variant="ghost"
+              >
+                <FileText className="mr-2 h-3.5 w-3.5" />
+                {t("profiles:detail.workflow.guide.asset", {
+                  defaultValue: "Asset",
+                })}
+              </Button>
+            </div>
+          ) : (
             <Button
-              className="w-full justify-start"
-              onClick={() => onInsert("\n\n## New section\n\n")}
+              className="mb-2 w-full justify-start"
+              onClick={resetInsert}
               size="sm"
               variant="ghost"
             >
-              <FileText className="mr-2 h-3.5 w-3.5" />
-              {t("profiles:detail.workflow.guide.inPlaceMarkdown", {
-                defaultValue: "In-Place Markdown",
+              <ChevronLeft className="mr-2 h-3.5 w-3.5" />
+              {t("profiles:detail.workflow.guide.backToInsertTypes", {
+                defaultValue: "Back to insert types",
               })}
             </Button>
-            <Button
-              className="w-full justify-start"
-              onClick={() => setActiveInsert("external_markdown")}
-              size="sm"
-              variant="ghost"
-            >
-              <FilePlus2 className="mr-2 h-3.5 w-3.5" />
-              {t("profiles:detail.workflow.guide.externalMarkdown", {
-                defaultValue: "External Markdown",
-              })}
-            </Button>
-            <Button
-              className="w-full justify-start"
-              onClick={() => setActiveInsert("reference")}
-              size="sm"
-              variant="ghost"
-            >
-              <FileText className="mr-2 h-3.5 w-3.5" />
-              {t("profiles:detail.workflow.guide.reference", {
-                defaultValue: "Reference",
-              })}
-            </Button>
-            <Button
-              className="w-full justify-start"
-              onClick={() => setActiveInsert("capability")}
-              size="sm"
-              variant="ghost"
-            >
-              <Wrench className="mr-2 h-3.5 w-3.5" />
-              {t("profiles:detail.workflow.guide.capability", {
-                defaultValue: "Capability",
-              })}
-            </Button>
-            <Button
-              className="w-full justify-start"
-              onClick={() => setActiveInsert("script")}
-              size="sm"
-              variant="ghost"
-            >
-              <FileText className="mr-2 h-3.5 w-3.5" />
-              {t("profiles:detail.workflow.guide.script", {
-                defaultValue: "Script",
-              })}
-            </Button>
-            <Button
-              className="w-full justify-start"
-              onClick={() => setActiveInsert("asset")}
-              size="sm"
-              variant="ghost"
-            >
-              <FileText className="mr-2 h-3.5 w-3.5" />
-              {t("profiles:detail.workflow.guide.asset", {
-                defaultValue: "Asset",
-              })}
-            </Button>
-          </div>
+          )}
           {activeInsert === "capability" ? (
             <div className="mt-2 border-t pt-2">
               <div className="max-h-40 space-y-1 overflow-auto">
@@ -1639,13 +1672,14 @@ function GuideBoundaryInsert({
                 />
                 <Button
                   className="w-full justify-start"
-                  onClick={() =>
+                  onClick={() => {
                     onInsertCapability(
                       selectedCapability,
                       bindingPolicy,
                       capabilityGuide,
-                    )
-                  }
+                    );
+                    closeInsert();
+                  }}
                   size="sm"
                 >
                   <Plus className="mr-2 h-3.5 w-3.5" />
@@ -1687,8 +1721,10 @@ function GuideBoundaryInsert({
                     !externalDocumentTitle.trim() || creatingExternalDocument
                   }
                   onClick={() => {
-                    onCreateExternalDocument(externalDocumentTitle);
-                    setExternalDocumentTitle("");
+                    void onCreateExternalDocument(externalDocumentTitle).then(
+                      closeInsert,
+                      () => undefined,
+                    );
                   }}
                   size="icon"
                   type="button"
@@ -1707,9 +1743,10 @@ function GuideBoundaryInsert({
                   <Button
                     className="w-full justify-start"
                     key={file.package_file_id}
-                    onClick={() =>
-                      onInsert(`[${file.title}](${file.relative_path})`)
-                    }
+                    onClick={() => {
+                      onInsert(`[${file.title}](${file.relative_path})`);
+                      closeInsert();
+                    }}
                     size="sm"
                     variant="ghost"
                   >
@@ -1753,13 +1790,11 @@ function GuideBoundaryInsert({
                 disabled={!packageUpload || creatingPackageFile}
                 onClick={() => {
                   if (!packageUpload) return;
-                  onCreatePackageFile({
+                  void onCreatePackageFile({
                     title: packageTitle,
                     category: packageCategory,
                     file: packageUpload,
-                  });
-                  setPackageTitle("");
-                  setPackageUpload(null);
+                  }).then(closeInsert, () => undefined);
                 }}
                 size="sm"
               >
@@ -1929,12 +1964,13 @@ function GuideMarkdownPreview({
 }
 
 function SkillPreview({ content }: { content: string }) {
+  const { t } = useTranslation("profiles");
   const { frontMatter, body } = stripLeadingSkillFrontMatter(content);
   return (
     <div>
       <dl className="mb-5 grid gap-3 border-b pb-4 text-sm sm:grid-cols-[7rem_minmax(0,1fr)]">
         <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Name
+          {t("detail.workflow.guide.previewName", { defaultValue: "Name" })}
         </dt>
         <dd className="min-w-0">
           <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
@@ -1942,7 +1978,9 @@ function SkillPreview({ content }: { content: string }) {
           </code>
         </dd>
         <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Description
+          {t("detail.workflow.guide.previewDescriptionLabel", {
+            defaultValue: "Description",
+          })}
         </dt>
         <dd className="leading-6 text-slate-700 dark:text-slate-300">
           {frontMatter.description ?? "—"}

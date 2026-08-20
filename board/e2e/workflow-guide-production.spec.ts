@@ -13,9 +13,8 @@ function screenshotPath(name: string): string {
   return join(screenshotDirectory, name);
 }
 
-test.skip(!apiBaseUrl || !dataDirectory, "requires MCPMATE_UAT_API_BASE and MCPMATE_UAT_DATA_DIR for an isolated backend");
-
 test("Workflow Guide notebook documents and preview persist the intended Markdown", async ({ page, request }) => {
+  test.skip(!apiBaseUrl || !dataDirectory, "requires MCPMATE_UAT_API_BASE and MCPMATE_UAT_DATA_DIR for an isolated backend");
   await page.route("**/__mcpmate/dev-core-source", (route) => {
     return route.fulfill({ json: { apiBaseUrl } });
   });
@@ -116,6 +115,11 @@ test("Workflow Guide notebook documents and preview persist the intended Markdow
   await capabilityInsert.hover();
   await capabilityInsert.click();
   await page.getByRole("button", { name: "Capability", exact: true }).click();
+  for (const action of ["In-Place Markdown", "External Markdown", "Reference", "Capability", "Script", "Asset"]) {
+    await expect(page.getByRole("button", { name: action, exact: true })).not.toBeVisible();
+  }
+  await expect(page.getByRole("button", { name: "Back to insert types" })).toBeVisible();
+  await page.screenshot({ path: screenshotPath("boundary-capability-panel.png"), fullPage: true });
   const capabilityOption = page.getByRole("button", { name: capabilityName, exact: true });
   await expect(capabilityOption).toBeVisible();
   await capabilityOption.click();
@@ -159,6 +163,13 @@ test("Workflow Guide notebook documents and preview persist the intended Markdow
   await expect(page.getByLabel("Workflow Guide notebook")).toContainText("Release policy");
   await page.screenshot({ path: screenshotPath("external-notebook.png"), fullPage: true });
 
+  await page.getByLabel("Open main Guide").click();
+  await page.getByRole("button", { name: "Edit block" }).first().click();
+  const rootDraft = page.getByLabel("Markdown block source");
+  await rootDraft.fill(`${await rootDraft.inputValue()}\n\nUnsaved root draft survives external saves.\n`);
+  await page.getByRole("button", { name: "Done" }).first().click();
+  await expect(page.getByLabel("Workflow Guide notebook")).toContainText("Unsaved root draft survives external saves.");
+  await page.getByRole("button", { name: "Release policy" }).last().click();
   await page.getByRole("button", { name: "Edit block" }).first().click();
   await page.getByLabel("Markdown block source").fill("# Release policy\nUnsaved external preview.\n");
   await page.getByRole("button", { name: "Done" }).first().click();
@@ -185,6 +196,7 @@ test("Workflow Guide notebook documents and preview persist the intended Markdow
 
   await page.getByLabel("Open main Guide").click();
   await expect(page.getByLabel("Workflow Guide notebook")).toContainText("Evidence handoff");
+  await expect(page.getByLabel("Workflow Guide notebook")).toContainText("Unsaved root draft survives external saves.");
 
   for (const material of [
     { category: "reference", title: "Release checklist", file: { name: "checklist.yaml", mimeType: "application/yaml", buffer: Buffer.from("checks: []\n") } },

@@ -6,9 +6,10 @@ use super::common::*;
 use crate::{
     api::models::profile::{
         ProfileIdReq, WorkflowGuideExternalDocumentData, WorkflowGuideExternalDocumentReq,
-        WorkflowGuideExternalDocumentResp, WorkflowGuidePackageFileDeleteReq, WorkflowGuidePreviewData,
-        WorkflowGuidePreviewReq, WorkflowGuidePreviewResp, WorkflowGuideRepairReq, WorkflowGuideSaveData,
-        WorkflowGuideSaveReq, WorkflowGuideSaveResp, WorkflowGuideViewData, WorkflowGuideViewResp,
+        WorkflowGuideExternalDocumentResp, WorkflowGuidePackageFileDeleteReq, WorkflowGuidePackageFileSaveData,
+        WorkflowGuidePackageFileSaveResp, WorkflowGuidePreviewData, WorkflowGuidePreviewReq, WorkflowGuidePreviewResp,
+        WorkflowGuideRepairReq, WorkflowGuideSaveData, WorkflowGuideSaveReq, WorkflowGuideSaveResp,
+        WorkflowGuideViewData, WorkflowGuideViewResp,
     },
     core::profile::workflow_guide::{
         WorkflowGuideError, WorkflowGuidePackageCategory, WorkflowGuidePackageFileSaveCommand,
@@ -94,7 +95,7 @@ pub async fn workflow_guide_external_document_view(
 pub async fn workflow_guide_package_file_upload(
     State(state): State<Arc<AppState>>,
     multipart: Multipart,
-) -> Result<Json<WorkflowGuideSaveResp>, ApiError> {
+) -> Result<Json<WorkflowGuidePackageFileSaveResp>, ApiError> {
     let upload = parse_package_file_upload(multipart).await?;
     let profile_id = upload.profile_id.clone();
     let db = get_database(&state).await?;
@@ -123,10 +124,13 @@ pub async fn workflow_guide_package_file_upload(
         "/api/mcp/profile/workflow/guide/package-files/upload",
     )
     .await;
-    Ok(Json(WorkflowGuideSaveResp::success(WorkflowGuideSaveData {
-        guide: saved.guide,
-        projected_skill: saved.projected_skill,
-    })))
+    Ok(Json(WorkflowGuidePackageFileSaveResp::success(
+        WorkflowGuidePackageFileSaveData {
+            guide: saved.guide,
+            projected_skill: saved.projected_skill,
+            package_file: saved.package_file,
+        },
+    )))
 }
 
 pub async fn workflow_guide_package_file_delete(

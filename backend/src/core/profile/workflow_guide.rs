@@ -123,6 +123,13 @@ pub struct WorkflowGuideSaveResult {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkflowGuidePackageFileSaveResult {
+    pub guide: WorkflowGuideView,
+    pub projected_skill: RenderedWorkflowSkill,
+    pub package_file: WorkflowGuidePackageFile,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkflowGuidePreviewResult {
     pub projected_skill: RenderedWorkflowSkill,
     pub active_document: RenderedWorkflowSkill,
@@ -276,6 +283,10 @@ impl WorkflowGuideService {
         let material_service = WorkflowMaterialsService::new(self.pool.clone(), skills_root.clone());
         let _package_guard = material_service
             .lock_skill_package(&skill_name)
+            .await
+            .map_err(|error| WorkflowGuideError::Projection(error.to_string()))?;
+        material_service
+            .recover_registered_package_file_leases(&skill_name, &registered_paths)
             .await
             .map_err(|error| WorkflowGuideError::Projection(error.to_string()))?;
         let registered_files: Vec<(String, Option<String>, bool)> = sqlx::query_as(
@@ -610,7 +621,7 @@ impl WorkflowGuideService {
         &self,
         command: WorkflowGuidePackageFileSaveCommand,
         skills_root: PathBuf,
-    ) -> Result<WorkflowGuideSaveResult, WorkflowGuideError> {
+    ) -> Result<WorkflowGuidePackageFileSaveResult, WorkflowGuideError> {
         validate_package_file_command(&command)?;
         let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         verify_workflow_profile(&mut transaction, &command.profile_id).await?;
@@ -827,6 +838,17 @@ impl WorkflowGuideService {
                 return Err(error);
             }
         };
+        let Some(package_file) = guide
+            .package_files
+            .iter()
+            .find(|file| file.package_file_id == package_file_id)
+            .cloned()
+        else {
+            rollback_save_artifacts(Some(projection), staged_file, reclamation).await?;
+            return Err(WorkflowGuideError::InvalidStorage(
+                "saved package file was not returned from persistence".to_string(),
+            ));
+        };
         if let Err(error) = transaction.commit().await {
             rollback_save_artifacts(Some(projection), staged_file, reclamation).await?;
             return Err(error.into());
@@ -836,7 +858,11 @@ impl WorkflowGuideService {
             staged_file.commit().await;
         }
         move_reclamation_leases_to_trash(reclamation).await?;
-        Ok(WorkflowGuideSaveResult { guide, projected_skill })
+        Ok(WorkflowGuidePackageFileSaveResult {
+            guide,
+            projected_skill,
+            package_file,
+        })
     }
 
     pub async fn delete_package_file_and_project(
@@ -1953,25 +1979,32 @@ pub fn parse_workflow_guide(markdown: &str) -> Result<WorkflowGuide, Vec<Workflo
     let mut capabilities = Vec::new();
     let mut package_paths = BTreeSet::new();
     let mut errors = Vec::new();
-    let mut fenced = false;
+    let mut fence = None;
     let mut active: Option<ActiveCapability> = None;
 
     for (index, line) in markdown.lines().enumerate() {
         let line_number = index + 1;
-        if is_fence_marker(line) {
-            fenced = !fenced;
-            if let Some(active) = active.as_mut() {
-                active.lines.push(line.to_string());
+        if let Some(active_fence) = fence {
+            if closes_fence(line, active_fence) {
+                fence = None;
+                if let Some(active) = active.as_mut() {
+                    active.lines.push(line.to_string());
+                }
+                continue;
             }
-            continue;
-        }
-        if fenced {
             if contains_reserved_workflow_guide_syntax(line) {
                 errors.push(WorkflowGuideParseError {
                     line: line_number,
                     message: "Workflow Guide directives and references are not allowed in fenced code".to_string(),
                 });
             }
+            if let Some(active) = active.as_mut() {
+                active.lines.push(line.to_string());
+            }
+            continue;
+        }
+        if let Some(opening_fence) = opening_fence(line) {
+            fence = Some(opening_fence);
             if let Some(active) = active.as_mut() {
                 active.lines.push(line.to_string());
             }
@@ -2115,9 +2148,32 @@ struct CapabilityDirectiveHeader {
     exposure: WorkflowBindingPolicy,
 }
 
-fn is_fence_marker(line: &str) -> bool {
+#[derive(Clone, Copy)]
+struct MarkdownFence {
+    delimiter: char,
+    length: usize,
+}
+
+fn opening_fence(line: &str) -> Option<MarkdownFence> {
     let trimmed = line.trim_start();
-    trimmed.starts_with("```") || trimmed.starts_with("~~~")
+    let delimiter = trimmed.chars().next()?;
+    if delimiter != '`' && delimiter != '~' {
+        return None;
+    }
+    let length = trimmed.chars().take_while(|character| *character == delimiter).count();
+    (length >= 3).then_some(MarkdownFence { delimiter, length })
+}
+
+fn closes_fence(
+    line: &str,
+    fence: MarkdownFence,
+) -> bool {
+    let trimmed = line.trim_start();
+    let length = trimmed
+        .chars()
+        .take_while(|character| *character == fence.delimiter)
+        .count();
+    length >= fence.length && trimmed[length..].trim().is_empty()
 }
 
 fn contains_reserved_workflow_guide_syntax(line: &str) -> bool {
@@ -2642,6 +2698,25 @@ mod tests {
     }
 
     #[test]
+    fn keeps_shorter_fence_markers_inside_a_longer_fence() {
+        let errors = parse_workflow_guide(
+            "````markdown\n```\n:::capability {\"name\":\"lookup\",\"exposure\":\"direct\"}\n:::\n```\n````",
+        )
+        .expect_err("reserved syntax inside the outer fence must remain inert");
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| { error.line == 3 && error.message.contains("not allowed in fenced code") })
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|error| { error.line == 4 && error.message.contains("not allowed in fenced code") })
+        );
+    }
+
+    #[test]
     fn normalizes_imported_skill_front_matter_before_projection() {
         let body = normalize_main_guide_markdown(
             "---\nname: imported-skill\ndescription: Imported description\n---\n\n# Imported heading\n",
@@ -2789,6 +2864,20 @@ mod tests {
             .await
             .expect("repair preserves a registered non-Markdown file");
         assert_eq!(std::fs::read(&asset_path).expect("read preserved asset"), asset_bytes);
+
+        let materials = WorkflowMaterialsService::new(pool.clone(), temporary.path().to_path_buf());
+        let residual_lease = materials
+            .stage_package_file_deletion_lease("release-investigation-guide", "assets/evidence.bin")
+            .await
+            .expect("simulate an interrupted package-file deletion");
+        drop(residual_lease);
+        assert!(!asset_path.exists());
+        service
+            .project("workflow-profile", temporary.path().to_path_buf())
+            .await
+            .expect("repair restores a registered package-file deletion lease before checksum verification");
+        assert_eq!(std::fs::read(&asset_path).expect("read restored asset"), asset_bytes);
+
         std::fs::remove_file(&asset_path).expect("remove registered asset");
         let error = service
             .project("workflow-profile", temporary.path().to_path_buf())

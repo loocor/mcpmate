@@ -37,7 +37,7 @@ export function parseWorkflowGuide(markdown: string): WorkflowGuideParseResult {
     lineOffsets.push(nextOffset);
     nextOffset += line.length + 1;
   }
-  let fenced = false;
+  let fence: MarkdownFence | null = null;
   let active: {
     name: string;
     exposure: "direct" | "meta_on_demand";
@@ -47,15 +47,21 @@ export function parseWorkflowGuide(markdown: string): WorkflowGuideParseResult {
 
   lines.forEach((line, index) => {
     const lineNumber = index + 1;
-    if (isFenceMarker(line)) {
-      fenced = !fenced;
-      if (active) active.lines.push(line);
-      return;
-    }
-    if (fenced) {
+    if (fence) {
+      if (closesFence(line, fence)) {
+        fence = null;
+        if (active) active.lines.push(line);
+        return;
+      }
       if (containsReservedWorkflowGuideSyntax(line)) {
         errors.push(`line ${lineNumber}: Workflow Guide directives and references are not allowed in fenced code`);
       }
+      if (active) active.lines.push(line);
+      return;
+    }
+    const openingFence = parseOpeningFence(line);
+    if (openingFence) {
+      fence = openingFence;
       if (active) active.lines.push(line);
       return;
     }
@@ -290,9 +296,29 @@ function containsReservedWorkflowGuideSyntax(line: string) {
     || /\[[^\]]+\]\((references|scripts|assets)\/[^\s)]+\)/.test(line);
 }
 
-function isFenceMarker(line: string) {
+interface MarkdownFence {
+  delimiter: "`" | "~";
+  length: number;
+}
+
+function parseOpeningFence(line: string): MarkdownFence | null {
   const trimmed = line.trimStart();
-  return trimmed.startsWith("```") || trimmed.startsWith("~~~");
+  const delimiter = trimmed[0];
+  if (delimiter !== "`" && delimiter !== "~") return null;
+  const length = countLeadingDelimiter(trimmed, delimiter);
+  return length >= 3 ? { delimiter, length } : null;
+}
+
+function closesFence(line: string, fence: MarkdownFence): boolean {
+  const trimmed = line.trimStart();
+  const length = countLeadingDelimiter(trimmed, fence.delimiter);
+  return length >= fence.length && trimmed.slice(length).trim().length === 0;
+}
+
+function countLeadingDelimiter(value: string, delimiter: "`" | "~"): number {
+  let length = 0;
+  while (value[length] === delimiter) length += 1;
+  return length;
 }
 
 export function capabilitySource(

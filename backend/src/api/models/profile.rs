@@ -523,6 +523,13 @@ pub struct WorkflowGuideSaveData {
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
+pub struct WorkflowGuidePackageFileSaveData {
+    pub guide: WorkflowGuideView,
+    pub projected_skill: RenderedWorkflowSkill,
+    pub package_file: WorkflowGuidePackageFile,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct WorkflowGuidePreviewData {
     pub projected_skill: RenderedWorkflowSkill,
     pub active_document: RenderedWorkflowSkill,
@@ -784,6 +791,11 @@ api_resp!(
     WorkflowGuideSaveResp,
     WorkflowGuideSaveData,
     "Workflow Guide save API response"
+);
+api_resp!(
+    WorkflowGuidePackageFileSaveResp,
+    WorkflowGuidePackageFileSaveData,
+    "Workflow Guide package-file save API response"
 );
 api_resp!(
     WorkflowGuidePreviewResp,

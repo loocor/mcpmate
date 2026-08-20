@@ -165,6 +165,14 @@ async fn external_guide_document_persists_capabilities_steps_and_readable_projec
         )
         .await
         .expect("save external document with a Capability");
+    assert_eq!(
+        saved_external.package_file.package_file_id,
+        saved_external.guide.package_files[0].package_file_id
+    );
+    assert_eq!(
+        saved_external.package_file.category,
+        WorkflowGuidePackageCategory::Reference
+    );
     let unlinked_step_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM workflow_profile_steps WHERE profile_id = ?")
             .bind(&profile_id)

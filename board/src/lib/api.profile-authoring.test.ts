@@ -10,6 +10,39 @@ afterEach(() => {
 });
 
 describe("Profile authoring API", () => {
+	test("returns the exact package file saved by a Workflow Guide upload", async () => {
+		globalThis.fetch = async () =>
+			Response.json({
+				success: true,
+				data: {
+					guide: {
+						profile_id: "profile-workflow",
+						guide_revision: 2,
+						markdown: "# Workflow",
+						capabilities: [],
+						package_files: [],
+						documents: [],
+					},
+					projected_skill: { markdown: "# Workflow" },
+					package_file: {
+						package_file_id: "package-file-a",
+						file_revision: 1,
+						title: "Evidence",
+						category: "reference",
+						relative_path: "references/evidence.md",
+						mime_type: "text/markdown",
+						extension: "md",
+						file_size: 10,
+					},
+				},
+			});
+
+		const saved = await configSuitsApi.uploadWorkflowGuidePackageFile(new FormData());
+
+		expect(saved.package_file.package_file_id).toBe("package-file-a");
+		expect(saved.package_file.relative_path).toBe("references/evidence.md");
+	});
+
 	test("preserves profile conflict status code and details", async () => {
 		globalThis.fetch = async () =>
 			new Response(

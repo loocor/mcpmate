@@ -1071,6 +1071,10 @@ export interface WorkflowGuideSaveResponse {
   projected_skill: { markdown: string };
 }
 
+export interface WorkflowGuidePackageFileSaveResponse extends WorkflowGuideSaveResponse {
+  package_file: WorkflowGuidePackageFile;
+}
+
 export interface WorkflowGuidePreviewRequest {
   profile_id: string;
   relative_path?: string;

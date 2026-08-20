@@ -1186,6 +1186,48 @@ impl WorkflowMaterialsService {
         Ok(())
     }
 
+    pub(crate) async fn recover_registered_package_file_leases(
+        &self,
+        skill_name: &str,
+        registered_paths: &BTreeSet<String>,
+    ) -> Result<(), WorkflowMaterialsError> {
+        self.ensure_skill_directory(skill_name).await?;
+        for directory_name in ["references", "scripts", "assets"] {
+            let directory = self.skills_root.join(skill_name).join(directory_name);
+            ensure_existing_directory_without_symlink(&directory).await?;
+            let mut entries = tokio::fs::read_dir(&directory).await?;
+            while let Some(entry) = entries.next_entry().await? {
+                let metadata = entry.file_type().await?;
+                if metadata.is_symlink() || !metadata.is_file() {
+                    return Err(WorkflowMaterialsError::InvalidRequest(
+                        "managed package directory contains an unsafe entry".to_string(),
+                    ));
+                }
+                let file_name = entry.file_name().into_string().map_err(|_| {
+                    WorkflowMaterialsError::InvalidRequest(
+                        "managed package directory contains a non-UTF-8 file name".to_string(),
+                    )
+                })?;
+                let Some(original_name) = deletion_lease_original_name(&file_name) else {
+                    continue;
+                };
+                let original_relative_path = format!("{directory_name}/{original_name}");
+                if !registered_paths.contains(&original_relative_path) {
+                    continue;
+                }
+                let original_path = directory.join(original_name);
+                match tokio::fs::symlink_metadata(&original_path).await {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        tokio::fs::rename(entry.path(), original_path).await?;
+                    }
+                    Ok(_) => move_managed_path_to_trash(entry.path()).await?,
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) async fn read_package_file_text(
         &self,
         skill_name: &str,

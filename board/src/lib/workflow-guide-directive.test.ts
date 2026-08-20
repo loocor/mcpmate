@@ -52,6 +52,20 @@ describe("Workflow Guide directives", () => {
     ]);
   });
 
+  test("keeps shorter fence markers inside a longer fence", () => {
+    const guide = parseWorkflowGuide(
+      '````markdown\n```\n:::capability {"name":"server__lookup","exposure":"direct"}\n:::\n```\n````',
+    );
+
+    expect(guide.capabilities).toEqual([]);
+    expect(guide.errors).toContain(
+      "line 3: Workflow Guide directives and references are not allowed in fenced code",
+    );
+    expect(guide.errors).toContain(
+      "line 4: Workflow Guide directives and references are not allowed in fenced code",
+    );
+  });
+
   test("reports malformed directives and opaque identifiers", () => {
     const guide = parseWorkflowGuide(
       ':::capability {"name":"server__lookup"}\n123e4567-e89b-12d3-a456-426614174000\nskill://private',

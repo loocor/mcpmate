@@ -56,6 +56,7 @@ import type {
 	WorkflowGuidePreviewResponse,
 	WorkflowGuideSaveRequest,
 	WorkflowGuideSaveResponse,
+	WorkflowGuidePackageFileSaveResponse,
 	WorkflowGuidePackageFileDeleteRequest,
 	InspectorSessionCloseData,
 	InspectorSessionOpenData,
@@ -2734,8 +2735,8 @@ export const configSuitsApi = {
 		return extractApiData(response).document;
 	},
 
-	uploadWorkflowGuidePackageFile: async (formData: FormData): Promise<WorkflowGuideSaveResponse> => {
-		const response = await fetchApi<ApiWrapper<WorkflowGuideSaveResponse>>(
+	uploadWorkflowGuidePackageFile: async (formData: FormData): Promise<WorkflowGuidePackageFileSaveResponse> => {
+		const response = await fetchApi<ApiWrapper<WorkflowGuidePackageFileSaveResponse>>(
 			"/api/mcp/profile/workflow/guide/package-files/upload",
 			{ method: "POST", body: formData },
 		);

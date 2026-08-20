@@ -250,9 +250,11 @@ impl ProfileAuthoringService {
                     return Err(ProfileAuthoringError::SkillDirectory(error));
                 }
             };
-            ensure_guide(&mut transaction, &profile_id)
-                .await
-                .map_err(ProfileAuthoringError::WorkflowGuideProjection)?;
+            if let Err(error) = ensure_guide(&mut transaction, &profile_id).await {
+                self.rollback_skill_directory_change(skill_directory_change, error.to_string())
+                    .await?;
+                return Err(ProfileAuthoringError::WorkflowGuideProjection(error));
+            }
             match stage_projection_in_transaction(&mut transaction, &profile_id, self.pool.clone(), skills_root).await {
                 Ok((_, projection)) => staged_projection = Some(projection),
                 Err(error) => {
@@ -917,6 +919,78 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(persisted_name, "Updated workflow");
+    }
+
+    #[tokio::test]
+    async fn workflow_skill_rename_rolls_back_when_guide_initialization_fails() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        crate::test_helpers::prepare_config_database(&pool).await;
+        let skills_root = tempfile::tempdir().unwrap();
+        let service = ProfileAuthoringService::with_skills_root(pool.clone(), skills_root.path().to_path_buf());
+        let created = service
+            .save(
+                ProfileAuthoringCommand {
+                    id: None,
+                    expected_authoring_generation: None,
+                    name: "Rename rollback".to_string(),
+                    description: Some("Verify rename rollback.".to_string()),
+                    profile_type: "shared".to_string(),
+                    priority: 0,
+                    is_active: false,
+                    is_default: false,
+                    server_ids: Vec::new(),
+                    clone_from_id: None,
+                    profile_mode: Some(ProfileMode::Workflow),
+                    skill_name: Some("rename-before".to_string()),
+                },
+                "test",
+            )
+            .await
+            .unwrap();
+        let profile_id = created.profile.id.clone().unwrap();
+        sqlx::query("DROP TABLE workflow_profile_guides")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let error = service
+            .save(
+                ProfileAuthoringCommand {
+                    id: Some(profile_id.clone()),
+                    expected_authoring_generation: Some(created.profile.authoring_generation),
+                    name: "Rename rollback".to_string(),
+                    description: Some("Verify rename rollback.".to_string()),
+                    profile_type: "shared".to_string(),
+                    priority: 0,
+                    is_active: false,
+                    is_default: false,
+                    server_ids: Vec::new(),
+                    clone_from_id: None,
+                    profile_mode: Some(ProfileMode::Workflow),
+                    skill_name: Some("rename-after".to_string()),
+                },
+                "test",
+            )
+            .await
+            .expect_err("Guide initialization failure must roll back the directory rename");
+
+        assert!(matches!(
+            error,
+            super::ProfileAuthoringError::WorkflowGuideProjection(_)
+        ));
+        assert!(skills_root.path().join("rename-before").is_dir());
+        assert!(!skills_root.path().join("rename-after").exists());
+        let stored_skill_name: String =
+            sqlx::query_scalar("SELECT skill_name FROM workflow_profile_skills WHERE profile_id = ?")
+                .bind(profile_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(stored_skill_name, "rename-before");
     }
 
     #[tokio::test]
