@@ -48,10 +48,7 @@ import {
 	ProfileSurfaceMetrics,
 	type ProfileSurfaceMetric,
 } from "../../components/profile-surface-metrics";
-import {
-	ProfileWorkflowEditor,
-	ProfileWorkflowMaterials,
-} from "../../components/profile-workflow-editor";
+import { ProfileWorkflowGuide } from "../../components/profile-workflow-guide";
 import { buildWorkflowCapabilityOptions } from "../../lib/profile-workflow-specification";
 import { SurfaceReviewDialog } from "../../components/surface-review-dialog";
 import {
@@ -131,7 +128,6 @@ import type { CapabilityRecord } from "../../types/capabilities";
 const PROFILE_DETAIL_TABS = [
 	"overview",
 	"workflow",
-	"materials",
 	"capabilities",
 ];
 
@@ -265,50 +261,6 @@ export function ProfileDetailPage() {
 	const reviewItemId = searchParams.get("review_item");
 	const reviewRefId = searchParams.get("ref_id");
 	const hasExplicitTab = searchParams.has("tab");
-	const selectedWorkflowItemId =
-		activeTab === "workflow" || activeTab === "materials"
-			? searchParams.get("id")
-			: null;
-	const updateWorkflowSelection = useCallback(
-		(value: string | null) => {
-			setSearchParams(
-				(current) => {
-					if (
-						current.get("id") === value &&
-						!current.has("step") &&
-						!current.has("material")
-					) {
-						return current;
-					}
-					const next = new URLSearchParams(current);
-					if (value) next.set("id", value);
-					else next.delete("id");
-					next.delete("step");
-					next.delete("material");
-					return next;
-				},
-				{ replace: true },
-			);
-		},
-		[setSearchParams],
-	);
-	const openWorkflowItem = useCallback(
-		(tab: "workflow" | "materials", itemId: string | null) => {
-			setSearchParams(
-				(current) => {
-					const next = new URLSearchParams(current);
-					next.set("tab", tab);
-					if (itemId) next.set("id", itemId);
-					else next.delete("id");
-					next.delete("step");
-					next.delete("material");
-					return next;
-				},
-				{ replace: true },
-			);
-		},
-		[setSearchParams],
-	);
 	const handleDetailTabChange = useCallback(
 		(tab: string) => {
 			setSearchParams(
@@ -328,7 +280,7 @@ export function ProfileDetailPage() {
 
 	const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
 	const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-	const [materialFocusRequest, setMaterialFocusRequest] = useState<number | null>(null);
+	const [workflowGuideRefreshKey, setWorkflowGuideRefreshKey] = useState(0);
 	// Filters: servers
 	const [serverQuery, setServerQuery] = useState("");
 	const [serverStatus, setServerStatus] = useState<
@@ -1132,6 +1084,8 @@ export function ProfileDetailPage() {
 	const handleRefreshAll = () => {
 		void refetchSuit();
 		refreshProfileCapabilitySurface();
+		void queryClient.refetchQueries({ queryKey: ["workflowGuide", profileId] });
+		setWorkflowGuideRefreshKey((current) => current + 1);
 	};
 	const overviewActionButtonClass =
 		"gap-2 rounded-none first:rounded-l-md last:rounded-r-md";
@@ -1851,9 +1805,6 @@ export function ProfileDetailPage() {
 									<TabsTrigger value="workflow">
 										{t("profiles:detail.tabs.workflow")}
 									</TabsTrigger>
-									<TabsTrigger value="materials">
-										{t("profiles:detail.tabs.materials")}
-									</TabsTrigger>
 								</>
 							)}
 							{!isWorkflowProfile && (
@@ -2109,50 +2060,13 @@ export function ProfileDetailPage() {
 
 					{isWorkflowProfile && profileId && (
 						<TabsContent value="workflow" className={DETAIL_TAB_CONTENT_CLASS}>
-							<ProfileWorkflowEditor
+							<ProfileWorkflowGuide
+								key={workflowGuideRefreshKey}
 								profileId={profileId}
 								capabilities={workflowCapabilities}
 								capabilitiesLoading={
 									workflowCapabilityCatalogQuery.isLoading
 								}
-								capabilityMetrics={profileSurfaceMetrics.filter(
-									(metric) => metric.id !== "servers",
-								)}
-								onCreateMaterial={() => {
-									openWorkflowItem("materials", null);
-									requestAnimationFrame(() => {
-										setMaterialFocusRequest((current) => (current ?? 0) + 1);
-									});
-								}}
-								onSelectMaterial={(materialId) => {
-									openWorkflowItem("materials", materialId);
-								}}
-								selectedStepId={selectedWorkflowItemId}
-								onSelectedStepIdChange={updateWorkflowSelection}
-								onOpenCapability={(capability) => {
-									const params = new URLSearchParams({
-										tab: "capabilities",
-										capability: capability.label,
-									});
-									navigate(
-										`/servers/${encodeURIComponent(capability.server_id)}?${params.toString()}`,
-									);
-								}}
-							/>
-						</TabsContent>
-					)}
-					{isWorkflowProfile && profileId && (
-						<TabsContent
-							value="materials"
-							className={DETAIL_TAB_CONTENT_CLASS}
-							forceMount
-						>
-							<ProfileWorkflowMaterials
-								profileId={profileId}
-								focusTitleToken={materialFocusRequest}
-								isActive={activeTab === "materials"}
-								selectedMaterialId={selectedWorkflowItemId}
-								onSelectedMaterialIdChange={updateWorkflowSelection}
 							/>
 						</TabsContent>
 					)}
