@@ -301,6 +301,18 @@ impl WorkflowGuideService {
         .bind(profile_id)
         .fetch_all(&mut *transaction)
         .await?;
+        let registered_checksums = registered_files
+            .iter()
+            .filter_map(|(relative_path, checksum, _)| {
+                checksum
+                    .as_ref()
+                    .map(|checksum| (relative_path.clone(), checksum.clone()))
+            })
+            .collect::<BTreeMap<_, _>>();
+        material_service
+            .recover_registered_package_file_backups(&skill_name, &registered_checksums)
+            .await
+            .map_err(|error| WorkflowGuideError::Projection(error.to_string()))?;
         for (relative_path, checksum, is_external_guide) in registered_files {
             if is_external_guide {
                 continue;
@@ -479,7 +491,7 @@ impl WorkflowGuideService {
             &skill_name,
             &profile.0,
             &profile.1,
-            &render_workflow_skill(&root.markdown, &candidate_graph.combined).markdown,
+            &render_workflow_skill(&root.markdown, &root.guide).markdown,
         );
         let active_document = render_workflow_skill(&active_document.markdown, &active_document.guide);
         if UUID_REFERENCE.is_match(&projected_skill)
@@ -508,70 +520,87 @@ impl WorkflowGuideService {
         package_file_id: &str,
         skills_root: PathBuf,
     ) -> Result<WorkflowGuideExternalDocument, WorkflowGuideError> {
-        let mut transaction = self.pool.begin().await?;
-        verify_workflow_profile(&mut transaction, profile_id).await?;
-        let skill_name: String =
-            sqlx::query_scalar("SELECT skill_name FROM workflow_profile_skills WHERE profile_id = ?")
-                .bind(profile_id)
-                .fetch_one(&mut *transaction)
+        loop {
+            let candidate_skill_name: String =
+                sqlx::query_scalar("SELECT skill_name FROM workflow_profile_skills WHERE profile_id = ?")
+                    .bind(profile_id)
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(|_| {
+                        WorkflowGuideError::InvalidStorage("Workflow Profile has no configured skill_name".to_string())
+                    })?;
+            let material_service = WorkflowMaterialsService::new(self.pool.clone(), skills_root.clone());
+            let package_guard = material_service
+                .lock_skill_package(&candidate_skill_name)
                 .await
-                .map_err(|_| {
-                    WorkflowGuideError::InvalidStorage("Workflow Profile has no configured skill_name".to_string())
-                })?;
-        let file: Option<PackageFileRow> = sqlx::query_as(
-            "SELECT package_file_id, file_revision, title, category, relative_path, mime_type, extension, file_size, checksum
-             FROM workflow_profile_package_files
-             WHERE profile_id = ? AND package_file_id = ?",
-        )
-        .bind(profile_id)
-        .bind(package_file_id)
-        .fetch_optional(&mut *transaction)
-        .await?;
-        let Some(file) = file else {
-            return Err(WorkflowGuideError::InvalidStorage(
-                "external Markdown document was not found".to_string(),
-            ));
-        };
-        if file.category != WorkflowGuidePackageCategory::Reference.as_str()
-            || file.extension.as_deref() != Some("md")
-            || !file.relative_path.starts_with("references/")
-        {
-            return Err(WorkflowGuideError::InvalidStorage(
-                "package file is not an external Markdown document".to_string(),
-            ));
-        }
-        let source: Option<String> = sqlx::query_scalar(
-            "SELECT markdown FROM workflow_profile_external_guides WHERE package_file_id = ? AND profile_id = ?",
-        )
-        .bind(package_file_id)
-        .bind(profile_id)
-        .fetch_optional(&mut *transaction)
-        .await?;
-        let Some(markdown) = source else {
-            return Err(WorkflowGuideError::InvalidStorage(
-                "external Markdown document has no managed Guide source".to_string(),
-            ));
-        };
-        transaction.commit().await?;
-        let _ = WorkflowMaterialsService::new(self.pool.clone(), skills_root)
-            .read_package_file_text(
-                &skill_name,
-                &file.relative_path,
-                file.checksum.as_deref().ok_or_else(|| {
-                    WorkflowGuideError::InvalidStorage(
-                        "external Markdown document has no registered checksum".to_string(),
-                    )
-                })?,
+                .map_err(|error| WorkflowGuideError::Projection(error.to_string()))?;
+            let mut transaction = self.pool.begin().await?;
+            verify_workflow_profile(&mut transaction, profile_id).await?;
+            let locked_skill_name: String =
+                sqlx::query_scalar("SELECT skill_name FROM workflow_profile_skills WHERE profile_id = ?")
+                    .bind(profile_id)
+                    .fetch_one(&mut *transaction)
+                    .await
+                    .map_err(|_| {
+                        WorkflowGuideError::InvalidStorage("Workflow Profile has no configured skill_name".to_string())
+                    })?;
+            if locked_skill_name != candidate_skill_name {
+                transaction.rollback().await?;
+                drop(package_guard);
+                continue;
+            }
+            let file: Option<PackageFileRow> = sqlx::query_as(
+                "SELECT package_file_id, file_revision, title, category, relative_path, mime_type, extension, file_size, checksum
+                 FROM workflow_profile_package_files
+                 WHERE profile_id = ? AND package_file_id = ?",
             )
-            .await
-            .map_err(|error| WorkflowGuideError::Projection(error.to_string()))?;
-        Ok(WorkflowGuideExternalDocument {
-            package_file_id: file.package_file_id,
-            file_revision: file.file_revision,
-            title: file.title,
-            relative_path: file.relative_path,
-            markdown,
-        })
+            .bind(profile_id)
+            .bind(package_file_id)
+            .fetch_optional(&mut *transaction)
+            .await?;
+            let Some(file) = file else {
+                return Err(WorkflowGuideError::InvalidStorage(
+                    "external Markdown document was not found".to_string(),
+                ));
+            };
+            if file.category != WorkflowGuidePackageCategory::Reference.as_str()
+                || file.extension.as_deref() != Some("md")
+                || !file.relative_path.starts_with("references/")
+            {
+                return Err(WorkflowGuideError::InvalidStorage(
+                    "package file is not an external Markdown document".to_string(),
+                ));
+            }
+            let markdown: Option<String> = sqlx::query_scalar(
+                "SELECT markdown FROM workflow_profile_external_guides
+                 WHERE package_file_id = ? AND profile_id = ?",
+            )
+            .bind(package_file_id)
+            .bind(profile_id)
+            .fetch_optional(&mut *transaction)
+            .await?;
+            let Some(markdown) = markdown else {
+                return Err(WorkflowGuideError::InvalidStorage(
+                    "external Markdown document has no managed Guide source".to_string(),
+                ));
+            };
+            let checksum = file.checksum.as_deref().ok_or_else(|| {
+                WorkflowGuideError::InvalidStorage("external Markdown document has no registered checksum".to_string())
+            })?;
+            transaction.commit().await?;
+            let _ = material_service
+                .read_package_file_text(&locked_skill_name, &file.relative_path, checksum)
+                .await
+                .map_err(|error| WorkflowGuideError::Projection(error.to_string()))?;
+            drop(package_guard);
+            return Ok(WorkflowGuideExternalDocument {
+                package_file_id: file.package_file_id,
+                file_revision: file.file_revision,
+                title: file.title,
+                relative_path: file.relative_path,
+                markdown,
+            });
+        }
     }
 
     pub async fn save_and_project(
@@ -1352,18 +1381,24 @@ async fn synchronize_workflow_specification(
     capabilities: &[WorkflowGuideCapability],
 ) -> Result<(), WorkflowGuideError> {
     let capability_refs = load_canonical_capability_refs(transaction).await?;
-    let specification_revision: Option<i64> =
-        sqlx::query_scalar("SELECT specification_revision FROM workflow_profile_specifications WHERE profile_id = ?")
-            .bind(profile_id)
-            .fetch_optional(&mut **transaction)
-            .await?;
+    let specification: Option<(i64, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT specification_revision, validation_notes, avoid_rules
+         FROM workflow_profile_specifications WHERE profile_id = ?",
+    )
+    .bind(profile_id)
+    .fetch_optional(&mut **transaction)
+    .await?;
+    let (specification_revision, validation_notes, avoid_rules) = match specification {
+        Some((revision, validation_notes, avoid_rules)) => (Some(revision), validation_notes, avoid_rules),
+        None => (None, None, None),
+    };
     let specification = WorkflowSpecificationService::save_in_transaction(
         transaction,
         WorkflowSpecificationSaveCommand {
             profile_id: profile_id.to_string(),
             expected_specification_revision: specification_revision,
-            validation_notes: None,
-            avoid_rules: None,
+            validation_notes,
+            avoid_rules,
             steps: capabilities
                 .iter()
                 .map(|capability| {
@@ -1615,14 +1650,14 @@ pub(crate) async fn stage_projection_in_transaction(
     let view = load_guide_view(transaction, profile_id).await?;
     let markdown = normalize_main_guide_markdown(&view.markdown)?;
     let graph = load_guide_document_graph(transaction, profile_id, &markdown, &BTreeMap::new()).await?;
-    let guide = &graph.combined;
-    verify_capability_names(transaction, &guide.capabilities).await?;
+    let combined_guide = &graph.combined;
+    verify_capability_names(transaction, &combined_guide.capabilities).await?;
     let package_paths = view
         .package_files
         .iter()
         .map(|file| file.relative_path.as_str())
         .collect::<BTreeSet<_>>();
-    for path in &guide.package_paths {
+    for path in &combined_guide.package_paths {
         if !package_paths.contains(path.as_str()) {
             return Err(WorkflowGuideError::InvalidStorage(format!(
                 "Guide references unavailable package file '{path}'"
@@ -1633,7 +1668,8 @@ pub(crate) async fn stage_projection_in_transaction(
         .bind(profile_id)
         .fetch_one(&mut **transaction)
         .await?;
-    let rendered = render_workflow_skill(&markdown, guide);
+    let root = graph.root()?;
+    let rendered = render_workflow_skill(&markdown, &root.guide);
     let skill = format_skill_definition(&skill_name, &profile.0, &profile.1, &rendered.markdown);
     if UUID_REFERENCE.is_match(&skill) || skill.contains("skill://") {
         return Err(WorkflowGuideError::InvalidStorage(
@@ -2384,8 +2420,16 @@ async fn allocate_package_path(
         };
         let relative_path = format!("{}/{}{}.{}", category.directory(), stem, suffix, extension);
         let exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM workflow_profile_package_files WHERE profile_id = ? AND relative_path = ?)",
+            "SELECT EXISTS(
+                SELECT 1 FROM workflow_profile_package_files
+                WHERE profile_id = ? AND relative_path = ?
+                UNION
+                SELECT 1 FROM workflow_profile_materials
+                WHERE profile_id = ? AND relative_path = ?
+             )",
         )
+        .bind(profile_id)
+        .bind(&relative_path)
         .bind(profile_id)
         .bind(&relative_path)
         .fetch_one(&mut **transaction)
@@ -2790,6 +2834,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn guide_package_paths_reserve_legacy_material_paths() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open in-memory database");
+        crate::test_helpers::prepare_config_database(&pool).await;
+        sqlx::query(
+            "INSERT INTO profile (id, name, description, type, role, profile_mode)
+             VALUES ('workflow-profile', 'Workflow', '', 'shared', 'user', 'workflow')",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert Workflow Profile");
+        sqlx::query(
+            "INSERT INTO workflow_profile_materials (
+                material_id, profile_id, ordinal, title, kind, relative_path
+             ) VALUES ('legacy-material', 'workflow-profile', 0, 'Policy', 'uploaded_file', 'references/policy.md')",
+        )
+        .execute(&pool)
+        .await
+        .expect("reserve legacy Material path");
+        let mut transaction = pool.begin().await.expect("begin allocation transaction");
+
+        let allocated = allocate_package_path(
+            &mut transaction,
+            "workflow-profile",
+            WorkflowGuidePackageCategory::Reference,
+            "Policy",
+            "md",
+        )
+        .await
+        .expect("allocate Guide package path");
+
+        assert_eq!(allocated, "references/policy-2.md");
+    }
+
+    #[tokio::test]
     async fn projects_a_guide_atomically_without_internal_identifiers() {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
@@ -2877,6 +2959,25 @@ mod tests {
             .await
             .expect("repair restores a registered package-file deletion lease before checksum verification");
         assert_eq!(std::fs::read(&asset_path).expect("read restored asset"), asset_bytes);
+
+        let interrupted_replacement = materials
+            .stage_package_file_bytes(
+                "release-investigation-guide",
+                "assets/evidence.bin",
+                b"uncommitted replacement",
+            )
+            .await
+            .expect("simulate an interrupted package-file replacement");
+        drop(interrupted_replacement);
+        assert_eq!(
+            std::fs::read(&asset_path).expect("read uncommitted replacement"),
+            b"uncommitted replacement"
+        );
+        service
+            .project("workflow-profile", temporary.path().to_path_buf())
+            .await
+            .expect("repair restores a registered package-file backup before checksum verification");
+        assert_eq!(std::fs::read(&asset_path).expect("read recovered asset"), asset_bytes);
 
         std::fs::remove_file(&asset_path).expect("remove registered asset");
         let error = service
@@ -3184,6 +3285,33 @@ mod tests {
             .await
             .expect("save external Markdown document");
         let file = saved.guide.package_files.first().expect("package file").clone();
+        let package_service = WorkflowMaterialsService::new(pool.clone(), temporary.path().to_path_buf());
+        let package_guard = package_service
+            .lock_skill_package("release-investigation-guide")
+            .await
+            .expect("hold package lock while opening external document");
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(50),
+                service.read_external_document(
+                    "workflow-profile",
+                    &file.package_file_id,
+                    temporary.path().to_path_buf(),
+                ),
+            )
+            .await
+            .is_err(),
+            "external document reads must wait for a package writer"
+        );
+        drop(package_guard);
+        service
+            .read_external_document(
+                "workflow-profile",
+                &file.package_file_id,
+                temporary.path().to_path_buf(),
+            )
+            .await
+            .expect("read resumes after package writer releases the lock");
         let document = service
             .read_external_document(
                 "workflow-profile",

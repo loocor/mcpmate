@@ -704,7 +704,9 @@ export function ProfileWorkflowGuide({
       </header>
       <ResizableSplitPane
         className="min-h-0 flex-1"
-        dividerAriaLabel="Resize outline panel"
+        dividerAriaLabel={t("profiles:detail.workflow.guide.resizeOutlinePanel", {
+          defaultValue: "Resize outline panel",
+        })}
         initialLeftWidth={280}
         minLeftWidth={208}
         maxLeftWidth={520}

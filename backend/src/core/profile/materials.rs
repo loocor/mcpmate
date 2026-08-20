@@ -1228,6 +1228,67 @@ impl WorkflowMaterialsService {
         Ok(())
     }
 
+    pub(crate) async fn recover_registered_package_file_backups(
+        &self,
+        skill_name: &str,
+        registered_checksums: &BTreeMap<String, String>,
+    ) -> Result<(), WorkflowMaterialsError> {
+        self.ensure_skill_directory(skill_name).await?;
+        for directory_name in ["references", "scripts", "assets"] {
+            let directory = self.skills_root.join(skill_name).join(directory_name);
+            ensure_existing_directory_without_symlink(&directory).await?;
+            let mut entries = tokio::fs::read_dir(&directory).await?;
+            while let Some(entry) = entries.next_entry().await? {
+                let metadata = entry.file_type().await?;
+                if metadata.is_symlink() || !metadata.is_file() {
+                    return Err(WorkflowMaterialsError::InvalidRequest(
+                        "managed package directory contains an unsafe entry".to_string(),
+                    ));
+                }
+                let file_name = entry.file_name().into_string().map_err(|_| {
+                    WorkflowMaterialsError::InvalidRequest(
+                        "managed package directory contains a non-UTF-8 file name".to_string(),
+                    )
+                })?;
+                let Some(original_name) = staged_previous_original_name(&file_name) else {
+                    continue;
+                };
+                let relative_path = format!("{directory_name}/{original_name}");
+                let Some(expected_checksum) = registered_checksums.get(&relative_path) else {
+                    continue;
+                };
+                let backup_checksum = checksum(&tokio::fs::read(entry.path()).await?);
+                let destination = directory.join(original_name);
+                let destination_checksum = managed_regular_file_checksum(&destination).await?;
+                if destination_checksum.as_deref() == Some(expected_checksum) {
+                    move_managed_path_to_trash(entry.path()).await?;
+                } else if backup_checksum == *expected_checksum {
+                    let displaced = if destination_checksum.is_some() {
+                        let displaced = destination.with_file_name(format!(
+                            ".{}.{}.recovery-discard",
+                            original_name,
+                            Uuid::new_v4()
+                        ));
+                        tokio::fs::rename(&destination, &displaced).await?;
+                        Some(displaced)
+                    } else {
+                        None
+                    };
+                    if let Err(error) = tokio::fs::rename(entry.path(), &destination).await {
+                        if let Some(displaced) = displaced {
+                            tokio::fs::rename(displaced, destination).await?;
+                        }
+                        return Err(error.into());
+                    }
+                    if let Some(displaced) = displaced {
+                        move_managed_path_to_trash(displaced).await?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) async fn read_package_file_text(
         &self,
         skill_name: &str,
@@ -1530,6 +1591,23 @@ fn deletion_lease_original_name(file_name: &str) -> Option<&str> {
     let lease_name = file_name.strip_prefix('.')?.strip_suffix(".deletion-lease")?;
     let (original_name, lease_id) = lease_name.rsplit_once('.')?;
     (!original_name.is_empty() && Uuid::parse_str(lease_id).is_ok()).then_some(original_name)
+}
+
+fn staged_previous_original_name(file_name: &str) -> Option<&str> {
+    let staged_name = file_name.strip_prefix('.')?.strip_suffix(".previous")?;
+    let (original_name, staged_id) = staged_name.rsplit_once('.')?;
+    (!original_name.is_empty() && Uuid::parse_str(staged_id).is_ok()).then_some(original_name)
+}
+
+async fn managed_regular_file_checksum(path: &Path) -> Result<Option<String>, WorkflowMaterialsError> {
+    match tokio::fs::symlink_metadata(path).await {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => Err(
+            WorkflowMaterialsError::InvalidRequest("managed package path contains an unsafe entry".to_string()),
+        ),
+        Ok(_) => Ok(Some(checksum(&tokio::fs::read(path).await?))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
 }
 
 async fn ensure_material_library(
@@ -1999,17 +2077,25 @@ async fn taken_relative_paths(
     let rows: Vec<String> = if let Some(exclude_material_id) = exclude_material_id {
         sqlx::query_scalar(
             "SELECT relative_path FROM workflow_profile_materials \
-             WHERE profile_id = ? AND relative_path IS NOT NULL AND material_id != ?",
+             WHERE profile_id = ? AND relative_path IS NOT NULL AND material_id != ? \
+             UNION \
+             SELECT relative_path FROM workflow_profile_package_files \
+             WHERE profile_id = ?",
         )
         .bind(profile_id)
         .bind(exclude_material_id)
+        .bind(profile_id)
         .fetch_all(&mut **transaction)
         .await?
     } else {
         sqlx::query_scalar(
             "SELECT relative_path FROM workflow_profile_materials \
-             WHERE profile_id = ? AND relative_path IS NOT NULL",
+             WHERE profile_id = ? AND relative_path IS NOT NULL \
+             UNION \
+             SELECT relative_path FROM workflow_profile_package_files \
+             WHERE profile_id = ?",
         )
+        .bind(profile_id)
         .bind(profile_id)
         .fetch_all(&mut **transaction)
         .await?
@@ -2479,6 +2565,38 @@ mod tests {
         .await
         .expect("second package operation resumes after unlock")
         .expect("acquire second package lock");
+    }
+
+    #[tokio::test]
+    async fn material_paths_reserve_guide_package_file_paths() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open in-memory database");
+        crate::test_helpers::prepare_config_database(&pool).await;
+        sqlx::query(
+            "INSERT INTO profile (id, name, description, type, role, profile_mode)
+             VALUES ('workflow-profile', 'Workflow', '', 'shared', 'user', 'workflow')",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert Workflow Profile");
+        sqlx::query(
+            "INSERT INTO workflow_profile_package_files (
+                package_file_id, profile_id, ordinal, title, category, relative_path
+             ) VALUES ('guide-file', 'workflow-profile', 0, 'Policy', 'reference', 'references/policy.md')",
+        )
+        .execute(&pool)
+        .await
+        .expect("reserve Guide package path");
+        let mut transaction = pool.begin().await.expect("begin allocation transaction");
+
+        let allocated = allocate_storage_relative_path(&mut transaction, "workflow-profile", "policy", "md", None)
+            .await
+            .expect("allocate legacy Material path");
+
+        assert_eq!(allocated, "references/policy-2.md");
     }
 
     #[test]

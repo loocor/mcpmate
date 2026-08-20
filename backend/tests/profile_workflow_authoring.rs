@@ -26,7 +26,8 @@ use mcpmate::{
             },
             workflow_guide::{
                 WorkflowGuideError, WorkflowGuidePackageCategory, WorkflowGuidePackageFileSaveCommand,
-                WorkflowGuideReclamationConfirmation, WorkflowGuideSaveCommand, WorkflowGuideService,
+                WorkflowGuidePreviewCommand, WorkflowGuideReclamationConfirmation, WorkflowGuideSaveCommand,
+                WorkflowGuideService,
             },
         },
         proxy::ProxyServer,
@@ -68,7 +69,6 @@ async fn workflow_guide_capability_binding_projects_readable_skill_and_normalize
     let skills_root = tempfile::tempdir().expect("create temporary Skills root");
     let guide = WorkflowGuideService::new(pool.clone());
     guide.view(&profile_id).await.expect("initialize Workflow Guide");
-
     let saved = guide
         .save_and_project(
             WorkflowGuideSaveCommand {
@@ -147,6 +147,15 @@ async fn external_guide_document_persists_capabilities_steps_and_readable_projec
     let skills_root = tempfile::tempdir().expect("create temporary Skills root");
     let guide = WorkflowGuideService::new(pool.clone());
     guide.view(&profile_id).await.expect("initialize Workflow Guide");
+    sqlx::query(
+        "INSERT INTO workflow_profile_specifications (
+            profile_id, validation_notes, avoid_rules
+         ) VALUES (?, 'Preserve validation guidance', 'Preserve avoidance guidance')",
+    )
+    .bind(&profile_id)
+    .execute(&pool)
+    .await
+    .expect("seed Workflow guidance");
 
     let saved_external = guide
         .save_package_file_and_project(
@@ -221,7 +230,36 @@ async fn external_guide_document_persists_capabilities_steps_and_readable_projec
         )
         .await
         .expect("recursively link external documents from the root Guide");
+    let guidance: (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT validation_notes, avoid_rules
+         FROM workflow_profile_specifications WHERE profile_id = ?",
+    )
+    .bind(&profile_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load preserved Workflow guidance");
+    assert_eq!(guidance.0.as_deref(), Some("Preserve validation guidance"));
+    assert_eq!(guidance.1.as_deref(), Some("Preserve avoidance guidance"));
     assert_eq!(linked.guide.documents.len(), 2);
+    let projected_root = std::fs::read_to_string(skills_root.path().join("investigate-incident/SKILL.md"))
+        .expect("read projected root Skill");
+    assert!(projected_root.contains("# Investigate incident"));
+    assert!(projected_root.contains(&format!("[{}]({})", index.title, index.relative_path)));
+    let preview = guide
+        .preview(WorkflowGuidePreviewCommand {
+            profile_id: profile_id.clone(),
+            relative_path: None,
+            markdown: linked.guide.markdown.clone(),
+        })
+        .await
+        .expect("preview root Guide with recursively reachable capabilities");
+    assert!(preview.projected_skill.markdown.contains("# Investigate incident"));
+    assert!(
+        preview
+            .projected_skill
+            .markdown
+            .contains(&format!("[{}]({})", index.title, index.relative_path))
+    );
     let projected = std::fs::read_to_string(
         skills_root
             .path()
