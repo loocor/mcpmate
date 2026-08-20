@@ -258,6 +258,19 @@ export function ProfileFormDrawer({
 		enabled: open && isWorkflowEdit && Boolean(suit?.id),
 		retry: false,
 	});
+	const hasWorkflowGuidanceChanges =
+		isWorkflowProfile &&
+		(mode === "create" ||
+			validationNotes !== (workflowSpecificationQuery.data?.validation_notes ?? "") ||
+			avoidRules !== (workflowSpecificationQuery.data?.avoid_rules ?? ""));
+	const workflowGuidanceRequest = hasWorkflowGuidanceChanges
+		? {
+				expected_specification_revision:
+					workflowSpecificationQuery.data?.specification_revision ?? null,
+				validation_notes: validationNotes.trim() || null,
+				avoid_rules: avoidRules.trim() || null,
+			}
+		: undefined;
 	const profileModeOptions = useMemo<SegmentOption[]>(
 		() => [
 			{
@@ -283,7 +296,7 @@ export function ProfileFormDrawer({
 		: isWorkflowProfile
 			? [
 					{
-						id: "details",
+						id: "details" as const,
 						label: t("profiles:form.steps.profile", { defaultValue: "Profile" }),
 						hint: t("profiles:form.steps.hints.basics", { defaultValue: "Basics" }),
 					},
@@ -350,9 +363,12 @@ export function ProfileFormDrawer({
 			step !== "workflow-rules" ||
 			!suit?.id ||
 			!workflowSpecificationQuery.data
-		)
+		) {
 			return;
-		if (workflowRulesHydrationRef.current === suit.id) return;
+		}
+		if (workflowRulesHydrationRef.current === suit.id) {
+			return;
+		}
 		setValidationNotes(workflowSpecificationQuery.data.validation_notes ?? "");
 		setAvoidRules(workflowSpecificationQuery.data.avoid_rules ?? "");
 		workflowRulesHydrationRef.current = suit.id;
@@ -561,53 +577,12 @@ export function ProfileFormDrawer({
 			return;
 		}
 
-		if (step === "details" && isWorkflowProfile) {
-			setStep("workflow-rules");
-			return;
-		}
-
 		if (step === "details" && !isWorkflowProfile) {
 			setStep("servers");
 			return;
 		}
-
-		if (step === "workflow-rules" && isWorkflowEdit) {
-			if (latestAuthoringView) {
-				dispatchConflict({ type: "saveRequested" });
-				return;
-			}
-			if (!workflowSpecificationQuery.data) {
-				notifyError(
-					t("profiles:detail.workflow.messages.saveFailed"),
-					t("profiles:detail.workflow.loading"),
-				);
-				return;
-			}
-			if (!suit || !authoringBaselineView) {
-				notifyError(
-					t("profiles:detail.workflow.messages.saveFailed"),
-					t("profiles:detail.workflow.loading"),
-				);
-				return;
-			}
-			const request = buildProfileAuthoringSaveRequest({
-				mode: "edit",
-				profileId: suit.id,
-				draft: formData,
-				serverIds: selectedServerIds,
-				authoringView: authoringBaselineView,
-			});
-			authoringMutation.mutate({
-				...request,
-				workflow_specification: {
-					profile_id: suit.id,
-					expected_specification_revision:
-						workflowSpecificationQuery.data.specification_revision,
-					validation_notes: validationNotes.trim() || null,
-					avoid_rules: avoidRules.trim() || null,
-					steps: workflowSpecificationQuery.data.steps,
-				},
-			});
+		if (step === "details" && isWorkflowProfile) {
+			setStep("workflow-rules");
 			return;
 		}
 
@@ -617,6 +592,7 @@ export function ProfileFormDrawer({
 				profileId: null,
 				draft: formData,
 				serverIds: selectedServerIds,
+				workflowGuidance: workflowGuidanceRequest,
 			});
 			authoringMutation.mutate(request);
 		} else if (suit && authoringBaselineView) {
@@ -640,7 +616,7 @@ export function ProfileFormDrawer({
 				formData.profile_mode !==
 					(authoringBaselineView.profile_mode ?? current.profile_mode ?? "capability") ||
 				formData.skill_name !== (authoringBaselineView.skill_name ?? "");
-			if (!latestAuthoringView && !selectionChanged && !hasFieldUpdates) {
+			if (!latestAuthoringView && !selectionChanged && !hasFieldUpdates && !hasWorkflowGuidanceChanges) {
 				closeDrawer();
 				return;
 			}
@@ -651,6 +627,7 @@ export function ProfileFormDrawer({
 					draft: formData,
 					serverIds: selectedServerIds,
 					authoringView: authoringBaselineView,
+					workflowGuidance: workflowGuidanceRequest,
 				}),
 			);
 		}
@@ -697,9 +674,9 @@ export function ProfileFormDrawer({
 		if (!latestAuthoringView || !suit || !authoringBaselineView) {
 			return;
 		}
-		dispatchConflict({ type: "overwriteStarted" });
-		authoringMutation.mutate(
-			buildProfileAuthoringSaveRequest({
+			dispatchConflict({ type: "overwriteStarted" });
+			authoringMutation.mutate(
+				buildProfileAuthoringSaveRequest({
 				mode: "edit",
 				profileId: suit.id,
 				draft: formData,
@@ -707,6 +684,7 @@ export function ProfileFormDrawer({
 				authoringView: authoringBaselineView,
 				expectedAuthoringGeneration:
 					latestAuthoringView.profile.authoring_generation,
+				workflowGuidance: workflowGuidanceRequest,
 			}),
 		);
 	};
@@ -743,11 +721,19 @@ export function ProfileFormDrawer({
 		step === "servers" &&
 		(isLoadingAllServers ||
 			(mode === "edit" && !selectionInitialized && isLoadingAuthoringView));
+	const isWorkflowRulesLoading =
+		step === "workflow-rules" && isWorkflowEdit && workflowSpecificationQuery.isLoading;
+	const isWorkflowRulesUnavailable =
+		step === "workflow-rules" &&
+		isWorkflowEdit &&
+		(workflowSpecificationQuery.isError || !workflowSpecificationQuery.data);
 
 	const primaryDisabled =
 		isMutating ||
 		(step === "details" && !detailsStepValid) ||
-		(step === "servers" && isServersStepLoading);
+		(step === "servers" && isServersStepLoading) ||
+		isWorkflowRulesLoading ||
+		isWorkflowRulesUnavailable;
 	const primaryLabel = isMutating
 		? t("profiles:form.buttons.saving", { defaultValue: "Saving..." })
 		: step === "details"
@@ -937,7 +923,7 @@ export function ProfileFormDrawer({
 					{/* Content area - scrollable */}
 					<div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overflow-x-hidden p-4">
 						{!isHostAppProfile && (
-						<div className="flex flex-wrap items-center gap-4">
+							<div className="flex flex-wrap items-center gap-4">
 							{steps.map((item, index) => {
 								const isActive = step === item.id;
 								const canNavigate =
@@ -1151,44 +1137,60 @@ export function ProfileFormDrawer({
 									</div>
 								</div>
 
-								{detailsModeContent}
+							{detailsModeContent}
 							</div>
-						)}
-		{step === "workflow-rules" && isWorkflowProfile && (
-							<div className="space-y-4">
-								<div className="flex items-start gap-4">
-									<Label
-										htmlFor={validationNotesId}
-										className="w-32 pt-2 text-sm font-medium text-slate-600 dark:text-slate-300"
-									>
-										{t("profiles:detail.workflow.brief.validationNotes")}
-									</Label>
-									<Textarea
-										id={validationNotesId}
-										value={validationNotes}
-										onChange={(event) => setValidationNotes(event.target.value)}
-										rows={6}
-										className="flex-1"
-									/>
+					)}
+					{step === "workflow-rules" && isWorkflowProfile && (
+						<div className="space-y-4">
+							{isWorkflowRulesLoading ? (
+								<div className="flex min-h-48 items-center justify-center rounded-lg border border-dashed border-slate-200 text-sm text-muted-foreground dark:border-slate-700">
+									<div className="flex items-center gap-2">
+										<Loader2 className="h-4 w-4 animate-spin" />
+										{t("profiles:detail.workflow.loading")}
+									</div>
 								</div>
-
-								<div className="flex items-start gap-4">
-									<Label
-										htmlFor={avoidRulesId}
-										className="w-32 pt-2 text-sm font-medium text-slate-600 dark:text-slate-300"
-									>
-										{t("profiles:detail.workflow.brief.avoidRules")}
-									</Label>
-									<Textarea
-										id={avoidRulesId}
-										value={avoidRules}
-										onChange={(event) => setAvoidRules(event.target.value)}
-										rows={6}
-										className="flex-1"
-									/>
-								</div>
-							</div>
-						)}
+							) : isWorkflowRulesUnavailable ? (
+								<p role="alert" className="text-sm text-destructive">
+									{t("profiles:detail.workflow.loadFailed", {
+										defaultValue: "Unable to load workflow specification.",
+									})}
+								</p>
+							) : (
+								<>
+									<div className="flex items-start gap-4">
+										<Label
+											htmlFor={validationNotesId}
+											className="w-32 pt-2 text-sm font-medium text-slate-600 dark:text-slate-300"
+										>
+											{t("profiles:detail.workflow.brief.validationNotes")}
+										</Label>
+										<Textarea
+											id={validationNotesId}
+											value={validationNotes}
+											onChange={(event) => setValidationNotes(event.target.value)}
+											rows={6}
+											className="flex-1"
+										/>
+									</div>
+									<div className="flex items-start gap-4">
+										<Label
+											htmlFor={avoidRulesId}
+											className="w-32 pt-2 text-sm font-medium text-slate-600 dark:text-slate-300"
+										>
+											{t("profiles:detail.workflow.brief.avoidRules")}
+										</Label>
+										<Textarea
+											id={avoidRulesId}
+											value={avoidRules}
+											onChange={(event) => setAvoidRules(event.target.value)}
+											rows={6}
+											className="flex-1"
+										/>
+									</div>
+								</>
+							)}
+						</div>
+					)}
 						{step === "servers" && (
 							<div className="flex min-h-0 flex-1 flex-col gap-4">
 								<div>

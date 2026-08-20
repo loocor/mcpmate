@@ -50,13 +50,14 @@ import type {
 	ProfileMode,
 	WorkflowSpecification,
 	WorkflowSpecificationPreview,
-	WorkflowSpecificationSaveRequest,
-	WorkflowMaterial,
-	WorkflowMaterialDeleteRequest,
-	WorkflowMaterialSaveRequest,
-	WorkflowMaterialsReorderRequest,
-	WorkflowMaterialsView,
-	WorkflowStepMaterialsSaveRequest,
+	WorkflowGuide,
+	WorkflowGuideExternalDocument,
+	WorkflowGuidePreviewRequest,
+	WorkflowGuidePreviewResponse,
+	WorkflowGuideSaveRequest,
+	WorkflowGuideSaveResponse,
+	WorkflowGuidePackageFileSaveResponse,
+	WorkflowGuidePackageFileDeleteRequest,
 	InspectorSessionCloseData,
 	InspectorSessionOpenData,
 	InspectorToolCallCancelData,
@@ -2685,19 +2686,6 @@ export const configSuitsApi = {
 		return extractApiData(response).specification;
 	},
 
-	saveWorkflowSpecification: async (
-		request: WorkflowSpecificationSaveRequest,
-	): Promise<WorkflowSpecification> => {
-		const response = await fetchApi<ApiWrapper<{ specification: WorkflowSpecification }>>(
-			"/api/mcp/profile/workflow/specification/save",
-			{
-				method: "POST",
-				body: JSON.stringify(request),
-			},
-		);
-		return extractApiData(response).specification;
-	},
-
 	getWorkflowSpecificationPreview: async (
 		profileId: string,
 	): Promise<WorkflowSpecificationPreview> => {
@@ -2708,59 +2696,69 @@ export const configSuitsApi = {
 		return extractApiData(response).preview;
 	},
 
-	getWorkflowMaterials: async (profileId: string): Promise<WorkflowMaterialsView> => {
+	getWorkflowGuide: async (profileId: string): Promise<WorkflowGuide> => {
 		const query = new URLSearchParams({ id: profileId });
-		const response = await fetchApi<ApiWrapper<{ materials: WorkflowMaterialsView }>>(
-			`/api/mcp/profile/workflow/materials/view?${query}`,
+		const response = await fetchApi<ApiWrapper<{ guide: WorkflowGuide }>>(
+			`/api/mcp/profile/workflow/guide/view?${query}`,
 		);
-		return extractApiData(response).materials;
+		return extractApiData(response).guide;
 	},
 
-	saveWorkflowMaterial: async (request: WorkflowMaterialSaveRequest): Promise<WorkflowMaterial> => {
-		const response = await fetchApi<ApiWrapper<{ material: WorkflowMaterial }>>(
-			"/api/mcp/profile/workflow/materials/save",
+	saveWorkflowGuide: async (
+		request: WorkflowGuideSaveRequest,
+	): Promise<WorkflowGuideSaveResponse> => {
+		const response = await fetchApi<ApiWrapper<WorkflowGuideSaveResponse>>(
+			"/api/mcp/profile/workflow/guide/save",
 			{ method: "POST", body: JSON.stringify(request) },
 		);
-		return extractApiData(response).material;
+		return extractApiData(response);
 	},
 
-	uploadWorkflowMaterial: async (formData: FormData, replace = false): Promise<WorkflowMaterial> => {
-		const response = await fetchApi<ApiWrapper<{ material: WorkflowMaterial }>>(
-			replace ? "/api/mcp/profile/workflow/materials/replace" : "/api/mcp/profile/workflow/materials/upload",
+	previewWorkflowGuide: async (
+		request: WorkflowGuidePreviewRequest,
+	): Promise<WorkflowGuidePreviewResponse> => {
+		const response = await fetchApi<ApiWrapper<WorkflowGuidePreviewResponse>>(
+			"/api/mcp/profile/workflow/guide/preview",
+			{ method: "POST", body: JSON.stringify(request) },
+		);
+		return extractApiData(response);
+	},
+
+	getWorkflowGuideExternalDocument: async (
+		profileId: string,
+		packageFileId: string,
+	): Promise<WorkflowGuideExternalDocument> => {
+		const query = new URLSearchParams({ profile_id: profileId, package_file_id: packageFileId });
+		const response = await fetchApi<ApiWrapper<{ document: WorkflowGuideExternalDocument }>>(
+			`/api/mcp/profile/workflow/guide/external-document?${query}`,
+		);
+		return extractApiData(response).document;
+	},
+
+	uploadWorkflowGuidePackageFile: async (formData: FormData): Promise<WorkflowGuidePackageFileSaveResponse> => {
+		const response = await fetchApi<ApiWrapper<WorkflowGuidePackageFileSaveResponse>>(
+			"/api/mcp/profile/workflow/guide/package-files/upload",
 			{ method: "POST", body: formData },
 		);
-		return extractApiData(response).material;
+		return extractApiData(response);
 	},
 
-	deleteWorkflowMaterial: async (request: WorkflowMaterialDeleteRequest): Promise<void> => {
-		const response = await fetchApi<ApiWrapper<void>>(
-			"/api/mcp/profile/workflow/materials/delete",
+	deleteWorkflowGuidePackageFile: async (
+		request: WorkflowGuidePackageFileDeleteRequest,
+	): Promise<WorkflowGuideSaveResponse> => {
+		const response = await fetchApi<ApiWrapper<WorkflowGuideSaveResponse>>(
+			"/api/mcp/profile/workflow/guide/package-files/delete",
 			{ method: "DELETE", body: JSON.stringify(request) },
 		);
-		extractApiData(response);
+		return extractApiData(response);
 	},
 
-	getWorkflowMaterialPreview: async (profileId: string, materialId: string): Promise<string> => {
-		const query = new URLSearchParams({ profile_id: profileId, material_id: materialId });
-		const response = await fetchApi<ApiWrapper<{ content: string }>>(
-			`/api/mcp/profile/workflow/materials/preview?${query}`,
+	repairWorkflowGuide: async (profileId: string): Promise<WorkflowGuideSaveResponse> => {
+		const response = await fetchApi<ApiWrapper<WorkflowGuideSaveResponse>>(
+			"/api/mcp/profile/workflow/guide/repair",
+			{ method: "POST", body: JSON.stringify({ profile_id: profileId }) },
 		);
-		return extractApiData(response).content;
-	},
-
-	saveWorkflowStepMaterials: async (request: WorkflowStepMaterialsSaveRequest): Promise<string[]> => {
-		const response = await fetchApi<ApiWrapper<{ material_ids: string[] }>>(
-			"/api/mcp/profile/workflow/step-materials/save",
-			{ method: "POST", body: JSON.stringify(request) },
-		);
-		return extractApiData(response).material_ids;
-	},
-	reorderWorkflowMaterials: async (request: WorkflowMaterialsReorderRequest): Promise<string[]> => {
-		const response = await fetchApi<ApiWrapper<{ material_ids: string[] }>>(
-			"/api/mcp/profile/workflow/materials/reorder",
-			{ method: "POST", body: JSON.stringify(request) },
-		);
-		return extractApiData(response).material_ids;
+		return extractApiData(response);
 	},
 
 	deleteSuit: async (

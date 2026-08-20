@@ -3,8 +3,10 @@ use std::{
     io::Cursor,
     path::{Component, Path, PathBuf},
     str::FromStr,
+    sync::{Arc, OnceLock},
 };
 
+use dashmap::DashMap;
 use sha2::{Digest, Sha256};
 use sqlx::{FromRow, Pool, Sqlite, Transaction};
 use url::Url;
@@ -14,6 +16,8 @@ use zip::ZipArchive;
 use super::workflow::{WorkflowSpecificationError, verify_workflow_profile};
 
 pub const MAX_UPLOAD_BYTES: usize = 5 * 1024 * 1024;
+
+static SKILL_PACKAGE_LOCKS: OnceLock<DashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, schemars::JsonSchema, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -147,6 +151,112 @@ pub(crate) enum SkillDirectoryRename {
     },
 }
 
+pub(crate) struct StagedSkillDefinition {
+    destination: PathBuf,
+    staged_previous: Option<PathBuf>,
+}
+
+pub(crate) struct StagedPackageFile {
+    destination: PathBuf,
+    staged_previous: Option<PathBuf>,
+}
+
+pub(crate) struct PackageFileDeletionLease {
+    destination: PathBuf,
+    leased: Option<PathBuf>,
+}
+
+impl PackageFileDeletionLease {
+    pub(crate) async fn move_to_trash(&mut self) -> Result<(), WorkflowMaterialsError> {
+        let Some(path) = self.leased.as_ref() else {
+            return Ok(());
+        };
+        move_managed_path_to_trash(path.clone()).await?;
+        self.leased = None;
+        Ok(())
+    }
+
+    pub(crate) async fn rollback(mut self) -> Result<(), WorkflowMaterialsError> {
+        let Some(path) = self.leased.take() else {
+            return Ok(());
+        };
+        match tokio::fs::symlink_metadata(&path).await {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                return Err(WorkflowMaterialsError::InvalidRequest(
+                    "package-file deletion lease source is unsafe".to_string(),
+                ));
+            }
+            Ok(_) => {}
+            Err(error) => return Err(error.into()),
+        }
+        match tokio::fs::symlink_metadata(&self.destination).await {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(_) => {
+                return Err(WorkflowMaterialsError::InvalidRequest(
+                    "package-file deletion lease destination is occupied".to_string(),
+                ));
+            }
+            Err(error) => return Err(error.into()),
+        }
+        tokio::fs::rename(path, self.destination).await?;
+        Ok(())
+    }
+}
+
+impl StagedPackageFile {
+    pub(crate) async fn commit(self) {
+        if let Some(path) = self.staged_previous {
+            if let Err(error) = tokio::fs::remove_file(path).await {
+                tracing::warn!(%error, "Failed to remove committed Workflow package-file backup");
+            }
+        }
+    }
+
+    pub(crate) async fn rollback(self) -> Result<(), WorkflowMaterialsError> {
+        match tokio::fs::symlink_metadata(&self.destination).await {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                return Err(WorkflowMaterialsError::InvalidRequest(
+                    "package-file path is unsafe during rollback".to_string(),
+                ));
+            }
+            Ok(_) => tokio::fs::remove_file(&self.destination).await?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        if let Some(path) = self.staged_previous {
+            tokio::fs::rename(path, self.destination).await?;
+        }
+        Ok(())
+    }
+}
+
+impl StagedSkillDefinition {
+    pub(crate) async fn commit(self) {
+        if let Some(path) = self.staged_previous {
+            if let Err(error) = tokio::fs::remove_file(path).await {
+                tracing::warn!(%error, "Failed to remove committed Workflow Skill definition backup");
+            }
+        }
+    }
+
+    pub(crate) async fn rollback(self) -> Result<(), WorkflowMaterialsError> {
+        match tokio::fs::symlink_metadata(&self.destination).await {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                return Err(WorkflowMaterialsError::InvalidRequest(
+                    "SKILL.md path is unsafe during rollback".to_string(),
+                ));
+            }
+            Ok(_) => tokio::fs::remove_file(&self.destination).await?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        if let Some(path) = self.staged_previous {
+            tokio::fs::rename(path, self.destination).await?;
+        }
+        Ok(())
+    }
+}
+
 impl SkillDirectoryRename {
     pub(crate) async fn rollback(self) -> Result<(), WorkflowMaterialsError> {
         match self {
@@ -260,6 +370,20 @@ impl WorkflowMaterialsService {
 
     pub fn validate_configured_skill_name(skill_name: &str) -> Result<(), WorkflowMaterialsError> {
         validate_skill_name(skill_name)
+    }
+
+    pub(crate) async fn lock_skill_package(
+        &self,
+        skill_name: &str,
+    ) -> Result<tokio::sync::OwnedMutexGuard<()>, WorkflowMaterialsError> {
+        validate_skill_name(skill_name)?;
+        let key = self.skills_root.join(skill_name);
+        let lock = SKILL_PACKAGE_LOCKS
+            .get_or_init(DashMap::new)
+            .entry(key)
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone();
+        Ok(lock.lock_owned().await)
     }
 
     pub async fn trash_managed_skill_directory(
@@ -916,6 +1040,309 @@ impl WorkflowMaterialsService {
         write_atomic(&skill_file, scaffold.as_bytes()).await
     }
 
+    pub(crate) async fn stage_skill_definition(
+        &self,
+        skill_name: &str,
+        content: &str,
+    ) -> Result<StagedSkillDefinition, WorkflowMaterialsError> {
+        self.ensure_skill_directory(skill_name).await?;
+        let destination = self.skills_root.join(skill_name).join("SKILL.md");
+        let staged_previous = match tokio::fs::symlink_metadata(&destination).await {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                return Err(WorkflowMaterialsError::InvalidRequest(
+                    "SKILL.md path is unsafe".to_string(),
+                ));
+            }
+            Ok(_) => {
+                let staged = destination.with_file_name(format!(".SKILL.md.{}.previous", Uuid::new_v4()));
+                tokio::fs::rename(&destination, &staged).await?;
+                Some(staged)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        if let Err(error) = write_atomic(&destination, content.as_bytes()).await {
+            if let Some(path) = &staged_previous {
+                tokio::fs::rename(path, &destination).await?;
+            }
+            return Err(error);
+        }
+        Ok(StagedSkillDefinition {
+            destination,
+            staged_previous,
+        })
+    }
+
+    pub(crate) async fn stage_package_file_bytes(
+        &self,
+        skill_name: &str,
+        relative_path: &str,
+        content: &[u8],
+    ) -> Result<StagedPackageFile, WorkflowMaterialsError> {
+        self.ensure_skill_directory(skill_name).await?;
+        let destination = self.material_path(skill_name, relative_path)?;
+        let staged_previous = match tokio::fs::symlink_metadata(&destination).await {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                return Err(WorkflowMaterialsError::InvalidRequest(
+                    "package-file path is unsafe".to_string(),
+                ));
+            }
+            Ok(_) => {
+                let name = destination
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("package-file");
+                let staged = destination.with_file_name(format!(".{name}.{}.previous", Uuid::new_v4()));
+                tokio::fs::rename(&destination, &staged).await?;
+                Some(staged)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        if let Err(error) = write_atomic(&destination, content).await {
+            if let Some(path) = &staged_previous {
+                tokio::fs::rename(path, &destination).await?;
+            }
+            return Err(error);
+        }
+        Ok(StagedPackageFile {
+            destination,
+            staged_previous,
+        })
+    }
+
+    pub(crate) async fn stage_package_file_deletion_lease(
+        &self,
+        skill_name: &str,
+        relative_path: &str,
+    ) -> Result<PackageFileDeletionLease, WorkflowMaterialsError> {
+        self.ensure_skill_directory(skill_name).await?;
+        let destination = self.material_path(skill_name, relative_path)?;
+        let leased = match tokio::fs::symlink_metadata(&destination).await {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                return Err(WorkflowMaterialsError::InvalidRequest(
+                    "package-file path is unsafe".to_string(),
+                ));
+            }
+            Ok(_) => {
+                let name = destination
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("package-file");
+                let leased = destination.with_file_name(format!(".{name}.{}.deletion-lease", Uuid::new_v4()));
+                tokio::fs::rename(&destination, &leased).await?;
+                Some(leased)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        Ok(PackageFileDeletionLease { destination, leased })
+    }
+
+    pub(crate) async fn trash_unregistered_package_files(
+        &self,
+        skill_name: &str,
+        registered_paths: &BTreeSet<String>,
+    ) -> Result<(), WorkflowMaterialsError> {
+        self.ensure_skill_directory(skill_name).await?;
+        for directory_name in ["references", "scripts", "assets"] {
+            let directory = self.skills_root.join(skill_name).join(directory_name);
+            ensure_existing_directory_without_symlink(&directory).await?;
+            let mut entries = tokio::fs::read_dir(&directory).await?;
+            while let Some(entry) = entries.next_entry().await? {
+                let metadata = entry.file_type().await?;
+                if metadata.is_symlink() || !metadata.is_file() {
+                    return Err(WorkflowMaterialsError::InvalidRequest(
+                        "managed package directory contains an unsafe entry".to_string(),
+                    ));
+                }
+                let file_name = entry.file_name().into_string().map_err(|_| {
+                    WorkflowMaterialsError::InvalidRequest(
+                        "managed package directory contains a non-UTF-8 file name".to_string(),
+                    )
+                })?;
+                let relative_path = format!("{directory_name}/{file_name}");
+                if let Some(original_name) = deletion_lease_original_name(&file_name) {
+                    let original_relative_path = format!("{directory_name}/{original_name}");
+                    if registered_paths.contains(&original_relative_path) {
+                        let original_path = directory.join(original_name);
+                        match tokio::fs::symlink_metadata(&original_path).await {
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                                tokio::fs::rename(entry.path(), original_path).await?;
+                            }
+                            Ok(_) => move_managed_path_to_trash(entry.path()).await?,
+                            Err(error) => return Err(error.into()),
+                        }
+                    } else {
+                        move_managed_path_to_trash(entry.path()).await?;
+                    }
+                    continue;
+                }
+                if !registered_paths.contains(&relative_path) {
+                    move_managed_path_to_trash(entry.path()).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn recover_registered_package_file_leases(
+        &self,
+        skill_name: &str,
+        registered_paths: &BTreeSet<String>,
+    ) -> Result<(), WorkflowMaterialsError> {
+        self.ensure_skill_directory(skill_name).await?;
+        for directory_name in ["references", "scripts", "assets"] {
+            let directory = self.skills_root.join(skill_name).join(directory_name);
+            ensure_existing_directory_without_symlink(&directory).await?;
+            let mut entries = tokio::fs::read_dir(&directory).await?;
+            while let Some(entry) = entries.next_entry().await? {
+                let metadata = entry.file_type().await?;
+                if metadata.is_symlink() || !metadata.is_file() {
+                    return Err(WorkflowMaterialsError::InvalidRequest(
+                        "managed package directory contains an unsafe entry".to_string(),
+                    ));
+                }
+                let file_name = entry.file_name().into_string().map_err(|_| {
+                    WorkflowMaterialsError::InvalidRequest(
+                        "managed package directory contains a non-UTF-8 file name".to_string(),
+                    )
+                })?;
+                let Some(original_name) = deletion_lease_original_name(&file_name) else {
+                    continue;
+                };
+                let original_relative_path = format!("{directory_name}/{original_name}");
+                if !registered_paths.contains(&original_relative_path) {
+                    continue;
+                }
+                let original_path = directory.join(original_name);
+                match tokio::fs::symlink_metadata(&original_path).await {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        tokio::fs::rename(entry.path(), original_path).await?;
+                    }
+                    Ok(_) => move_managed_path_to_trash(entry.path()).await?,
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn recover_registered_package_file_backups(
+        &self,
+        skill_name: &str,
+        registered_checksums: &BTreeMap<String, String>,
+    ) -> Result<(), WorkflowMaterialsError> {
+        self.ensure_skill_directory(skill_name).await?;
+        for directory_name in ["references", "scripts", "assets"] {
+            let directory = self.skills_root.join(skill_name).join(directory_name);
+            ensure_existing_directory_without_symlink(&directory).await?;
+            let mut entries = tokio::fs::read_dir(&directory).await?;
+            while let Some(entry) = entries.next_entry().await? {
+                let metadata = entry.file_type().await?;
+                if metadata.is_symlink() || !metadata.is_file() {
+                    return Err(WorkflowMaterialsError::InvalidRequest(
+                        "managed package directory contains an unsafe entry".to_string(),
+                    ));
+                }
+                let file_name = entry.file_name().into_string().map_err(|_| {
+                    WorkflowMaterialsError::InvalidRequest(
+                        "managed package directory contains a non-UTF-8 file name".to_string(),
+                    )
+                })?;
+                let Some(original_name) = staged_previous_original_name(&file_name) else {
+                    continue;
+                };
+                let relative_path = format!("{directory_name}/{original_name}");
+                let Some(expected_checksum) = registered_checksums.get(&relative_path) else {
+                    continue;
+                };
+                let backup_checksum = checksum(&tokio::fs::read(entry.path()).await?);
+                let destination = directory.join(original_name);
+                let destination_checksum = managed_regular_file_checksum(&destination).await?;
+                if destination_checksum.as_deref() == Some(expected_checksum) {
+                    move_managed_path_to_trash(entry.path()).await?;
+                } else if backup_checksum == *expected_checksum {
+                    let displaced = if destination_checksum.is_some() {
+                        let displaced = destination.with_file_name(format!(
+                            ".{}.{}.recovery-discard",
+                            original_name,
+                            Uuid::new_v4()
+                        ));
+                        tokio::fs::rename(&destination, &displaced).await?;
+                        Some(displaced)
+                    } else {
+                        None
+                    };
+                    if let Err(error) = tokio::fs::rename(entry.path(), &destination).await {
+                        if let Some(displaced) = displaced {
+                            tokio::fs::rename(displaced, destination).await?;
+                        }
+                        return Err(error.into());
+                    }
+                    if let Some(displaced) = displaced {
+                        move_managed_path_to_trash(displaced).await?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn read_package_file_text(
+        &self,
+        skill_name: &str,
+        relative_path: &str,
+        expected_checksum: &str,
+    ) -> Result<String, WorkflowMaterialsError> {
+        validate_skill_name(skill_name)?;
+        validate_relative_path(relative_path)?;
+        ensure_existing_directory_without_symlink(&self.skills_root).await?;
+        let root = self.skills_root.join(skill_name);
+        ensure_existing_directory_without_symlink(&root).await?;
+        let path = self.material_path(skill_name, relative_path)?;
+        let parent = path
+            .parent()
+            .ok_or_else(|| WorkflowMaterialsError::InvalidRequest("package-file path is invalid".to_string()))?;
+        ensure_existing_directory_without_symlink(parent).await?;
+        ensure_regular_file_without_symlink(&path).await?;
+        let content = tokio::fs::read_to_string(path).await?;
+        let checksum = format!("{:x}", Sha256::digest(content.as_bytes()));
+        if checksum != expected_checksum {
+            return Err(WorkflowMaterialsError::InvalidRequest(
+                "package-file content does not match its registered checksum".to_string(),
+            ));
+        }
+        Ok(content)
+    }
+
+    pub(crate) async fn verify_package_file_bytes(
+        &self,
+        skill_name: &str,
+        relative_path: &str,
+        expected_checksum: &str,
+    ) -> Result<(), WorkflowMaterialsError> {
+        validate_skill_name(skill_name)?;
+        validate_relative_path(relative_path)?;
+        ensure_existing_directory_without_symlink(&self.skills_root).await?;
+        let root = self.skills_root.join(skill_name);
+        ensure_existing_directory_without_symlink(&root).await?;
+        let path = self.material_path(skill_name, relative_path)?;
+        let parent = path
+            .parent()
+            .ok_or_else(|| WorkflowMaterialsError::InvalidRequest("package-file path is invalid".to_string()))?;
+        ensure_existing_directory_without_symlink(parent).await?;
+        ensure_regular_file_without_symlink(&path).await?;
+        let bytes = tokio::fs::read(path).await?;
+        let checksum = format!("{:x}", Sha256::digest(&bytes));
+        if checksum != expected_checksum {
+            return Err(WorkflowMaterialsError::InvalidRequest(
+                "package-file content does not match its registered checksum".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     async fn rename_skill_directory(
         &self,
         existing_skill_name: Option<&str>,
@@ -1120,7 +1547,7 @@ impl MaterialRow {
     }
 }
 
-async fn ensure_skill_name(
+pub(crate) async fn ensure_skill_name(
     transaction: &mut Transaction<'_, Sqlite>,
     profile_id: &str,
 ) -> Result<String, WorkflowMaterialsError> {
@@ -1158,6 +1585,29 @@ async fn ensure_skill_name(
         .execute(&mut **transaction)
         .await?;
     Ok(skill_name)
+}
+
+fn deletion_lease_original_name(file_name: &str) -> Option<&str> {
+    let lease_name = file_name.strip_prefix('.')?.strip_suffix(".deletion-lease")?;
+    let (original_name, lease_id) = lease_name.rsplit_once('.')?;
+    (!original_name.is_empty() && Uuid::parse_str(lease_id).is_ok()).then_some(original_name)
+}
+
+fn staged_previous_original_name(file_name: &str) -> Option<&str> {
+    let staged_name = file_name.strip_prefix('.')?.strip_suffix(".previous")?;
+    let (original_name, staged_id) = staged_name.rsplit_once('.')?;
+    (!original_name.is_empty() && Uuid::parse_str(staged_id).is_ok()).then_some(original_name)
+}
+
+async fn managed_regular_file_checksum(path: &Path) -> Result<Option<String>, WorkflowMaterialsError> {
+    match tokio::fs::symlink_metadata(path).await {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => Err(
+            WorkflowMaterialsError::InvalidRequest("managed package path contains an unsafe entry".to_string()),
+        ),
+        Ok(_) => Ok(Some(checksum(&tokio::fs::read(path).await?))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
 }
 
 async fn ensure_material_library(
@@ -1627,17 +2077,25 @@ async fn taken_relative_paths(
     let rows: Vec<String> = if let Some(exclude_material_id) = exclude_material_id {
         sqlx::query_scalar(
             "SELECT relative_path FROM workflow_profile_materials \
-             WHERE profile_id = ? AND relative_path IS NOT NULL AND material_id != ?",
+             WHERE profile_id = ? AND relative_path IS NOT NULL AND material_id != ? \
+             UNION \
+             SELECT relative_path FROM workflow_profile_package_files \
+             WHERE profile_id = ?",
         )
         .bind(profile_id)
         .bind(exclude_material_id)
+        .bind(profile_id)
         .fetch_all(&mut **transaction)
         .await?
     } else {
         sqlx::query_scalar(
             "SELECT relative_path FROM workflow_profile_materials \
-             WHERE profile_id = ? AND relative_path IS NOT NULL",
+             WHERE profile_id = ? AND relative_path IS NOT NULL \
+             UNION \
+             SELECT relative_path FROM workflow_profile_package_files \
+             WHERE profile_id = ?",
         )
+        .bind(profile_id)
         .bind(profile_id)
         .fetch_all(&mut **transaction)
         .await?
@@ -1744,7 +2202,7 @@ async fn resolve_replace_material_path(
     .await
 }
 
-fn validate_relative_path(path: &str) -> Result<(), WorkflowMaterialsError> {
+pub(crate) fn validate_relative_path(path: &str) -> Result<(), WorkflowMaterialsError> {
     let value = Path::new(path);
     let mut components = value.components();
     let directory = components.next();
@@ -1960,6 +2418,185 @@ mod tests {
         assert!(validate_relative_path("references/../SKILL.md").is_err());
         assert!(validate_relative_path("references/SKILL.md").is_err());
         assert!(validate_relative_path("references/nested/brief.md").is_err());
+    }
+
+    #[tokio::test]
+    async fn package_file_deletion_lease_rolls_back_or_moves_to_native_trash() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open in-memory database");
+        let temporary = tempfile::tempdir().expect("create Skills root");
+        let service = WorkflowMaterialsService::new(pool, temporary.path().to_path_buf());
+        service
+            .ensure_skill_directory("workflow-guide")
+            .await
+            .expect("create managed Skill directory");
+        let path = temporary.path().join("workflow-guide/references/policy.md");
+        tokio::fs::write(&path, b"policy")
+            .await
+            .expect("write managed package file");
+
+        let lease = service
+            .stage_package_file_deletion_lease("workflow-guide", "references/policy.md")
+            .await
+            .expect("stage deletion lease");
+        assert!(!path.exists());
+        lease.rollback().await.expect("roll back deletion lease");
+        assert_eq!(tokio::fs::read(&path).await.expect("read restored file"), b"policy");
+
+        let unsafe_lease = service
+            .stage_package_file_deletion_lease("workflow-guide", "references/policy.md")
+            .await
+            .expect("stage unsafe-source deletion lease");
+        let leased_path = unsafe_lease.leased.as_ref().expect("leased source path").clone();
+        tokio::fs::remove_file(&leased_path)
+            .await
+            .expect("remove leased source before substitution");
+        std::os::unix::fs::symlink(&path, &leased_path).expect("substitute leased source with symlink");
+        let error = unsafe_lease
+            .rollback()
+            .await
+            .expect_err("unsafe leased source must not be restored");
+        assert!(error.to_string().contains("source is unsafe"));
+        tokio::fs::remove_file(leased_path)
+            .await
+            .expect("remove unsafe leased source");
+        tokio::fs::write(&path, b"policy")
+            .await
+            .expect("restore managed package file for Trash test");
+
+        let mut lease = service
+            .stage_package_file_deletion_lease("workflow-guide", "references/policy.md")
+            .await
+            .expect("stage second deletion lease");
+        lease.move_to_trash().await.expect("move deletion lease to Trash");
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn repair_cleanup_trashes_only_unregistered_package_files() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open in-memory database");
+        let temporary = tempfile::tempdir().expect("create Skills root");
+        let service = WorkflowMaterialsService::new(pool, temporary.path().to_path_buf());
+        service
+            .ensure_skill_directory("workflow-guide")
+            .await
+            .expect("create managed Skill directory");
+        let registered = temporary.path().join("workflow-guide/references/registered.md");
+        let orphaned = temporary.path().join("workflow-guide/references/orphaned.md");
+        let recoverable_lease = temporary
+            .path()
+            .join("workflow-guide/references/.recover.md.00000000-0000-4000-8000-000000000001.deletion-lease");
+        let committed_lease = temporary
+            .path()
+            .join("workflow-guide/references/.removed.md.00000000-0000-4000-8000-000000000002.deletion-lease");
+        tokio::fs::write(&registered, b"registered")
+            .await
+            .expect("write registered file");
+        tokio::fs::write(&orphaned, b"orphaned")
+            .await
+            .expect("write orphaned file");
+        tokio::fs::write(&recoverable_lease, b"recoverable")
+            .await
+            .expect("write pre-commit residual lease");
+        tokio::fs::write(&committed_lease, b"committed")
+            .await
+            .expect("write post-commit residual lease");
+
+        service
+            .trash_unregistered_package_files(
+                "workflow-guide",
+                &BTreeSet::from([
+                    "references/registered.md".to_string(),
+                    "references/recover.md".to_string(),
+                ]),
+            )
+            .await
+            .expect("clean unregistered package files");
+
+        assert!(registered.exists());
+        assert!(!orphaned.exists());
+        assert_eq!(
+            tokio::fs::read(temporary.path().join("workflow-guide/references/recover.md"))
+                .await
+                .expect("read restored pre-commit lease"),
+            b"recoverable"
+        );
+        assert!(!recoverable_lease.exists());
+        assert!(!committed_lease.exists());
+    }
+
+    #[tokio::test]
+    async fn skill_package_lock_serializes_projection_and_cleanup() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open in-memory database");
+        let temporary = tempfile::tempdir().expect("create Skills root");
+        let first_service = WorkflowMaterialsService::new(pool.clone(), temporary.path().to_path_buf());
+        let second_service = WorkflowMaterialsService::new(pool, temporary.path().to_path_buf());
+        let first_guard = first_service
+            .lock_skill_package("workflow-guide")
+            .await
+            .expect("acquire first package lock");
+
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(50),
+                second_service.lock_skill_package("workflow-guide"),
+            )
+            .await
+            .is_err(),
+            "a second package operation must wait while the first holds the lock"
+        );
+
+        drop(first_guard);
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            second_service.lock_skill_package("workflow-guide"),
+        )
+        .await
+        .expect("second package operation resumes after unlock")
+        .expect("acquire second package lock");
+    }
+
+    #[tokio::test]
+    async fn material_paths_reserve_guide_package_file_paths() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open in-memory database");
+        crate::test_helpers::prepare_config_database(&pool).await;
+        sqlx::query(
+            "INSERT INTO profile (id, name, description, type, role, profile_mode)
+             VALUES ('workflow-profile', 'Workflow', '', 'shared', 'user', 'workflow')",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert Workflow Profile");
+        sqlx::query(
+            "INSERT INTO workflow_profile_package_files (
+                package_file_id, profile_id, ordinal, title, category, relative_path
+             ) VALUES ('guide-file', 'workflow-profile', 0, 'Policy', 'reference', 'references/policy.md')",
+        )
+        .execute(&pool)
+        .await
+        .expect("reserve Guide package path");
+        let mut transaction = pool.begin().await.expect("begin allocation transaction");
+
+        let allocated = allocate_storage_relative_path(&mut transaction, "workflow-profile", "policy", "md", None)
+            .await
+            .expect("allocate legacy Material path");
+
+        assert_eq!(allocated, "references/policy-2.md");
     }
 
     #[test]

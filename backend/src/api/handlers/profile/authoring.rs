@@ -4,10 +4,7 @@ use crate::api::models::profile::{
     ProfileAuthoringSaveData, ProfileAuthoringSaveReq, ProfileAuthoringSaveResp, ProfileAuthoringViewData,
     ProfileAuthoringViewResp, ProfileIdReq,
 };
-use crate::core::profile::authoring::{
-    ProfileAuthoringCommand, ProfileAuthoringError, ProfileAuthoringService, WorkflowProfileAuthoringError,
-};
-use crate::core::profile::workflow::WorkflowSpecificationSaveCommand;
+use crate::core::profile::authoring::{ProfileAuthoringCommand, ProfileAuthoringError, ProfileAuthoringService};
 
 pub async fn profile_authoring_view(
     State(state): State<Arc<AppState>>,
@@ -33,15 +30,6 @@ pub async fn profile_authoring_save(
     let started_at = std::time::Instant::now();
     let db = get_database(&state).await?;
     let is_create = request.id.is_none();
-    let workflow_specification = request
-        .workflow_specification
-        .map(|specification| WorkflowSpecificationSaveCommand {
-            profile_id: specification.profile_id,
-            expected_specification_revision: specification.expected_specification_revision,
-            validation_notes: specification.validation_notes,
-            avoid_rules: specification.avoid_rules,
-            steps: specification.steps,
-        });
     let command = ProfileAuthoringCommand {
         id: request.id,
         expected_authoring_generation: request.expected_authoring_generation,
@@ -55,24 +43,16 @@ pub async fn profile_authoring_save(
         clone_from_id: request.clone_from_id,
         profile_mode: request.profile_mode,
         skill_name: request.skill_name,
+        workflow_guidance: request.workflow_guidance,
     };
     let service = ProfileAuthoringService::with_skills_root(
         db.pool.clone(),
         db.path.parent().unwrap_or(std::path::Path::new(".")).join("skills"),
     );
-    let saved = match workflow_specification {
-        Some(workflow_specification) => {
-            service
-                .save_with_workflow_specification(command, workflow_specification)
-                .await
-                .map_err(workflow_profile_authoring_error)?
-                .0
-        }
-        None => service
-            .save(command, "profile_management")
-            .await
-            .map_err(profile_authoring_error)?,
-    };
+    let saved = service
+        .save(command, "profile_management")
+        .await
+        .map_err(profile_authoring_error)?;
 
     if saved.profile_mode == crate::config::models::ProfileMode::Capability {
         publish_post_commit_runtime_effects(&saved);
@@ -133,13 +113,6 @@ fn publish_post_commit_runtime_effects(saved: &crate::core::profile::authoring::
     }
 }
 
-fn workflow_profile_authoring_error(error: WorkflowProfileAuthoringError) -> ApiError {
-    match error {
-        WorkflowProfileAuthoringError::Authoring(error) => profile_authoring_error(error),
-        WorkflowProfileAuthoringError::Workflow(error) => super::workflow::workflow_specification_error(error),
-    }
-}
-
 fn profile_authoring_error(error: ProfileAuthoringError) -> ApiError {
     match error {
         ProfileAuthoringError::InvalidRequest(message) => ApiError::BadRequest(message),
@@ -167,9 +140,13 @@ fn profile_authoring_error(error: ProfileAuthoringError) -> ApiError {
         ProfileAuthoringError::SkillDirectory(
             crate::core::profile::materials::WorkflowMaterialsError::InvalidRequest(message),
         ) => ApiError::BadRequest(message),
+        ProfileAuthoringError::WorkflowGuidance(error) => super::workflow::workflow_specification_error(error),
         ProfileAuthoringError::Persistence(_)
         | ProfileAuthoringError::Database(_)
-        | ProfileAuthoringError::SkillDirectory(_) => ApiError::InternalError("Profile authoring failed".to_string()),
+        | ProfileAuthoringError::SkillDirectory(_)
+        | ProfileAuthoringError::WorkflowGuideProjection(_) => {
+            ApiError::InternalError("Profile authoring failed".to_string())
+        }
     }
 }
 

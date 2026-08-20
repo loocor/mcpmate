@@ -23,6 +23,7 @@ pub mod service;
 pub mod types;
 pub mod visibility;
 pub mod workflow;
+pub mod workflow_guide;
 
 // Re-export core types and services
 pub use config::ConfigApplicationStateManager;

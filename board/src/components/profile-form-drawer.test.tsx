@@ -90,6 +90,11 @@ describe("ProfileFormDrawer authoring", () => {
 				is_default: false,
 			},
 			serverIds: ["server-a"],
+			workflowGuidance: {
+				expected_specification_revision: null,
+				validation_notes: "Verify source evidence.",
+				avoid_rules: "Do not infer missing facts.",
+			},
 		});
 
 		expect(request).toMatchObject({
@@ -97,6 +102,11 @@ describe("ProfileFormDrawer authoring", () => {
 			skill_name: "workflow-test",
 			is_active: false,
 			is_default: false,
+			workflow_guidance: {
+				expected_specification_revision: null,
+				validation_notes: "Verify source evidence.",
+				avoid_rules: "Do not infer missing facts.",
+			},
 		});
 	});
 

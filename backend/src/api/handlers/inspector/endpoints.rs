@@ -96,6 +96,12 @@ pub async fn tool_call(
                 ApiError::ServiceUnavailable(m) => ("service_unavailable", m.as_str()),
                 ApiError::Conflict(m) => ("conflict", m.as_str()),
                 ApiError::ProfileConflict(_) => ("conflict", "Profile authoring conflict"),
+                ApiError::WorkflowGuideReclamationRequired(_) => {
+                    ("conflict", "Workflow Guide save requires reclamation confirmation")
+                }
+                ApiError::WorkflowGuideTrashCleanupPending { .. } => {
+                    ("internal_error", "Workflow Guide Trash cleanup is pending")
+                }
                 ApiError::InvalidProfileTarget(_) => ("invalid_target", "Profile target does not exist"),
                 ApiError::Forbidden(m) => ("forbidden", m.as_str()),
                 ApiError::Timeout(m) => ("timeout", m.as_str()),

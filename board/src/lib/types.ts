@@ -946,6 +946,9 @@ export interface ConfigSuitListResponse {
 export interface ApiConflictDetails {
   currentAuthoringGeneration?: number;
   dependencyServerIds?: string[];
+  packageFiles?: WorkflowGuidePackageFile[];
+  capabilities?: WorkflowGuideCapability[];
+  relativePaths?: string[];
 }
 
 export interface ProfileAuthoringView {
@@ -968,7 +971,13 @@ export interface ProfileAuthoringSaveRequest {
   clone_from_id: string | null;
   profile_mode?: ProfileMode;
   skill_name?: string | null;
-  workflow_specification?: WorkflowSpecificationSaveRequest;
+  workflow_guidance?: WorkflowGuidanceSaveRequest;
+}
+
+export interface WorkflowGuidanceSaveRequest {
+  expected_specification_revision: number | null;
+  validation_notes: string | null;
+  avoid_rules: string | null;
 }
 
 export interface ProfileAuthoringSaveResponse {
@@ -991,79 +1000,12 @@ export interface WorkflowStep {
   bindings: WorkflowBinding[];
 }
 
-export type WorkflowMaterialKind = "external_url" | "uploaded_file" | "markdown_file";
-
-export interface WorkflowMaterial {
-  material_id: string;
-  profile_id: string;
-  material_revision: number;
-  ordinal: number;
-  title: string;
-  kind: WorkflowMaterialKind;
-  external_url: string | null;
-  relative_path: string | null;
-  original_filename: string | null;
-  file_size: number | null;
-  checksum: string | null;
-  markdown_content: string | null;
-  created_at: string;
-  updated_at: string;
-  reference_step_ids: string[];
-}
-
-export interface WorkflowMaterialsView {
-  profile_id: string;
-  skill_name: string;
-  materials_revision: number;
-  materials: WorkflowMaterial[];
-  step_material_ids: Record<string, string[]>;
-}
-
-export interface WorkflowMaterialSaveRequest {
-  profile_id: string;
-  material_id: string | null;
-  expected_material_revision: number | null;
-  expected_materials_revision: number;
-  title: string;
-  kind: WorkflowMaterialKind;
-  external_url: string | null;
-  markdown_content: string | null;
-}
-
-export interface WorkflowMaterialDeleteRequest {
-  profile_id: string;
-  material_id: string;
-  expected_material_revision: number;
-  expected_materials_revision: number;
-}
-
-export interface WorkflowStepMaterialsSaveRequest {
-  profile_id: string;
-  step_id: string;
-  material_ids: string[];
-  expected_materials_revision: number;
-}
-
-export interface WorkflowMaterialsReorderRequest {
-  profile_id: string;
-  material_ids: string[];
-  expected_materials_revision: number;
-}
-
 export interface WorkflowSpecification {
   profile_id: string;
   specification_revision: number | null;
   validation_notes: string | null;
   avoid_rules: string | null;
   tool_binding_count: number;
-  steps: WorkflowStep[];
-}
-
-export interface WorkflowSpecificationSaveRequest {
-  profile_id: string;
-  expected_specification_revision: number | null;
-  validation_notes: string | null;
-  avoid_rules: string | null;
   steps: WorkflowStep[];
 }
 
@@ -1084,6 +1026,88 @@ export interface WorkflowSpecificationPreview {
   avoid_rules: string | null;
   steps: WorkflowPreviewStep[];
   valid: boolean;
+}
+
+export type WorkflowGuidePackageCategory = "reference" | "script" | "asset";
+
+export interface WorkflowGuideCapability {
+  name: string;
+  exposure: WorkflowBindingPolicy;
+  guide: string;
+  start_line: number;
+  end_line: number;
+}
+
+export interface WorkflowGuidePackageFile {
+  package_file_id: string;
+  file_revision: number;
+  title: string;
+  category: WorkflowGuidePackageCategory;
+  relative_path: string;
+  mime_type: string | null;
+  extension: string | null;
+  file_size: number | null;
+}
+
+export interface WorkflowGuide {
+  profile_id: string;
+  guide_revision: number;
+  markdown: string;
+  capabilities: WorkflowGuideCapability[];
+  package_files: WorkflowGuidePackageFile[];
+  documents: WorkflowGuideExternalDocument[];
+}
+
+export interface WorkflowGuideSaveRequest {
+  profile_id: string;
+  expected_guide_revision: number;
+  markdown: string;
+  reclamation_confirmation?: WorkflowGuideReclamationConfirmation;
+}
+
+export interface WorkflowGuideReclamationConfirmation {
+  package_files: Array<{
+    package_file_id: string;
+    file_revision: number;
+  }>;
+  capability_names: string[];
+}
+
+export interface WorkflowGuideSaveResponse {
+  guide: WorkflowGuide;
+  projected_skill: { markdown: string };
+}
+
+export interface WorkflowGuidePackageFileSaveResponse extends WorkflowGuideSaveResponse {
+  package_file: WorkflowGuidePackageFile;
+}
+
+export interface WorkflowGuidePreviewRequest {
+  profile_id: string;
+  relative_path?: string;
+  markdown: string;
+}
+
+export interface WorkflowGuidePreviewResponse {
+  projected_skill: { markdown: string };
+  active_document: { markdown: string };
+  orphaned_package_files: WorkflowGuidePackageFile[];
+  orphaned_capabilities: WorkflowGuideCapability[];
+}
+
+export interface WorkflowGuideExternalDocument {
+  package_file_id: string;
+  file_revision: number;
+  title: string;
+  relative_path: string;
+  markdown: string;
+}
+
+export interface WorkflowGuidePackageFileDeleteRequest {
+  profile_id: string;
+  package_file_id: string;
+  expected_file_revision: number;
+  expected_guide_revision: number;
 }
 
 export interface ConfigSuitServer {
