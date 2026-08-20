@@ -307,7 +307,6 @@ mod tests {
 
     #[tokio::test]
     async fn workflow_guide_reclamation_conflict_returns_structured_candidates() {
-        use crate::core::profile::workflow::WorkflowBindingPolicy;
         use crate::core::profile::workflow_guide::{
             WorkflowGuideCapability, WorkflowGuidePackageCategory, WorkflowGuidePackageFile,
             WorkflowGuideReclamationPlan,
@@ -325,10 +324,11 @@ mod tests {
                 file_size: Some(10),
             }],
             capabilities: vec![WorkflowGuideCapability {
-                alias: "lookup".to_string(),
-                display_name: "Lookup".to_string(),
-                ref_id: "ref-1".to_string(),
-                binding_policy: WorkflowBindingPolicy::Direct,
+                name: "lookup".to_string(),
+                exposure: crate::core::profile::workflow::WorkflowBindingPolicy::Direct,
+                guide: "Use the lookup capability.".to_string(),
+                start_line: 1,
+                end_line: 3,
             }],
         })
         .into_response();
@@ -338,7 +338,7 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["error"]["code"], "workflow_guide_reclamation_required");
         assert_eq!(json["error"]["details"]["packageFiles"][0]["file_revision"], 3);
-        assert_eq!(json["error"]["details"]["capabilities"][0]["alias"], "lookup");
+        assert_eq!(json["error"]["details"]["capabilities"][0]["name"], "lookup");
     }
 
     #[tokio::test]

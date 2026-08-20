@@ -18,15 +18,11 @@ use super::workflow::{
     WorkflowSpecificationService, WorkflowStepCommand, verify_workflow_profile,
 };
 
-static STEP_START: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"^:::workflow-step\s+\{key=\"([a-z0-9][a-z0-9-]{0,62})\"\s+title=\"([^\"\n]{1,120})\"\}\s*$"#)
-        .expect("valid workflow Guide step directive regex")
+static CAPABILITY_START: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"^:::capability\s+(\{.*\})\s*$").expect("valid Workflow Guide capability directive regex")
 });
-static STEP_END: Lazy<Regex> = Lazy::new(|| Regex::new(r"^:::\s*$").expect("valid workflow Guide step end regex"));
-static CAPABILITY_REFERENCE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\{\{capability:([a-z0-9][a-z0-9-]{0,62})\}\}")
-        .expect("valid workflow Guide capability reference regex")
-});
+static DIRECTIVE_END: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^:::\s*$").expect("valid Workflow Guide directive end regex"));
 static PACKAGE_FILE_REFERENCE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"\[[^\]\n]+\]\(((?:references|scripts|assets)/[^\s)#]+)(?:#[^\s)]+)?\)")
         .expect("valid workflow Guide package file reference regex")
@@ -43,8 +39,7 @@ static UUID_REFERENCE: Lazy<Regex> = Lazy::new(|| {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkflowGuide {
     pub headings: Vec<WorkflowGuideHeading>,
-    pub steps: Vec<WorkflowGuideStep>,
-    pub capability_aliases: BTreeSet<String>,
+    pub capabilities: Vec<WorkflowGuideCapability>,
     pub package_paths: BTreeSet<String>,
 }
 
@@ -55,11 +50,11 @@ pub struct WorkflowGuideHeading {
     pub line: usize,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WorkflowGuideStep {
-    pub key: String,
-    pub title: String,
-    pub body: String,
+#[derive(Clone, Debug, Eq, PartialEq, schemars::JsonSchema, serde::Serialize)]
+pub struct WorkflowGuideCapability {
+    pub name: String,
+    pub exposure: WorkflowBindingPolicy,
+    pub guide: String,
     pub start_line: usize,
     pub end_line: usize,
 }
@@ -83,14 +78,6 @@ pub struct WorkflowGuideView {
     pub capabilities: Vec<WorkflowGuideCapability>,
     pub package_files: Vec<WorkflowGuidePackageFile>,
     pub documents: Vec<WorkflowGuideExternalDocument>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, schemars::JsonSchema, serde::Serialize)]
-pub struct WorkflowGuideCapability {
-    pub alias: String,
-    pub display_name: String,
-    pub ref_id: String,
-    pub binding_policy: WorkflowBindingPolicy,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, schemars::JsonSchema, serde::Serialize)]
@@ -119,7 +106,6 @@ pub struct WorkflowGuideSaveCommand {
     pub profile_id: String,
     pub expected_guide_revision: i64,
     pub markdown: String,
-    pub capabilities: Vec<WorkflowGuideCapabilitySaveCommand>,
     pub reclamation_confirmation: Option<WorkflowGuideReclamationConfirmation>,
 }
 
@@ -128,7 +114,6 @@ pub struct WorkflowGuidePreviewCommand {
     pub profile_id: String,
     pub relative_path: Option<String>,
     pub markdown: String,
-    pub capabilities: Vec<WorkflowGuideCapabilitySaveCommand>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -146,14 +131,6 @@ pub struct WorkflowGuidePreviewResult {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize)]
-pub struct WorkflowGuideCapabilitySaveCommand {
-    pub alias: String,
-    pub display_name: String,
-    pub ref_id: String,
-    pub binding_policy: WorkflowBindingPolicy,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkflowGuidePackageFileSaveCommand {
     pub profile_id: String,
     pub package_file_id: Option<String>,
@@ -163,14 +140,13 @@ pub struct WorkflowGuidePackageFileSaveCommand {
     pub category: WorkflowGuidePackageCategory,
     pub original_filename: String,
     pub bytes: Vec<u8>,
-    pub capabilities: Option<Vec<WorkflowGuideCapabilitySaveCommand>>,
     pub reclamation_confirmation: Option<WorkflowGuideReclamationConfirmation>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize)]
 pub struct WorkflowGuideReclamationConfirmation {
     pub package_files: Vec<WorkflowGuidePackageFileRevision>,
-    pub capability_aliases: Vec<String>,
+    pub capability_names: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, schemars::JsonSchema, serde::Deserialize, serde::Serialize)]
@@ -295,6 +271,36 @@ impl WorkflowGuideService {
             .lock_skill_package(&skill_name)
             .await
             .map_err(|error| WorkflowGuideError::Projection(error.to_string()))?;
+        let registered_files: Vec<(String, Option<String>, bool)> = sqlx::query_as(
+            "SELECT files.relative_path, files.checksum,
+                    EXISTS(
+                        SELECT 1 FROM workflow_profile_external_guides external
+                        WHERE external.package_file_id = files.package_file_id
+                          AND external.profile_id = files.profile_id
+                    )
+             FROM workflow_profile_package_files files WHERE files.profile_id = ?",
+        )
+        .bind(profile_id)
+        .fetch_all(&mut *transaction)
+        .await?;
+        for (relative_path, checksum, is_external_guide) in registered_files {
+            if is_external_guide {
+                continue;
+            }
+            let checksum = checksum.ok_or_else(|| {
+                WorkflowGuideError::InvalidStorage(format!(
+                    "registered package file '{relative_path}' has no checksum and cannot be repaired"
+                ))
+            })?;
+            material_service
+                .verify_package_file_bytes(&skill_name, &relative_path, &checksum)
+                .await
+                .map_err(|error| {
+                    WorkflowGuideError::InvalidStorage(format!(
+                        "registered package file '{relative_path}' cannot be repaired: {error}"
+                    ))
+                })?;
+        }
         let (rendered, staged) =
             stage_projection_in_transaction(&mut transaction, profile_id, self.pool.clone(), skills_root.clone())
                 .await?;
@@ -356,7 +362,6 @@ impl WorkflowGuideService {
             profile_id: command.profile_id.clone(),
             expected_guide_revision: 0,
             markdown: command.markdown.clone(),
-            capabilities: command.capabilities.clone(),
             reclamation_confirmation: None,
         };
         validate_save_command(&save_shape, &parsed)?;
@@ -446,31 +451,19 @@ impl WorkflowGuideService {
                 )));
             }
         }
-        let capability_names = command
-            .capabilities
-            .iter()
-            .map(|capability| (capability.alias.clone(), capability.display_name.clone()))
-            .collect::<BTreeMap<_, _>>();
+        verify_capability_names(&mut transaction, &candidate_graph.combined.capabilities).await?;
         let profile: (String, String) = sqlx::query_as("SELECT name, description FROM profile WHERE id = ?")
             .bind(&command.profile_id)
             .fetch_one(&mut *transaction)
             .await?;
-        for alias in &candidate_graph.combined.capability_aliases {
-            if !capability_names.contains_key(alias) {
-                return Err(WorkflowGuideError::InvalidStorage(format!(
-                    "Guide references unavailable capability alias '{alias}'"
-                )));
-            }
-        }
         let root = candidate_graph.root()?;
         let projected_skill = format_skill_definition(
             &skill_name,
             &profile.0,
             &profile.1,
-            &render_workflow_skill(&root.markdown, &candidate_graph.combined, &capability_names).markdown,
+            &render_workflow_skill(&root.markdown, &candidate_graph.combined).markdown,
         );
-        let active_document =
-            render_workflow_skill(&active_document.markdown, &active_document.guide, &capability_names);
+        let active_document = render_workflow_skill(&active_document.markdown, &active_document.guide);
         if UUID_REFERENCE.is_match(&projected_skill)
             || projected_skill.contains("skill://")
             || UUID_REFERENCE.is_match(&active_document.markdown)
@@ -769,40 +762,10 @@ impl WorkflowGuideService {
             apply_reclamation_metadata(&mut transaction, &command.profile_id, &reclamation_plan).await?;
             external_document_is_reachable = graph.contains_package_file(&package_file_id);
             if external_document_is_reachable {
-                if let Some(capabilities) = &command.capabilities {
-                    let capabilities = capabilities
-                        .iter()
-                        .filter(|capability| graph.combined.capability_aliases.contains(&capability.alias))
-                        .cloned()
-                        .collect();
-                    let capability_command = WorkflowGuideSaveCommand {
-                        profile_id: command.profile_id.clone(),
-                        expected_guide_revision,
-                        markdown: String::new(),
-                        capabilities,
-                        reclamation_confirmation: None,
-                    };
-                    let parsed = parse_workflow_guide(&markdown)
-                        .map_err(|errors| WorkflowGuideError::InvalidStorage(format_parse_errors(&errors)))?;
-                    validate_save_command(&capability_command, &parsed)?;
-                    replace_capability_aliases(&mut transaction, &capability_command).await?;
-                }
-                let aliases = load_alias_bindings(&mut transaction, &command.profile_id).await?;
-                for alias in &graph.combined.capability_aliases {
-                    if !aliases.contains_key(alias) {
-                        return Err(WorkflowGuideError::InvalidStorage(format!(
-                            "Guide references unavailable capability alias '{alias}'"
-                        )));
-                    }
-                }
+                verify_capability_names(&mut transaction, &graph.combined.capabilities).await?;
                 verify_package_paths(&mut transaction, &command.profile_id, &graph.combined.package_paths).await?;
-                synchronize_workflow_specification(
-                    &mut transaction,
-                    &command.profile_id,
-                    &graph.combined.steps,
-                    &aliases,
-                )
-                .await?;
+                synchronize_workflow_specification(&mut transaction, &command.profile_id, &graph.combined.capabilities)
+                    .await?;
                 bump_guide_revision(&mut transaction, &command.profile_id, expected_guide_revision).await?;
             }
         }
@@ -812,7 +775,17 @@ impl WorkflowGuideService {
             .await
             .map_err(|error| WorkflowGuideError::Projection(error.to_string()))?;
         let reclamation = stage_reclamation_leases(&material_service, &skill_name, &reclamation_plan).await?;
-        let staged_file = if is_external_guide && external_document_is_reachable {
+        let package_file_is_registered: bool = sqlx::query_scalar(
+            "SELECT EXISTS(
+                SELECT 1 FROM workflow_profile_package_files
+                WHERE profile_id = ? AND package_file_id = ?
+             )",
+        )
+        .bind(&command.profile_id)
+        .bind(&package_file_id)
+        .fetch_one(&mut *transaction)
+        .await?;
+        let staged_file = if (is_external_guide && external_document_is_reachable) || !package_file_is_registered {
             None
         } else {
             match material_service
@@ -967,14 +940,6 @@ struct GuideRow {
 }
 
 #[derive(FromRow)]
-struct CapabilityRow {
-    alias: String,
-    display_name: String,
-    ref_id: String,
-    binding_policy: String,
-}
-
-#[derive(FromRow)]
 struct PackageFileRow {
     package_file_id: String,
     file_revision: i64,
@@ -985,13 +950,6 @@ struct PackageFileRow {
     extension: Option<String>,
     file_size: Option<i64>,
     checksum: Option<String>,
-}
-
-#[derive(FromRow)]
-struct AliasBindingRow {
-    alias: String,
-    ref_id: String,
-    binding_policy: String,
 }
 
 #[derive(FromRow, serde::Serialize)]
@@ -1081,10 +1039,26 @@ impl GuideDocumentGraph {
                 .capabilities
                 .iter()
                 .filter(|capability| {
-                    self.combined.capability_aliases.contains(&capability.alias)
-                        && !candidate.combined.capability_aliases.contains(&capability.alias)
+                    self.combined
+                        .capabilities
+                        .iter()
+                        .any(|item| item.name == capability.name)
+                        && !candidate
+                            .combined
+                            .capabilities
+                            .iter()
+                            .any(|item| item.name == capability.name)
                 })
-                .cloned()
+                .fold(
+                    BTreeMap::<String, WorkflowGuideCapability>::new(),
+                    |mut unique, capability| {
+                        unique
+                            .entry(capability.name.clone())
+                            .or_insert_with(|| capability.clone());
+                        unique
+                    },
+                )
+                .into_values()
                 .collect(),
         }
     }
@@ -1096,7 +1070,7 @@ impl WorkflowGuideReclamationPlan {
     }
 }
 
-struct StagedWorkflowProjection {
+pub(crate) struct StagedWorkflowProjection {
     skill_definition: StagedSkillDefinition,
     package_files: Vec<StagedPackageFile>,
 }
@@ -1212,14 +1186,14 @@ async fn move_reclamation_leases_to_trash(staged: Vec<StagedReclamation>) -> Res
 }
 
 impl StagedWorkflowProjection {
-    async fn commit(self) {
+    pub(crate) async fn commit(self) {
         self.skill_definition.commit().await;
         for package_file in self.package_files {
             package_file.commit().await;
         }
     }
 
-    async fn rollback(self) -> Result<(), WorkflowGuideError> {
+    pub(crate) async fn rollback(self) -> Result<(), WorkflowGuideError> {
         let mut errors = Vec::new();
         if let Err(error) = self.skill_definition.rollback().await {
             errors.push(error.to_string());
@@ -1251,15 +1225,9 @@ async fn save_in_transaction(
     let reclamation_plan = persisted_graph.reclamation_plan(&graph, &persisted);
     verify_reclamation_confirmation(&reclamation_plan, command.reclamation_confirmation.as_ref())?;
     apply_reclamation_metadata(transaction, &command.profile_id, &reclamation_plan).await?;
-    let mut effective_command = command.clone();
-    effective_command
-        .capabilities
-        .retain(|capability| graph.combined.capability_aliases.contains(&capability.alias));
-    replace_capability_aliases(transaction, &effective_command).await?;
-    let aliases = load_alias_bindings(transaction, &command.profile_id).await?;
-    validate_capabilities_for_guide(&effective_command, &graph.combined)?;
+    verify_capability_names(transaction, &graph.combined.capabilities).await?;
     verify_package_paths(transaction, &command.profile_id, &graph.combined.package_paths).await?;
-    synchronize_workflow_specification(transaction, &command.profile_id, &graph.combined.steps, &aliases).await?;
+    synchronize_workflow_specification(transaction, &command.profile_id, &graph.combined.capabilities).await?;
     let changed = sqlx::query(
         "UPDATE workflow_profile_guides
          SET markdown = ?, guide_revision = guide_revision + 1, updated_at = CURRENT_TIMESTAMP
@@ -1284,9 +1252,7 @@ fn verify_reclamation_confirmation(
     if plan.is_empty() {
         return match confirmation {
             None => Ok(()),
-            Some(confirmation)
-                if confirmation.package_files.is_empty() && confirmation.capability_aliases.is_empty() =>
-            {
+            Some(confirmation) if confirmation.package_files.is_empty() && confirmation.capability_names.is_empty() => {
                 Ok(())
             }
             Some(_) => Err(WorkflowGuideError::ReclamationConfirmationChanged),
@@ -1305,20 +1271,20 @@ fn verify_reclamation_confirmation(
         .iter()
         .map(|file| (file.package_file_id.as_str(), file.file_revision))
         .collect::<BTreeSet<_>>();
-    let expected_aliases = plan
+    let expected_names = plan
         .capabilities
         .iter()
-        .map(|capability| capability.alias.as_str())
+        .map(|capability| capability.name.as_str())
         .collect::<BTreeSet<_>>();
-    let confirmed_aliases = confirmation
-        .capability_aliases
+    let confirmed_names = confirmation
+        .capability_names
         .iter()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
     if expected_files != confirmed_files
-        || expected_aliases != confirmed_aliases
+        || expected_names != confirmed_names
         || confirmed_files.len() != confirmation.package_files.len()
-        || confirmed_aliases.len() != confirmation.capability_aliases.len()
+        || confirmed_names.len() != confirmation.capability_names.len()
     {
         return Err(WorkflowGuideError::ReclamationConfirmationChanged);
     }
@@ -1330,13 +1296,6 @@ async fn apply_reclamation_metadata(
     profile_id: &str,
     plan: &WorkflowGuideReclamationPlan,
 ) -> Result<(), WorkflowGuideError> {
-    for capability in &plan.capabilities {
-        sqlx::query("DELETE FROM workflow_profile_capability_aliases WHERE profile_id = ? AND alias = ?")
-            .bind(profile_id)
-            .bind(&capability.alias)
-            .execute(&mut **transaction)
-            .await?;
-    }
     for file in &plan.package_files {
         let deleted = sqlx::query(
             "DELETE FROM workflow_profile_package_files
@@ -1357,10 +1316,9 @@ async fn apply_reclamation_metadata(
 async fn synchronize_workflow_specification(
     transaction: &mut Transaction<'_, Sqlite>,
     profile_id: &str,
-    guide_steps: &[WorkflowGuideStep],
-    aliases: &BTreeMap<String, WorkflowGuideCapabilitySaveCommand>,
+    capabilities: &[WorkflowGuideCapability],
 ) -> Result<(), WorkflowGuideError> {
-    let existing_step_ids = load_step_ids(transaction, profile_id).await?;
+    let capability_refs = load_canonical_capability_refs(transaction).await?;
     let specification_revision: Option<i64> =
         sqlx::query_scalar("SELECT specification_revision FROM workflow_profile_specifications WHERE profile_id = ?")
             .bind(profile_id)
@@ -1373,30 +1331,31 @@ async fn synchronize_workflow_specification(
             expected_specification_revision: specification_revision,
             validation_notes: None,
             avoid_rules: None,
-            steps: guide_steps
+            steps: capabilities
                 .iter()
-                .map(|step| WorkflowStepCommand {
-                    step_id: existing_step_ids.get(&step.key).cloned(),
-                    title: step.title.clone(),
-                    description: (!step.body.is_empty()).then(|| step.body.clone()),
-                    bindings: CAPABILITY_REFERENCE
-                        .captures_iter(&step.body)
-                        .map(|captures| {
-                            let alias = &captures[1];
-                            let binding = &aliases[alias];
-                            WorkflowBindingCommand {
-                                ref_id: binding.ref_id.clone(),
-                                binding_policy: binding.binding_policy,
-                            }
-                        })
-                        .collect(),
+                .map(|capability| {
+                    let ref_id = capability_refs.get(&capability.name).ok_or_else(|| {
+                        WorkflowGuideError::InvalidStorage(format!(
+                            "Guide references unavailable canonical capability name '{}'",
+                            capability.name
+                        ))
+                    })?;
+                    Ok(WorkflowStepCommand {
+                        step_id: None,
+                        title: capability.name.clone(),
+                        description: (!capability.guide.is_empty()).then(|| capability.guide.clone()),
+                        bindings: vec![WorkflowBindingCommand {
+                            ref_id: ref_id.clone(),
+                            binding_policy: capability.exposure,
+                        }],
+                    })
                 })
-                .collect(),
+                .collect::<Result<Vec<_>, WorkflowGuideError>>()?,
         },
     )
     .await?;
-    replace_step_key_mapping(transaction, profile_id, guide_steps, &specification.steps).await?;
-    replace_step_package_file_associations(transaction, profile_id, guide_steps).await
+    let _ = specification;
+    Ok(())
 }
 
 async fn load_guide_document_graph(
@@ -1469,28 +1428,127 @@ fn build_guide_document_graph(
     }
     let mut combined = WorkflowGuide {
         headings: Vec::new(),
-        steps: Vec::new(),
-        capability_aliases: BTreeSet::new(),
+        capabilities: Vec::new(),
         package_paths: BTreeSet::new(),
     };
-    let mut step_keys = BTreeSet::new();
     for document in &documents {
         combined.headings.extend(document.guide.headings.clone());
-        combined
-            .capability_aliases
-            .extend(document.guide.capability_aliases.clone());
         combined.package_paths.extend(document.guide.package_paths.clone());
-        for step in &document.guide.steps {
-            if !step_keys.insert(step.key.clone()) {
-                return Err(WorkflowGuideError::InvalidStorage(format!(
-                    "Workflow step key '{}' is duplicated across Guide documents",
-                    step.key
-                )));
+    }
+    let documents_by_path = documents
+        .iter()
+        .map(|document| (document.relative_path.as_str(), document))
+        .collect::<BTreeMap<_, _>>();
+    collect_capabilities_in_recursive_order(
+        "SKILL.md",
+        &documents_by_path,
+        &mut BTreeSet::new(),
+        &mut combined.capabilities,
+    )?;
+    Ok(GuideDocumentGraph { documents, combined })
+}
+
+#[derive(Clone)]
+enum GuideOrderEvent {
+    Capability(WorkflowGuideCapability),
+    ExternalDocument(String),
+}
+
+fn collect_capabilities_in_recursive_order(
+    relative_path: &str,
+    documents: &BTreeMap<&str, &GuideDocument>,
+    visited: &mut BTreeSet<String>,
+    capabilities: &mut Vec<WorkflowGuideCapability>,
+) -> Result<(), WorkflowGuideError> {
+    if !visited.insert(relative_path.to_string()) {
+        return Ok(());
+    }
+    let Some(document) = documents.get(relative_path) else {
+        return Ok(());
+    };
+    let line_offsets = line_offsets(&document.markdown);
+    let mut events = document
+        .guide
+        .capabilities
+        .iter()
+        .cloned()
+        .map(|capability| {
+            (
+                line_offsets
+                    .get(capability.start_line.saturating_sub(1))
+                    .copied()
+                    .unwrap_or(usize::MAX),
+                GuideOrderEvent::Capability(capability),
+            )
+        })
+        .collect::<Vec<_>>();
+    events.extend(
+        ordered_external_markdown_references(&document.relative_path, &document.markdown)?
+            .into_iter()
+            .map(|(offset, path)| (offset, GuideOrderEvent::ExternalDocument(path))),
+    );
+    events.sort_by_key(|(offset, _)| *offset);
+    for (_, event) in events {
+        match event {
+            GuideOrderEvent::Capability(capability) => capabilities.push(capability),
+            GuideOrderEvent::ExternalDocument(path) => {
+                collect_capabilities_in_recursive_order(&path, documents, visited, capabilities)?;
             }
-            combined.steps.push(step.clone());
         }
     }
-    Ok(GuideDocumentGraph { documents, combined })
+    Ok(())
+}
+
+fn line_offsets(markdown: &str) -> Vec<usize> {
+    let mut offsets = vec![0];
+    for (index, byte) in markdown.bytes().enumerate() {
+        if byte == b'\n' {
+            offsets.push(index + 1);
+        }
+    }
+    offsets
+}
+
+fn ordered_external_markdown_references(
+    source_path: &str,
+    markdown: &str,
+) -> Result<Vec<(usize, String)>, WorkflowGuideError> {
+    let mut references = PACKAGE_FILE_REFERENCE
+        .captures_iter(markdown)
+        .filter_map(|captures| {
+            let path = captures.get(1)?.as_str();
+            path.ends_with(".md").then(|| {
+                (
+                    captures.get(0).map_or(usize::MAX, |value| value.start()),
+                    path.to_string(),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    if source_path != "SKILL.md" {
+        let parent = std::path::Path::new(source_path)
+            .parent()
+            .and_then(|path| path.to_str())
+            .ok_or_else(|| WorkflowGuideError::InvalidStorage("external Guide path has no parent".to_string()))?;
+        references.extend(
+            SIBLING_MARKDOWN_REFERENCE
+                .captures_iter(markdown)
+                .filter_map(|captures| {
+                    let file_name = captures
+                        .get(1)?
+                        .as_str()
+                        .strip_prefix("./")
+                        .unwrap_or(captures.get(1)?.as_str());
+                    Some((
+                        captures.get(0).map_or(usize::MAX, |value| value.start()),
+                        format!("{parent}/{file_name}"),
+                    ))
+                }),
+        );
+    }
+    references.sort();
+    references.dedup();
+    Ok(references)
 }
 
 fn resolve_sibling_markdown_paths(
@@ -1512,7 +1570,7 @@ fn resolve_sibling_markdown_paths(
         .collect()
 }
 
-async fn stage_projection_in_transaction(
+pub(crate) async fn stage_projection_in_transaction(
     transaction: &mut Transaction<'_, Sqlite>,
     profile_id: &str,
     pool: Pool<Sqlite>,
@@ -1525,18 +1583,7 @@ async fn stage_projection_in_transaction(
     let markdown = normalize_main_guide_markdown(&view.markdown)?;
     let graph = load_guide_document_graph(transaction, profile_id, &markdown, &BTreeMap::new()).await?;
     let guide = &graph.combined;
-    let capability_names = view
-        .capabilities
-        .iter()
-        .map(|capability| (capability.alias.clone(), capability.display_name.clone()))
-        .collect::<BTreeMap<_, _>>();
-    for alias in &guide.capability_aliases {
-        if !capability_names.contains_key(alias) {
-            return Err(WorkflowGuideError::InvalidStorage(format!(
-                "Guide references unavailable capability alias '{alias}'"
-            )));
-        }
-    }
+    verify_capability_names(transaction, &guide.capabilities).await?;
     let package_paths = view
         .package_files
         .iter()
@@ -1553,7 +1600,7 @@ async fn stage_projection_in_transaction(
         .bind(profile_id)
         .fetch_one(&mut **transaction)
         .await?;
-    let rendered = render_workflow_skill(&markdown, guide, &capability_names);
+    let rendered = render_workflow_skill(&markdown, guide);
     let skill = format_skill_definition(&skill_name, &profile.0, &profile.1, &rendered.markdown);
     if UUID_REFERENCE.is_match(&skill) || skill.contains("skill://") {
         return Err(WorkflowGuideError::InvalidStorage(
@@ -1567,7 +1614,7 @@ async fn stage_projection_in_transaction(
         .iter()
         .filter(|document| document.package_file_id.is_some())
     {
-        let rendered = render_workflow_skill(&document.markdown, &document.guide, &capability_names);
+        let rendered = render_workflow_skill(&document.markdown, &document.guide);
         let content = if document.markdown.ends_with('\n') {
             format!("{}\n", rendered.markdown)
         } else {
@@ -1661,7 +1708,7 @@ async fn rollback_staged_package_files(staged_package_files: Vec<StagedPackageFi
     Ok(())
 }
 
-async fn ensure_guide(
+pub(crate) async fn ensure_guide(
     transaction: &mut Transaction<'_, Sqlite>,
     profile_id: &str,
 ) -> Result<(), WorkflowGuideError> {
@@ -1691,27 +1738,10 @@ async fn load_guide_view(
     .bind(profile_id)
     .fetch_one(&mut **transaction)
     .await?;
-    let capabilities = sqlx::query_as::<_, CapabilityRow>(
-        "SELECT alias, display_name, ref_id, binding_policy
-         FROM workflow_profile_capability_aliases WHERE profile_id = ? ORDER BY alias",
-    )
-    .bind(profile_id)
-    .fetch_all(&mut **transaction)
-    .await?
-    .into_iter()
-    .map(|row| {
-        let binding_policy = row
-            .binding_policy
-            .parse()
-            .map_err(|_| WorkflowGuideError::InvalidStorage("invalid Workflow Guide binding policy".to_string()))?;
-        Ok(WorkflowGuideCapability {
-            alias: row.alias,
-            display_name: row.display_name,
-            ref_id: row.ref_id,
-            binding_policy,
-        })
-    })
-    .collect::<Result<Vec<_>, WorkflowGuideError>>()?;
+    let capabilities = load_guide_document_graph(transaction, profile_id, &guide.markdown, &BTreeMap::new())
+        .await?
+        .combined
+        .capabilities;
     let package_files = sqlx::query_as::<_, PackageFileRow>(
         "SELECT package_file_id, file_revision, title, category, relative_path, mime_type, extension, file_size, checksum
          FROM workflow_profile_package_files WHERE profile_id = ? ORDER BY ordinal",
@@ -1763,50 +1793,12 @@ async fn load_guide_view(
 
 fn validate_save_command(
     command: &WorkflowGuideSaveCommand,
-    guide: &WorkflowGuide,
+    _guide: &WorkflowGuide,
 ) -> Result<(), WorkflowGuideError> {
     if command.profile_id.trim().is_empty() {
         return Err(WorkflowGuideError::InvalidStorage(
             "Workflow Profile ID is required".to_string(),
         ));
-    }
-    let mut aliases = BTreeMap::new();
-    let mut refs = BTreeSet::new();
-    for capability in &command.capabilities {
-        if capability.alias.trim().is_empty()
-            || capability.display_name.trim().is_empty()
-            || capability.ref_id.trim().is_empty()
-        {
-            return Err(WorkflowGuideError::InvalidStorage(
-                "capability alias, display name, and reference are required".to_string(),
-            ));
-        }
-        if aliases.insert(&capability.alias, capability).is_some() || !refs.insert(&capability.ref_id) {
-            return Err(WorkflowGuideError::InvalidStorage(
-                "capability aliases and references must be unique".to_string(),
-            ));
-        }
-    }
-    for alias in &guide.capability_aliases {
-        if !aliases.contains_key(alias) {
-            return Err(WorkflowGuideError::InvalidStorage(format!(
-                "Guide references unavailable capability alias '{alias}'"
-            )));
-        }
-    }
-    Ok(())
-}
-
-fn validate_capabilities_for_guide(
-    command: &WorkflowGuideSaveCommand,
-    guide: &WorkflowGuide,
-) -> Result<(), WorkflowGuideError> {
-    for alias in &guide.capability_aliases {
-        if !command.capabilities.iter().any(|capability| capability.alias == *alias) {
-            return Err(WorkflowGuideError::InvalidStorage(format!(
-                "Guide references unavailable capability alias '{alias}'"
-            )));
-        }
     }
     Ok(())
 }
@@ -1861,40 +1853,61 @@ async fn load_guide_conflict(
     Ok(WorkflowGuideError::GuideChanged { current_guide_revision })
 }
 
-async fn replace_capability_aliases(
-    transaction: &mut Transaction<'_, Sqlite>,
-    command: &WorkflowGuideSaveCommand,
-) -> Result<(), WorkflowGuideError> {
-    for capability in &command.capabilities {
-        let exists: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM capability_refs WHERE ref_id = ? AND state = 'active')")
-                .bind(&capability.ref_id)
-                .fetch_one(&mut **transaction)
-                .await?;
-        if !exists {
+async fn load_canonical_capability_refs(
+    transaction: &mut Transaction<'_, Sqlite>
+) -> Result<BTreeMap<String, String>, WorkflowGuideError> {
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        r#"
+        SELECT names.canonical_name, capability.ref_id
+        FROM capability_refs capability
+        JOIN server_config server ON server.id = capability.server_id
+        JOIN (
+            SELECT server_id, 'tools' AS kind, tool_name AS origin_key, unique_name AS canonical_name
+            FROM server_tools
+            UNION ALL
+            SELECT server_id, 'resources', resource_uri, unique_uri
+            FROM server_resources
+            UNION ALL
+            SELECT server_id, 'prompts', prompt_name, unique_name
+            FROM server_prompts
+            UNION ALL
+            SELECT server_id, 'resource_templates', uri_template, unique_name
+            FROM server_resource_templates
+        ) names
+          ON names.server_id = capability.server_id
+         AND names.kind = capability.kind
+         AND names.origin_key = capability.origin_key
+        WHERE server.enabled = 1 AND capability.state = 'active'
+        ORDER BY names.canonical_name, capability.ref_id
+        "#,
+    )
+    .fetch_all(&mut **transaction)
+    .await?;
+    let mut resolved = BTreeMap::new();
+    for (name, ref_id) in rows {
+        if let Some(existing) = resolved.insert(name.clone(), ref_id.clone())
+            && existing != ref_id
+        {
             return Err(WorkflowGuideError::InvalidStorage(format!(
-                "capability reference for alias '{}' is unavailable",
-                capability.alias
+                "canonical capability name '{name}' is ambiguous"
             )));
         }
     }
-    sqlx::query("DELETE FROM workflow_profile_capability_aliases WHERE profile_id = ?")
-        .bind(&command.profile_id)
-        .execute(&mut **transaction)
-        .await?;
-    for capability in &command.capabilities {
-        sqlx::query(
-            "INSERT INTO workflow_profile_capability_aliases (
-                profile_id, alias, display_name, ref_id, binding_policy
-             ) VALUES (?, ?, ?, ?, ?)",
-        )
-        .bind(&command.profile_id)
-        .bind(&capability.alias)
-        .bind(&capability.display_name)
-        .bind(&capability.ref_id)
-        .bind(capability.binding_policy.as_str())
-        .execute(&mut **transaction)
-        .await?;
+    Ok(resolved)
+}
+
+async fn verify_capability_names(
+    transaction: &mut Transaction<'_, Sqlite>,
+    capabilities: &[WorkflowGuideCapability],
+) -> Result<(), WorkflowGuideError> {
+    let available = load_canonical_capability_refs(transaction).await?;
+    for capability in capabilities {
+        if !available.contains_key(&capability.name) {
+            return Err(WorkflowGuideError::InvalidStorage(format!(
+                "Guide references unavailable canonical capability name '{}'",
+                capability.name
+            )));
+        }
     }
     Ok(())
 }
@@ -1922,126 +1935,19 @@ async fn verify_package_paths(
     Ok(())
 }
 
-async fn load_alias_bindings(
-    transaction: &mut Transaction<'_, Sqlite>,
-    profile_id: &str,
-) -> Result<BTreeMap<String, WorkflowGuideCapabilitySaveCommand>, WorkflowGuideError> {
-    let rows = sqlx::query_as::<_, AliasBindingRow>(
-        "SELECT alias, ref_id, binding_policy FROM workflow_profile_capability_aliases WHERE profile_id = ?",
-    )
-    .bind(profile_id)
-    .fetch_all(&mut **transaction)
-    .await?;
-    rows.into_iter()
-        .map(|row| {
-            let binding_policy = row
-                .binding_policy
-                .parse()
-                .map_err(|_| WorkflowGuideError::InvalidStorage("invalid Workflow Guide binding policy".to_string()))?;
-            Ok((
-                row.alias.clone(),
-                WorkflowGuideCapabilitySaveCommand {
-                    alias: row.alias,
-                    display_name: String::new(),
-                    ref_id: row.ref_id,
-                    binding_policy,
-                },
-            ))
-        })
-        .collect()
-}
-
-async fn load_step_ids(
-    transaction: &mut Transaction<'_, Sqlite>,
-    profile_id: &str,
-) -> Result<BTreeMap<String, String>, WorkflowGuideError> {
-    let rows: Vec<(String, String)> =
-        sqlx::query_as("SELECT step_key, step_id FROM workflow_profile_guide_steps WHERE profile_id = ?")
-            .bind(profile_id)
-            .fetch_all(&mut **transaction)
-            .await?;
-    Ok(rows.into_iter().collect())
-}
-
-async fn replace_step_key_mapping(
-    transaction: &mut Transaction<'_, Sqlite>,
-    profile_id: &str,
-    guide_steps: &[WorkflowGuideStep],
-    specification_steps: &[super::workflow::WorkflowStep],
-) -> Result<(), WorkflowGuideError> {
-    sqlx::query("DELETE FROM workflow_profile_guide_steps WHERE profile_id = ?")
-        .bind(profile_id)
-        .execute(&mut **transaction)
-        .await?;
-    for (ordinal, (guide_step, specification_step)) in guide_steps.iter().zip(specification_steps).enumerate() {
-        sqlx::query(
-            "INSERT INTO workflow_profile_guide_steps (profile_id, step_key, step_id, ordinal)
-             VALUES (?, ?, ?, ?)",
-        )
-        .bind(profile_id)
-        .bind(&guide_step.key)
-        .bind(&specification_step.step_id)
-        .bind(ordinal as i64)
-        .execute(&mut **transaction)
-        .await?;
-    }
-    Ok(())
-}
-
-async fn replace_step_package_file_associations(
-    transaction: &mut Transaction<'_, Sqlite>,
-    profile_id: &str,
-    guide_steps: &[WorkflowGuideStep],
-) -> Result<(), WorkflowGuideError> {
-    for step in guide_steps {
-        let mut seen_paths = BTreeSet::new();
-        for (ordinal, captures) in PACKAGE_FILE_REFERENCE.captures_iter(&step.body).enumerate() {
-            let path = captures[1].to_string();
-            if !seen_paths.insert(path.clone()) {
-                return Err(WorkflowGuideError::InvalidStorage(format!(
-                    "Workflow step '{}' references package file '{path}' more than once",
-                    step.key
-                )));
-            }
-            let package_file_id: String = sqlx::query_scalar(
-                "SELECT package_file_id FROM workflow_profile_package_files
-                 WHERE profile_id = ? AND relative_path = ?",
-            )
-            .bind(profile_id)
-            .bind(path)
-            .fetch_one(&mut **transaction)
-            .await?;
-            sqlx::query(
-                "INSERT INTO workflow_profile_guide_step_package_files (
-                    profile_id, step_key, package_file_id, ordinal
-                 ) VALUES (?, ?, ?, ?)",
-            )
-            .bind(profile_id)
-            .bind(&step.key)
-            .bind(package_file_id)
-            .bind(ordinal as i64)
-            .execute(&mut **transaction)
-            .await?;
-        }
-    }
-    Ok(())
-}
-
 /// Parses the canonical, document-first Workflow Guide format.
 ///
 /// This parser intentionally owns only document syntax. Database lookups for
-/// capability aliases and package paths are performed by the authoring service
+/// canonical capability names and package paths are performed by the authoring service
 /// so a missing or ambiguous reference fails at the same transaction boundary
 /// as persistence and projection.
 pub fn parse_workflow_guide(markdown: &str) -> Result<WorkflowGuide, Vec<WorkflowGuideParseError>> {
     let mut headings = Vec::new();
-    let mut steps = Vec::new();
-    let mut capability_aliases = BTreeSet::new();
+    let mut capabilities = Vec::new();
     let mut package_paths = BTreeSet::new();
     let mut errors = Vec::new();
-    let mut keys = BTreeSet::new();
     let mut fenced = false;
-    let mut active: Option<ActiveStep> = None;
+    let mut active: Option<ActiveCapability> = None;
 
     for (index, line) in markdown.lines().enumerate() {
         let line_number = index + 1;
@@ -2065,51 +1971,56 @@ pub fn parse_workflow_guide(markdown: &str) -> Result<WorkflowGuide, Vec<Workflo
             continue;
         }
 
-        if let Some(active_step) = active.as_mut() {
-            if STEP_END.is_match(line) {
-                let active_step = active.take().expect("active Workflow Guide step exists");
-                let body = active_step.lines.join("\n").trim().to_string();
-                collect_references(&body, &mut capability_aliases, &mut package_paths);
-                steps.push(WorkflowGuideStep {
-                    key: active_step.key,
-                    title: active_step.title,
-                    body,
-                    start_line: active_step.start_line,
+        if let Some(active_capability) = active.as_mut() {
+            if DIRECTIVE_END.is_match(line) {
+                let active_capability = active.take().expect("active Workflow Guide capability exists");
+                let guide = active_capability.lines.join("\n").trim().to_string();
+                collect_package_references(&guide, &mut package_paths);
+                capabilities.push(WorkflowGuideCapability {
+                    name: active_capability.name,
+                    exposure: active_capability.exposure,
+                    guide,
+                    start_line: active_capability.start_line,
                     end_line: line_number,
                 });
             } else {
-                active_step.lines.push(line.to_string());
+                active_capability.lines.push(line.to_string());
             }
             continue;
         }
 
-        if let Some(captures) = STEP_START.captures(line) {
-            let key = captures[1].to_string();
-            if !keys.insert(key.clone()) {
-                errors.push(WorkflowGuideParseError {
+        if let Some(captures) = CAPABILITY_START.captures(line) {
+            match serde_json::from_str::<CapabilityDirectiveHeader>(&captures[1]) {
+                Ok(header) if !header.name.trim().is_empty() && !header.name.contains(['\n', '\r']) => {
+                    active = Some(ActiveCapability {
+                        name: header.name,
+                        exposure: header.exposure,
+                        start_line: line_number,
+                        lines: Vec::new(),
+                    });
+                }
+                Ok(_) => errors.push(WorkflowGuideParseError {
                     line: line_number,
-                    message: format!("duplicate Workflow step key '{key}'"),
-                });
+                    message: "Capability name must not be empty".to_string(),
+                }),
+                Err(error) => errors.push(WorkflowGuideParseError {
+                    line: line_number,
+                    message: format!("invalid Capability directive: {error}"),
+                }),
             }
-            active = Some(ActiveStep {
-                key,
-                title: captures[2].to_string(),
-                start_line: line_number,
-                lines: Vec::new(),
+            continue;
+        }
+        if line.trim_start().starts_with(":::capability") {
+            errors.push(WorkflowGuideParseError {
+                line: line_number,
+                message: "invalid Capability directive; expected JSON name and exposure".to_string(),
             });
             continue;
         }
-        if line.trim_start().starts_with(":::workflow-step") {
+        if DIRECTIVE_END.is_match(line) {
             errors.push(WorkflowGuideParseError {
                 line: line_number,
-                message: "invalid Workflow step directive; expected key and title attributes".to_string(),
-            });
-            continue;
-        }
-        if STEP_END.is_match(line) {
-            errors.push(WorkflowGuideParseError {
-                line: line_number,
-                message: "Workflow step end directive has no matching start".to_string(),
+                message: "Capability directive end has no matching start".to_string(),
             });
             continue;
         }
@@ -2120,13 +2031,13 @@ pub fn parse_workflow_guide(markdown: &str) -> Result<WorkflowGuide, Vec<Workflo
                 line: line_number,
             });
         }
-        collect_references(line, &mut capability_aliases, &mut package_paths);
+        collect_package_references(line, &mut package_paths);
     }
 
-    if let Some(active_step) = active {
+    if let Some(active_capability) = active {
         errors.push(WorkflowGuideParseError {
-            line: active_step.start_line,
-            message: format!("Workflow step '{}' is not closed", active_step.key),
+            line: active_capability.start_line,
+            message: format!("Capability '{}' directive is not closed", active_capability.name),
         });
     }
     for (index, line) in markdown.lines().enumerate() {
@@ -2147,8 +2058,7 @@ pub fn parse_workflow_guide(markdown: &str) -> Result<WorkflowGuide, Vec<Workflo
     if errors.is_empty() {
         Ok(WorkflowGuide {
             headings,
-            steps,
-            capability_aliases,
+            capabilities,
             package_paths,
         })
     } else {
@@ -2159,12 +2069,11 @@ pub fn parse_workflow_guide(markdown: &str) -> Result<WorkflowGuide, Vec<Workflo
 pub fn render_workflow_skill(
     markdown: &str,
     guide: &WorkflowGuide,
-    capability_names: &BTreeMap<String, String>,
 ) -> RenderedWorkflowSkill {
-    let steps_by_start = guide
-        .steps
+    let capabilities_by_start = guide
+        .capabilities
         .iter()
-        .map(|step| (step.start_line, step))
+        .map(|capability| (capability.start_line, capability))
         .collect::<BTreeMap<_, _>>();
     let mut output = Vec::new();
     let lines = markdown.lines().collect::<Vec<_>>();
@@ -2172,13 +2081,12 @@ pub fn render_workflow_skill(
 
     while index < lines.len() {
         let line_number = index + 1;
-        if let Some(step) = steps_by_start.get(&line_number) {
-            output.push(format!("## {}", step.title));
-            output.push(replace_capability_references(&step.body, capability_names));
-            index = step.end_line;
+        if let Some(capability) = capabilities_by_start.get(&line_number) {
+            output.push(render_capability_occurrence(capability));
+            index = capability.end_line;
             continue;
         }
-        output.push(replace_capability_references(lines[index], capability_names));
+        output.push(lines[index].to_string());
         index += 1;
     }
 
@@ -2187,11 +2095,17 @@ pub fn render_workflow_skill(
     }
 }
 
-struct ActiveStep {
-    key: String,
-    title: String,
+struct ActiveCapability {
+    name: String,
+    exposure: WorkflowBindingPolicy,
     start_line: usize,
     lines: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct CapabilityDirectiveHeader {
+    name: String,
+    exposure: WorkflowBindingPolicy,
 }
 
 fn is_fence_marker(line: &str) -> bool {
@@ -2200,9 +2114,8 @@ fn is_fence_marker(line: &str) -> bool {
 }
 
 fn contains_reserved_workflow_guide_syntax(line: &str) -> bool {
-    line.trim_start().starts_with(":::workflow-step")
-        || STEP_END.is_match(line)
-        || CAPABILITY_REFERENCE.is_match(line)
+    line.trim_start().starts_with(":::capability")
+        || DIRECTIVE_END.is_match(line)
         || PACKAGE_FILE_REFERENCE.is_match(line)
 }
 
@@ -2216,16 +2129,10 @@ fn heading(line: &str) -> Option<(u8, &str)> {
     (!text.is_empty()).then_some((level as u8, text))
 }
 
-fn collect_references(
+fn collect_package_references(
     line: &str,
-    capability_aliases: &mut BTreeSet<String>,
     package_paths: &mut BTreeSet<String>,
 ) {
-    capability_aliases.extend(
-        CAPABILITY_REFERENCE
-            .captures_iter(line)
-            .map(|captures| captures[1].to_string()),
-    );
     package_paths.extend(
         PACKAGE_FILE_REFERENCE
             .captures_iter(line)
@@ -2233,16 +2140,19 @@ fn collect_references(
     );
 }
 
-fn replace_capability_references(
-    value: &str,
-    capability_names: &BTreeMap<String, String>,
-) -> String {
-    CAPABILITY_REFERENCE
-        .replace_all(value, |captures: &regex::Captures<'_>| {
-            let alias = &captures[1];
-            format!("**Capability: {}**", capability_names[alias])
-        })
-        .into_owned()
+fn render_capability_occurrence(capability: &WorkflowGuideCapability) -> String {
+    let exposure = match capability.exposure {
+        WorkflowBindingPolicy::Direct => "Direct",
+        WorkflowBindingPolicy::MetaOnDemand => "Meta on demand",
+    };
+    if capability.guide.is_empty() {
+        format!("**Capability: {}**  \nExposure: {exposure}", capability.name)
+    } else {
+        format!(
+            "**Capability: {}**  \nExposure: {exposure}\n\n{}",
+            capability.name, capability.guide
+        )
+    }
 }
 
 fn collapse_blank_lines(value: &str) -> String {
@@ -2321,13 +2231,6 @@ async fn projection_input_fingerprint(
     profile_id: &str,
     markdown: &str,
 ) -> Result<String, WorkflowGuideError> {
-    let aliases: Vec<(String, String, String, String)> = sqlx::query_as(
-        "SELECT alias, display_name, ref_id, binding_policy
-         FROM workflow_profile_capability_aliases WHERE profile_id = ? ORDER BY alias",
-    )
-    .bind(profile_id)
-    .fetch_all(&mut **transaction)
-    .await?;
     let package_files = sqlx::query_as::<_, ProjectionPackageFile>(
         "SELECT relative_path, file_revision, title, category, mime_type, extension, file_size, checksum
              FROM workflow_profile_package_files WHERE profile_id = ? ORDER BY relative_path",
@@ -2338,7 +2241,6 @@ async fn projection_input_fingerprint(
     let input = serde_json::json!({
         "profile_id": profile_id,
         "markdown": markdown,
-        "aliases": aliases,
         "package_files": package_files,
     });
     Ok(format!("{:x}", Sha256::digest(input.to_string().as_bytes())))
@@ -2492,16 +2394,14 @@ mod tests {
     #[test]
     fn parses_readable_blocks_and_references() {
         let guide = parse_workflow_guide(
-            "# Investigate a release\n\n:::workflow-step {key=\"collect-evidence\" title=\"Collect evidence\"}\nUse {{capability:search-release-logs}}.\n\nRead [policy](references/release-policy.md).\n:::\n",
+            "# Investigate a release\n\n:::capability {\"name\":\"search-release-logs\",\"exposure\":\"direct\"}\nUse it to collect the release evidence.\n:::\n\nRead [policy](references/release-policy.md).\n",
         )
         .expect("valid Guide");
 
         assert_eq!(guide.headings[0].text, "Investigate a release");
-        assert_eq!(guide.steps[0].key, "collect-evidence");
-        assert_eq!(
-            guide.capability_aliases,
-            BTreeSet::from(["search-release-logs".to_string()])
-        );
+        assert_eq!(guide.capabilities[0].name, "search-release-logs");
+        assert_eq!(guide.capabilities[0].exposure, WorkflowBindingPolicy::Direct);
+        assert_eq!(guide.capabilities[0].guide, "Use it to collect the release evidence.");
         assert_eq!(
             guide.package_paths,
             BTreeSet::from(["references/release-policy.md".to_string()])
@@ -2538,6 +2438,29 @@ mod tests {
                 "references/a.md".to_string(),
                 "references/b.md".to_string(),
             ])
+        );
+    }
+
+    #[test]
+    fn document_graph_orders_capabilities_at_recursive_reference_positions() {
+        let graph = build_guide_document_graph(
+            "# Root\n\n:::capability {\"name\":\"first\",\"exposure\":\"meta_on_demand\"}\nFirst.\n:::\n\n[External](references/external.md)\n\n:::capability {\"name\":\"last\",\"exposure\":\"direct\"}\nLast.\n:::\n",
+            vec![external_row(
+                "references/external.md",
+                "# External\n\n:::capability {\"name\":\"middle\",\"exposure\":\"direct\"}\nMiddle.\n:::\n",
+            )],
+            &BTreeMap::new(),
+        )
+        .expect("build recursively ordered document graph");
+
+        assert_eq!(
+            graph
+                .combined
+                .capabilities
+                .iter()
+                .map(|capability| capability.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["first", "middle", "last"]
         );
     }
 
@@ -2634,10 +2557,11 @@ mod tests {
         let plan = WorkflowGuideReclamationPlan {
             package_files: vec![package_file("references/a.md")],
             capabilities: vec![WorkflowGuideCapability {
-                alias: "lookup".to_string(),
-                display_name: "Lookup".to_string(),
-                ref_id: "ref-1".to_string(),
-                binding_policy: WorkflowBindingPolicy::Direct,
+                name: "lookup".to_string(),
+                exposure: WorkflowBindingPolicy::Direct,
+                guide: "Look up the record.".to_string(),
+                start_line: 1,
+                end_line: 3,
             }],
         };
         let stale = WorkflowGuideReclamationConfirmation {
@@ -2645,7 +2569,7 @@ mod tests {
                 package_file_id: "file-references/a.md".to_string(),
                 file_revision: 2,
             }],
-            capability_aliases: vec!["lookup".to_string()],
+            capability_names: vec!["lookup".to_string()],
         };
         assert!(matches!(
             verify_reclamation_confirmation(&plan, Some(&stale)),
@@ -2663,7 +2587,7 @@ mod tests {
                     file_revision: 1,
                 },
             ],
-            capability_aliases: vec!["lookup".to_string(), "lookup".to_string()],
+            capability_names: vec!["lookup".to_string(), "lookup".to_string()],
         };
         assert!(matches!(
             verify_reclamation_confirmation(&plan, Some(&duplicate)),
@@ -2674,7 +2598,7 @@ mod tests {
     #[test]
     fn rejects_reserved_workflow_syntax_in_fenced_code() {
         let errors = parse_workflow_guide(
-            "```markdown\n:::workflow-step {key=\"fake\" title=\"Fake\"}\n{{capability:fake}}\n[Fake](references/fake.md)\n:::\n```")
+            "```markdown\n:::capability {\"name\":\"fake\",\"exposure\":\"direct\"}\n[Fake](references/fake.md)\n:::\n```")
         .expect_err("fenced pseudo-references must fail");
         assert_eq!(
             errors
@@ -2694,18 +2618,15 @@ mod tests {
                     4,
                     "Workflow Guide directives and references are not allowed in fenced code"
                 ),
-                (
-                    5,
-                    "Workflow Guide directives and references are not allowed in fenced code"
-                ),
             ]
         );
     }
 
     #[test]
     fn rejects_reserved_workflow_syntax_in_tilde_fenced_code() {
-        let errors = parse_workflow_guide("~~~markdown\n{{capability:fake}}\n~~~")
-            .expect_err("tilde fenced pseudo-references must fail");
+        let errors =
+            parse_workflow_guide("~~~markdown\n:::capability {\"name\":\"fake\",\"exposure\":\"direct\"}\n~~~")
+                .expect_err("tilde fenced pseudo-references must fail");
         assert_eq!(errors[0].line, 2);
         assert_eq!(
             errors[0].message,
@@ -2720,7 +2641,7 @@ mod tests {
         )
         .expect("valid imported Skill");
         let guide = parse_workflow_guide(&body).expect("normalized Guide");
-        let rendered = render_workflow_skill(&body, &guide, &BTreeMap::new());
+        let rendered = render_workflow_skill(&body, &guide);
         let skill = format_skill_definition("profile-skill", "Profile", "Profile description", &rendered.markdown);
 
         assert_eq!(skill.matches("name:").count(), 1);
@@ -2732,7 +2653,7 @@ mod tests {
     #[test]
     fn reports_malformed_directives_and_opaque_identifiers() {
         let errors = parse_workflow_guide(
-            ":::workflow-step {key=\"missing-title\"}\n\n550e8400-e29b-41d4-a716-446655440000\nskill://internal",
+            ":::capability {\"name\":\"lookup\"}\n\n550e8400-e29b-41d4-a716-446655440000\nskill://internal",
         )
         .expect_err("invalid Guide");
 
@@ -2740,7 +2661,7 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|error| error.message.contains("invalid Workflow step"))
+                .any(|error| error.message.contains("invalid Capability directive"))
         );
         assert!(errors.iter().any(|error| error.message.contains("opaque identifiers")));
         assert!(errors.iter().any(|error| error.message.contains("skill://")));
@@ -2748,20 +2669,15 @@ mod tests {
 
     #[test]
     fn projects_only_standard_markdown_and_readable_names() {
-        let markdown = "# Investigate\n\n:::workflow-step {key=\"collect-evidence\" title=\"Collect evidence\"}\nUse {{capability:search-release-logs}}.\n:::\n";
+        let markdown = "# Investigate\n\n:::capability {\"name\":\"search-release-logs\",\"exposure\":\"direct\"}\nUse it to search release logs.\n:::\n";
         let guide = parse_workflow_guide(markdown).expect("valid Guide");
-        let rendered = render_workflow_skill(
-            markdown,
-            &guide,
-            &BTreeMap::from([("search-release-logs".to_string(), "Search release logs".to_string())]),
-        );
+        let rendered = render_workflow_skill(markdown, &guide);
 
         assert_eq!(
             rendered.markdown,
-            "# Investigate\n\n## Collect evidence\nUse **Capability: Search release logs**."
+            "# Investigate\n\n**Capability: search-release-logs**  \nExposure: Direct\n\nUse it to search release logs."
         );
-        assert!(!rendered.markdown.contains(":::workflow-step"));
-        assert!(!rendered.markdown.contains("{{capability:"));
+        assert!(!rendered.markdown.contains(":::capability"));
     }
 
     #[tokio::test]
@@ -2846,6 +2762,32 @@ mod tests {
             repaired.markdown
         );
         assert_eq!(repaired.markdown, projected.markdown);
+        let asset_bytes = b"registered asset";
+        let asset_path = temporary.path().join("release-investigation-guide/assets/evidence.bin");
+        std::fs::write(&asset_path, asset_bytes).expect("write registered asset");
+        sqlx::query(
+            "INSERT INTO workflow_profile_package_files (
+                package_file_id, profile_id, ordinal, title, category, relative_path,
+                extension, file_size, checksum
+             ) VALUES ('asset-file', 'workflow-profile', 0, 'Evidence', 'asset',
+                'assets/evidence.bin', 'bin', ?, ?)",
+        )
+        .bind(asset_bytes.len() as i64)
+        .bind(format!("{:x}", Sha256::digest(asset_bytes)))
+        .execute(&pool)
+        .await
+        .expect("register asset");
+        service
+            .project("workflow-profile", temporary.path().to_path_buf())
+            .await
+            .expect("repair preserves a registered non-Markdown file");
+        assert_eq!(std::fs::read(&asset_path).expect("read preserved asset"), asset_bytes);
+        std::fs::remove_file(&asset_path).expect("remove registered asset");
+        let error = service
+            .project("workflow-profile", temporary.path().to_path_buf())
+            .await
+            .expect_err("repair diagnoses a missing registered non-Markdown file");
+        assert!(error.to_string().contains("cannot be repaired"));
         let fingerprint: Option<String> = sqlx::query_scalar(
             "SELECT input_fingerprint FROM workflow_profile_skill_projections WHERE profile_id = 'workflow-profile'",
         )
@@ -2887,6 +2829,13 @@ mod tests {
         .execute(&pool)
         .await
         .expect("insert package file");
+        sqlx::query(
+            "INSERT INTO workflow_profile_external_guides (package_file_id, profile_id, markdown)
+             VALUES ('package-file', 'workflow-profile', '# Release policy')",
+        )
+        .execute(&pool)
+        .await
+        .expect("register reconstructable external Guide source");
         let service = WorkflowGuideService::new(pool.clone());
         service.view("workflow-profile").await.expect("initialize Guide");
         let temporary = tempfile::tempdir().expect("create skills directory");
@@ -2953,7 +2902,6 @@ mod tests {
                     category: WorkflowGuidePackageCategory::Reference,
                     original_filename: "release-policy.md".to_string(),
                     bytes: b"# Release policy\n".to_vec(),
-                    capabilities: None,
                     reclamation_confirmation: None,
                 },
                 temporary.path().to_path_buf(),
@@ -2981,7 +2929,6 @@ mod tests {
                     profile_id: "workflow-profile".to_string(),
                     expected_guide_revision: saved.guide.guide_revision,
                     markdown: format!("# Release investigation\n\n[{}]({})\n", file.title, file.relative_path),
-                    capabilities: Vec::new(),
                     reclamation_confirmation: None,
                 },
                 temporary.path().to_path_buf(),
@@ -2994,7 +2941,6 @@ mod tests {
                     profile_id: "workflow-profile".to_string(),
                     expected_guide_revision: linked.guide.guide_revision,
                     markdown: "# Release investigation\n".to_string(),
-                    capabilities: Vec::new(),
                     reclamation_confirmation: None,
                 },
                 temporary.path().to_path_buf(),
@@ -3019,13 +2965,12 @@ mod tests {
                     profile_id: "workflow-profile".to_string(),
                     expected_guide_revision: linked.guide.guide_revision,
                     markdown: "# Release investigation\n".to_string(),
-                    capabilities: Vec::new(),
                     reclamation_confirmation: Some(WorkflowGuideReclamationConfirmation {
                         package_files: vec![WorkflowGuidePackageFileRevision {
                             package_file_id: file.package_file_id,
                             file_revision: file.file_revision,
                         }],
-                        capability_aliases: Vec::new(),
+                        capability_names: Vec::new(),
                     }),
                 },
                 temporary.path().to_path_buf(),
@@ -3079,7 +3024,6 @@ mod tests {
                     category: WorkflowGuidePackageCategory::Reference,
                     original_filename: "release-policy.md".to_string(),
                     bytes: b"# Release policy\nDraft policy body.\n".to_vec(),
-                    capabilities: None,
                     reclamation_confirmation: None,
                 },
                 temporary.path().to_path_buf(),
@@ -3109,7 +3053,6 @@ mod tests {
                     category: WorkflowGuidePackageCategory::Asset,
                     original_filename: "policy-diagram.pdf".to_string(),
                     bytes: b"diagram".to_vec(),
-                    capabilities: None,
                     reclamation_confirmation: None,
                 },
                 temporary.path().to_path_buf(),
@@ -3130,7 +3073,6 @@ mod tests {
                     profile_id: "workflow-profile".to_string(),
                     expected_guide_revision: saved.guide.guide_revision,
                     markdown: format!("# Release investigation\n\n[{}]({})\n", file.title, file.relative_path),
-                    capabilities: Vec::new(),
                     reclamation_confirmation: None,
                 },
                 temporary.path().to_path_buf(),
@@ -3153,7 +3095,6 @@ mod tests {
                         asset.relative_path
                     )
                     .into_bytes(),
-                    capabilities: None,
                     reclamation_confirmation: None,
                 },
                 temporary.path().to_path_buf(),
@@ -3178,7 +3119,6 @@ mod tests {
                     category: WorkflowGuidePackageCategory::Reference,
                     original_filename: "release-policy.md".to_string(),
                     bytes: b"# Release policy\nStale policy body.\n".to_vec(),
-                    capabilities: None,
                     reclamation_confirmation: None,
                 },
                 temporary.path().to_path_buf(),
@@ -3203,7 +3143,6 @@ mod tests {
                 profile_id: "workflow-profile".to_string(),
                 relative_path: Some(document.relative_path.clone()),
                 markdown: "# Release policy\nUnsaved preview body.\n".to_string(),
-                capabilities: Vec::new(),
             })
             .await
             .expect("preview external Markdown draft");
@@ -3287,7 +3226,6 @@ mod tests {
             category: WorkflowGuidePackageCategory::Reference,
             original_filename: "release-policy.md".to_string(),
             bytes: b"# Release policy\nNo diagram is required.\n".to_vec(),
-            capabilities: None,
             reclamation_confirmation: None,
         };
         let error = service
@@ -3306,7 +3244,7 @@ mod tests {
                             package_file_id: asset.package_file_id,
                             file_revision: asset.file_revision,
                         }],
-                        capability_aliases: Vec::new(),
+                        capability_names: Vec::new(),
                     }),
                     ..remove_asset
                 },
@@ -3329,6 +3267,17 @@ mod tests {
                 .exists(),
             "external Markdown reclamation moves the orphaned asset out of the Skill package"
         );
+        assert_eq!(
+            std::fs::read_to_string(
+                temporary
+                    .path()
+                    .join("release-investigation-guide")
+                    .join(&updated_file.relative_path),
+            )
+            .expect("read updated external Markdown after child reclamation"),
+            "# Release policy\nNo diagram is required.\n",
+            "saving the parent document must not reclaim or skip its replacement"
+        );
     }
 
     #[test]
@@ -3342,7 +3291,6 @@ mod tests {
             category: WorkflowGuidePackageCategory::Script,
             original_filename: "release-policy.md".to_string(),
             bytes: b"# Release policy\n".to_vec(),
-            capabilities: None,
             reclamation_confirmation: None,
         })
         .expect_err("markdown is not a script file");
@@ -3350,7 +3298,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn saves_guide_blocks_as_the_workflow_specification() {
+    async fn saves_plain_guide_without_fabricating_workflow_steps() {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -3377,38 +3325,23 @@ mod tests {
             .save(WorkflowGuideSaveCommand {
                 profile_id: "workflow-profile".to_string(),
                 expected_guide_revision: 0,
-                markdown: "# Release investigation\n\n:::workflow-step {key=\"collect-evidence\" title=\"Collect evidence\"}\nRead the release logs before making a conclusion.\n:::".to_string(),
-                capabilities: Vec::new(),
+                markdown: "# Release investigation\n\nRead the release logs before making a conclusion.".to_string(),
                 reclamation_confirmation: None,
             })
             .await
             .expect("save Guide");
 
         assert_eq!(saved.guide_revision, 1);
-        let step: (String, String) = sqlx::query_as(
-            "SELECT title, description FROM workflow_profile_steps WHERE profile_id = 'workflow-profile'",
-        )
-        .fetch_one(&pool)
-        .await
-        .expect("load normalized Workflow step");
-        assert_eq!(
-            step,
-            (
-                "Collect evidence".to_string(),
-                "Read the release logs before making a conclusion.".to_string()
-            )
-        );
-        let key: String = sqlx::query_scalar(
-            "SELECT step_key FROM workflow_profile_guide_steps WHERE profile_id = 'workflow-profile'",
-        )
-        .fetch_one(&pool)
-        .await
-        .expect("load readable step key");
-        assert_eq!(key, "collect-evidence");
+        let step_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM workflow_profile_steps WHERE profile_id = 'workflow-profile'")
+                .fetch_one(&pool)
+                .await
+                .expect("count Workflow steps");
+        assert_eq!(step_count, 0);
     }
 
     #[tokio::test]
-    async fn saves_package_file_associations_from_the_step_body() {
+    async fn saves_reachable_package_reference_without_fabricating_steps() {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
@@ -3437,24 +3370,18 @@ mod tests {
             .save(WorkflowGuideSaveCommand {
                 profile_id: "workflow-profile".to_string(),
                 expected_guide_revision: 0,
-                markdown: "# Release investigation\n\n:::workflow-step {key=\"collect-evidence\" title=\"Collect evidence\"}\nRead [Release policy](references/release-policy.md).\n:::".to_string(),
-                capabilities: Vec::new(),
+                markdown: "# Release investigation\n\nRead [Release policy](references/release-policy.md).".to_string(),
                 reclamation_confirmation: None,
             })
             .await
             .expect("save Guide");
 
-        let association: (String, String) = sqlx::query_as(
-            "SELECT step_key, package_file_id FROM workflow_profile_guide_step_package_files
-             WHERE profile_id = 'workflow-profile'",
-        )
-        .fetch_one(&pool)
-        .await
-        .expect("load Guide package-file association");
-        assert_eq!(
-            association,
-            ("collect-evidence".to_string(), "package-file".to_string())
-        );
+        let step_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM workflow_profile_steps WHERE profile_id = 'workflow-profile'")
+                .fetch_one(&pool)
+                .await
+                .expect("count Workflow steps");
+        assert_eq!(step_count, 0);
     }
 
     #[tokio::test]
@@ -3487,8 +3414,7 @@ mod tests {
                 WorkflowGuideSaveCommand {
                     profile_id: "workflow-profile".to_string(),
                     expected_guide_revision: 0,
-                    markdown: "# Release investigation\n\n:::workflow-step {key=\"collect-evidence\" title=\"Collect evidence\"}\nRead the logs.\n:::".to_string(),
-                    capabilities: Vec::new(),
+                    markdown: "# Release investigation\n\nRead the logs.".to_string(),
                     reclamation_confirmation: None,
                 },
                 temporary.path().to_path_buf(),
@@ -3497,7 +3423,7 @@ mod tests {
             .expect("save and project Guide");
 
         assert_eq!(saved.guide.guide_revision, 1);
-        assert!(saved.projected_skill.markdown.contains("## Collect evidence"));
+        assert!(saved.projected_skill.markdown.contains("Read the logs."));
         let skill_path = temporary.path().join("release-investigation-guide/SKILL.md");
         assert_eq!(
             std::fs::read_to_string(skill_path).expect("read Skill"),

@@ -1213,6 +1213,33 @@ impl WorkflowMaterialsService {
         Ok(content)
     }
 
+    pub(crate) async fn verify_package_file_bytes(
+        &self,
+        skill_name: &str,
+        relative_path: &str,
+        expected_checksum: &str,
+    ) -> Result<(), WorkflowMaterialsError> {
+        validate_skill_name(skill_name)?;
+        validate_relative_path(relative_path)?;
+        ensure_existing_directory_without_symlink(&self.skills_root).await?;
+        let root = self.skills_root.join(skill_name);
+        ensure_existing_directory_without_symlink(&root).await?;
+        let path = self.material_path(skill_name, relative_path)?;
+        let parent = path
+            .parent()
+            .ok_or_else(|| WorkflowMaterialsError::InvalidRequest("package-file path is invalid".to_string()))?;
+        ensure_existing_directory_without_symlink(parent).await?;
+        ensure_regular_file_without_symlink(&path).await?;
+        let bytes = tokio::fs::read(path).await?;
+        let checksum = format!("{:x}", Sha256::digest(&bytes));
+        if checksum != expected_checksum {
+            return Err(WorkflowMaterialsError::InvalidRequest(
+                "package-file content does not match its registered checksum".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     async fn rename_skill_directory(
         &self,
         existing_skill_name: Option<&str>,

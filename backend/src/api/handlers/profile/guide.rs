@@ -5,16 +5,15 @@ use axum::extract::Multipart;
 use super::common::*;
 use crate::{
     api::models::profile::{
-        ProfileIdReq, WorkflowGuideCapabilitySaveReq, WorkflowGuideExternalDocumentData,
-        WorkflowGuideExternalDocumentReq, WorkflowGuideExternalDocumentResp, WorkflowGuidePackageFileDeleteReq,
-        WorkflowGuidePreviewData, WorkflowGuidePreviewReq, WorkflowGuidePreviewResp, WorkflowGuideRepairReq,
-        WorkflowGuideSaveData, WorkflowGuideSaveReq, WorkflowGuideSaveResp, WorkflowGuideViewData,
-        WorkflowGuideViewResp,
+        ProfileIdReq, WorkflowGuideExternalDocumentData, WorkflowGuideExternalDocumentReq,
+        WorkflowGuideExternalDocumentResp, WorkflowGuidePackageFileDeleteReq, WorkflowGuidePreviewData,
+        WorkflowGuidePreviewReq, WorkflowGuidePreviewResp, WorkflowGuideRepairReq, WorkflowGuideSaveData,
+        WorkflowGuideSaveReq, WorkflowGuideSaveResp, WorkflowGuideViewData, WorkflowGuideViewResp,
     },
     core::profile::workflow_guide::{
-        WorkflowGuideCapabilitySaveCommand, WorkflowGuideError, WorkflowGuidePackageCategory,
-        WorkflowGuidePackageFileSaveCommand, WorkflowGuidePreviewCommand, WorkflowGuideReclamationConfirmation,
-        WorkflowGuideSaveCommand, WorkflowGuideService,
+        WorkflowGuideError, WorkflowGuidePackageCategory, WorkflowGuidePackageFileSaveCommand,
+        WorkflowGuidePreviewCommand, WorkflowGuideReclamationConfirmation, WorkflowGuideSaveCommand,
+        WorkflowGuideService,
     },
 };
 
@@ -43,14 +42,13 @@ pub async fn workflow_guide_save(
                 profile_id: request.profile_id,
                 expected_guide_revision: request.expected_guide_revision,
                 markdown: request.markdown,
-                capabilities: request.capabilities.into_iter().map(Into::into).collect(),
                 reclamation_confirmation: request.reclamation_confirmation.map(Into::into),
             },
             skills_root,
         )
         .await
         .map_err(workflow_guide_error)?;
-    audit_workflow_guide_change(&state, profile_id).await;
+    audit_workflow_guide_change(&state, profile_id, "POST", "/api/mcp/profile/workflow/guide/save").await;
     Ok(Json(WorkflowGuideSaveResp::success(WorkflowGuideSaveData {
         guide: saved.guide,
         projected_skill: saved.projected_skill,
@@ -67,7 +65,6 @@ pub async fn workflow_guide_preview(
             profile_id: request.profile_id,
             relative_path: request.relative_path,
             markdown: request.markdown,
-            capabilities: request.capabilities.into_iter().map(Into::into).collect(),
         })
         .await
         .map_err(workflow_guide_error)?;
@@ -113,14 +110,19 @@ pub async fn workflow_guide_package_file_upload(
                 category: upload.category,
                 original_filename: upload.filename,
                 bytes: upload.bytes,
-                capabilities: upload.capabilities,
                 reclamation_confirmation: upload.reclamation_confirmation,
             },
             skills_root,
         )
         .await
         .map_err(workflow_guide_error)?;
-    audit_workflow_guide_change(&state, profile_id).await;
+    audit_workflow_guide_change(
+        &state,
+        profile_id,
+        "POST",
+        "/api/mcp/profile/workflow/guide/package-files/upload",
+    )
+    .await;
     Ok(Json(WorkflowGuideSaveResp::success(WorkflowGuideSaveData {
         guide: saved.guide,
         projected_skill: saved.projected_skill,
@@ -144,7 +146,13 @@ pub async fn workflow_guide_package_file_delete(
         )
         .await
         .map_err(workflow_guide_error)?;
-    audit_workflow_guide_change(&state, profile_id).await;
+    audit_workflow_guide_change(
+        &state,
+        profile_id,
+        "DELETE",
+        "/api/mcp/profile/workflow/guide/package-files/delete",
+    )
+    .await;
     Ok(Json(WorkflowGuideSaveResp::success(WorkflowGuideSaveData {
         guide: saved.guide,
         projected_skill: saved.projected_skill,
@@ -164,22 +172,11 @@ pub async fn workflow_guide_repair(
         .await
         .map_err(workflow_guide_error)?;
     let guide = service.view(&profile_id).await.map_err(workflow_guide_error)?;
-    audit_workflow_guide_change(&state, profile_id).await;
+    audit_workflow_guide_change(&state, profile_id, "POST", "/api/mcp/profile/workflow/guide/repair").await;
     Ok(Json(WorkflowGuideSaveResp::success(WorkflowGuideSaveData {
         guide,
         projected_skill,
     })))
-}
-
-impl From<WorkflowGuideCapabilitySaveReq> for WorkflowGuideCapabilitySaveCommand {
-    fn from(value: WorkflowGuideCapabilitySaveReq) -> Self {
-        Self {
-            alias: value.alias,
-            display_name: value.display_name,
-            ref_id: value.ref_id,
-            binding_policy: value.binding_policy,
-        }
-    }
 }
 
 impl From<crate::api::models::profile::WorkflowGuideReclamationConfirmationReq>
@@ -197,7 +194,7 @@ impl From<crate::api::models::profile::WorkflowGuideReclamationConfirmationReq>
                     },
                 )
                 .collect(),
-            capability_aliases: value.capability_aliases,
+            capability_names: value.capability_names,
         }
     }
 }
@@ -205,14 +202,16 @@ impl From<crate::api::models::profile::WorkflowGuideReclamationConfirmationReq>
 async fn audit_workflow_guide_change(
     state: &Arc<AppState>,
     profile_id: String,
+    method: &'static str,
+    route: &'static str,
 ) {
     crate::audit::interceptor::emit_event(
         state.audit_service.as_ref(),
         crate::audit::interceptor::build_rest_event(
             crate::audit::AuditAction::ProfileUpdate,
             crate::audit::AuditStatus::Success,
-            "POST",
-            "/api/mcp/profile/workflow/guide/save",
+            method,
+            route,
             None,
             None,
             Some(profile_id),
@@ -255,7 +254,6 @@ struct PackageFileUpload {
     package_file_id: Option<String>,
     expected_file_revision: Option<i64>,
     expected_guide_revision: Option<i64>,
-    capabilities: Option<Vec<WorkflowGuideCapabilitySaveCommand>>,
     reclamation_confirmation: Option<WorkflowGuideReclamationConfirmation>,
     title: String,
     category: WorkflowGuidePackageCategory,
@@ -269,13 +267,12 @@ async fn parse_package_file_upload(mut multipart: Multipart) -> Result<PackageFi
         mut package_file_id,
         mut expected_file_revision,
         mut expected_guide_revision,
-        mut capabilities,
         mut reclamation_confirmation,
         mut title,
         mut category,
         mut filename,
         mut bytes,
-    ) = (None, None, None, None, None, None, None, None, None, None);
+    ) = (None, None, None, None, None, None, None, None, None);
     while let Some(field) = multipart
         .next_field()
         .await
@@ -311,12 +308,6 @@ async fn parse_package_file_upload(mut multipart: Multipart) -> Result<PackageFi
                         })?,
                     )
             }
-            "capabilities" => {
-                capabilities = Some(
-                    serde_json::from_str(&field.text().await.map_err(invalid_upload_field)?)
-                        .map_err(|error| ApiError::BadRequest(format!("invalid capabilities payload: {error}")))?,
-                )
-            }
             "reclamation_confirmation" => {
                 reclamation_confirmation = Some(
                     serde_json::from_str(&field.text().await.map_err(invalid_upload_field)?).map_err(|error| {
@@ -351,7 +342,6 @@ async fn parse_package_file_upload(mut multipart: Multipart) -> Result<PackageFi
         package_file_id,
         expected_file_revision,
         expected_guide_revision,
-        capabilities,
         reclamation_confirmation,
         title: title
             .filter(|value: &String| !value.trim().is_empty())

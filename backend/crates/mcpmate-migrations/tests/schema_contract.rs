@@ -77,11 +77,8 @@ async fn upgrades_workflow_steps_with_standard_uuid_ids() {
         .expect("prepare current config database");
     sqlx::raw_sql(
         "DROP TABLE workflow_profile_external_guides;
-         DROP TABLE workflow_profile_guide_step_package_files;
          DROP TABLE workflow_profile_skill_projections;
          DROP TABLE workflow_profile_package_files;
-         DROP TABLE workflow_profile_capability_aliases;
-         DROP TABLE workflow_profile_guide_steps;
          DROP TABLE workflow_profile_guides;
          DROP TABLE workflow_profile_step_materials;
          DROP TABLE workflow_profile_materials;
@@ -152,12 +149,9 @@ async fn creates_guide_schema_without_copying_existing_workflow_authoring() {
         .await
         .expect("prepare current config database");
     sqlx::raw_sql(
-        "DROP TABLE workflow_profile_guide_step_package_files;
-         DROP TABLE workflow_profile_skill_projections;
+        "DROP TABLE workflow_profile_skill_projections;
          DROP TABLE workflow_profile_external_guides;
          DROP TABLE workflow_profile_package_files;
-         DROP TABLE workflow_profile_capability_aliases;
-         DROP TABLE workflow_profile_guide_steps;
          DROP TABLE workflow_profile_guides;",
     )
     .execute(&pool)
@@ -208,11 +202,8 @@ async fn creates_guide_schema_without_copying_existing_workflow_authoring() {
 
     for table in [
         "workflow_profile_guides",
-        "workflow_profile_guide_steps",
-        "workflow_profile_capability_aliases",
         "workflow_profile_package_files",
         "workflow_profile_external_guides",
-        "workflow_profile_guide_step_package_files",
         "workflow_profile_skill_projections",
     ] {
         let row_count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
@@ -231,7 +222,7 @@ async fn creates_guide_schema_without_copying_existing_workflow_authoring() {
 }
 
 #[tokio::test]
-async fn guide_package_file_foreign_keys_preserve_profile_ownership() {
+async fn external_guide_foreign_keys_preserve_profile_ownership() {
     let pool = memory_support::pool().await;
     prepare_config_database(&pool, DatabaseSource::InMemory)
         .await
@@ -248,24 +239,6 @@ async fn guide_package_file_foreign_keys_preserve_profile_ownership() {
         .await
         .expect("insert Workflow Profile");
     }
-    sqlx::query("INSERT INTO workflow_profile_specifications (profile_id) VALUES ('profile-b')")
-        .execute(&pool)
-        .await
-        .expect("insert Workflow specification");
-    sqlx::query(
-        "INSERT INTO workflow_profile_steps (profile_id, step_index, step_id, title)
-         VALUES ('profile-b', 0, '550e8400-e29b-41d4-a716-446655440000', 'Read reference')",
-    )
-    .execute(&pool)
-    .await
-    .expect("insert Workflow step");
-    sqlx::query(
-        "INSERT INTO workflow_profile_guide_steps (profile_id, step_key, step_id, ordinal)
-         VALUES ('profile-b', 'read-reference', '550e8400-e29b-41d4-a716-446655440000', 0)",
-    )
-    .execute(&pool)
-    .await
-    .expect("insert Guide step");
     sqlx::query(
         "INSERT INTO workflow_profile_package_files (
             package_file_id, profile_id, ordinal, title, category, relative_path
@@ -283,16 +256,6 @@ async fn guide_package_file_foreign_keys_preserve_profile_ownership() {
     .await
     .expect_err("an external guide cannot claim another Profile's package file");
     assert!(external_error.to_string().contains("FOREIGN KEY constraint failed"));
-
-    let step_error = sqlx::query(
-        "INSERT INTO workflow_profile_guide_step_package_files (
-            profile_id, step_key, package_file_id, ordinal
-         ) VALUES ('profile-b', 'read-reference', 'package-a', 0)",
-    )
-    .execute(&pool)
-    .await
-    .expect_err("a Guide step cannot claim another Profile's package file");
-    assert!(step_error.to_string().contains("FOREIGN KEY constraint failed"));
 }
 
 #[tokio::test]

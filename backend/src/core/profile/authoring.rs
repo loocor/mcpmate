@@ -14,9 +14,7 @@ use crate::core::capability::materializer::{
 use crate::core::profile::materials::{
     SkillDirectoryRename, WorkflowMaterialsError, WorkflowMaterialsService, rollback_skill_directory_rename,
 };
-use crate::core::profile::workflow::{
-    WorkflowSpecification, WorkflowSpecificationError, WorkflowSpecificationSaveCommand, WorkflowSpecificationService,
-};
+use crate::core::profile::workflow_guide::{WorkflowGuideError, ensure_guide, stage_projection_in_transaction};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProfileAuthoringCommand {
@@ -77,20 +75,8 @@ pub enum ProfileAuthoringError {
     Database(#[source] sqlx::Error),
     #[error("Profile Skill directory operation failed")]
     SkillDirectory(#[source] WorkflowMaterialsError),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum WorkflowProfileAuthoringError {
-    #[error(transparent)]
-    Authoring(#[from] ProfileAuthoringError),
-    #[error(transparent)]
-    Workflow(#[from] WorkflowSpecificationError),
-}
-
-impl From<sqlx::Error> for WorkflowProfileAuthoringError {
-    fn from(error: sqlx::Error) -> Self {
-        Self::Authoring(error.into())
-    }
+    #[error("Workflow Guide projection failed")]
+    WorkflowGuideProjection(#[source] WorkflowGuideError),
 }
 
 impl From<sqlx::Error> for ProfileAuthoringError {
@@ -250,10 +236,49 @@ impl ProfileAuthoringService {
         let skill_directory_change = self
             .synchronize_skill_name_in_transaction(&mut transaction, profile_mode, &profile_id, &command)
             .await?;
+        let mut staged_projection = None;
+        let _package_guard = if profile_mode == ProfileMode::Workflow
+            && let Some(skills_root) = self.skills_root.clone()
+        {
+            let skill_name = command.skill_name.as_deref().expect("validated Workflow Skill name");
+            let material_service = WorkflowMaterialsService::new(self.pool.clone(), skills_root.clone());
+            let package_guard = match material_service.lock_skill_package(skill_name).await {
+                Ok(guard) => guard,
+                Err(error) => {
+                    self.rollback_skill_directory_change(skill_directory_change, error.to_string())
+                        .await?;
+                    return Err(ProfileAuthoringError::SkillDirectory(error));
+                }
+            };
+            ensure_guide(&mut transaction, &profile_id)
+                .await
+                .map_err(ProfileAuthoringError::WorkflowGuideProjection)?;
+            match stage_projection_in_transaction(&mut transaction, &profile_id, self.pool.clone(), skills_root).await {
+                Ok((_, projection)) => staged_projection = Some(projection),
+                Err(error) => {
+                    self.rollback_skill_directory_change(skill_directory_change, error.to_string())
+                        .await?;
+                    return Err(ProfileAuthoringError::WorkflowGuideProjection(error));
+                }
+            }
+            Some(package_guard)
+        } else {
+            None
+        };
         if let Err(error) = transaction.commit().await {
+            let projection_rollback = match staged_projection.take() {
+                Some(projection) => projection.rollback().await.err(),
+                None => None,
+            };
             self.rollback_skill_directory_change(skill_directory_change, error.to_string())
                 .await?;
+            if let Some(projection_error) = projection_rollback {
+                return Err(ProfileAuthoringError::WorkflowGuideProjection(projection_error));
+            }
             return Err(error.into());
+        }
+        if let Some(projection) = staged_projection {
+            projection.commit().await;
         }
 
         Ok(ProfileAuthoringSaveResult {
@@ -264,87 +289,6 @@ impl ProfileAuthoringService {
             server_relationship_deltas,
             profile_mode,
         })
-    }
-
-    pub async fn save_with_workflow_specification(
-        &self,
-        mut command: ProfileAuthoringCommand,
-        workflow_command: WorkflowSpecificationSaveCommand,
-    ) -> Result<(ProfileAuthoringSaveResult, WorkflowSpecification), WorkflowProfileAuthoringError> {
-        validate_command(&command)?;
-        let profile_id = command.id.as_deref().ok_or_else(|| {
-            ProfileAuthoringError::InvalidRequest(
-                "workflow specification can only be saved with an existing Profile".to_string(),
-            )
-        })?;
-        if workflow_command.profile_id != profile_id {
-            return Err(ProfileAuthoringError::InvalidRequest(
-                "workflow specification Profile ID must match the Profile authoring request".to_string(),
-            )
-            .into());
-        }
-        command.server_ids = command
-            .server_ids
-            .into_iter()
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        self.validate_targets(&command).await?;
-
-        let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        let profile_mode = resolve_profile_mode_in_transaction(&mut transaction, &command).await?;
-        validate_profile_mode_command(&command, profile_mode)?;
-        if profile_mode != ProfileMode::Workflow {
-            return Err(ProfileAuthoringError::InvalidRequest(
-                "workflow specification requires a Workflow Profile".to_string(),
-            )
-            .into());
-        }
-        validate_targets_in_transaction(&mut transaction, &command).await?;
-        let previous_relationships = load_server_relationships_in_transaction(&mut transaction, profile_id).await?;
-        let (profile_id, previous_active) = update_profile_cas(
-            &mut transaction,
-            profile_id,
-            command
-                .expected_authoring_generation
-                .expect("validated workflow Profile update has an authoring generation"),
-            &command,
-        )
-        .await?;
-        if let Some(source_profile_id) = command.clone_from_id.as_deref() {
-            clone_profile_intent(&mut transaction, &profile_id, source_profile_id).await?;
-        }
-        replace_server_relationships(&mut transaction, &profile_id, &command.server_ids).await?;
-        let specification =
-            WorkflowSpecificationService::save_in_transaction(&mut transaction, workflow_command).await?;
-
-        let profile = sqlx::query_as::<_, Profile>("SELECT * FROM profile WHERE id = ?")
-            .bind(&profile_id)
-            .fetch_one(&mut *transaction)
-            .await?;
-        let server_ids = load_server_ids_in_transaction(&mut transaction, &profile_id).await?;
-        let current_relationships = load_server_relationships_in_transaction(&mut transaction, &profile_id).await?;
-        let server_relationship_deltas = relationship_deltas(&previous_relationships, &current_relationships);
-        let skill_directory_change = self
-            .synchronize_skill_name_in_transaction(&mut transaction, profile_mode, &profile_id, &command)
-            .await?;
-        if let Err(error) = transaction.commit().await {
-            self.rollback_skill_directory_change(skill_directory_change, error.to_string())
-                .await?;
-            return Err(error.into());
-        }
-
-        Ok((
-            ProfileAuthoringSaveResult {
-                profile,
-                server_ids,
-                materializations: Vec::new(),
-                activation_delta: (previous_active != command.is_active).then_some(command.is_active),
-                server_relationship_deltas,
-                profile_mode,
-            },
-            specification,
-        ))
     }
 
     async fn validate_targets(
@@ -882,6 +826,98 @@ mod tests {
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
     use super::{ProfileAuthoringCommand, ProfileAuthoringService};
+    use crate::config::models::ProfileMode;
+
+    #[tokio::test]
+    async fn workflow_profile_metadata_save_reprojects_skill_front_matter() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        crate::test_helpers::prepare_config_database(&pool).await;
+        let skills_root = tempfile::tempdir().unwrap();
+        let service = ProfileAuthoringService::with_skills_root(pool, skills_root.path().to_path_buf());
+        let created = service
+            .save(
+                ProfileAuthoringCommand {
+                    id: None,
+                    expected_authoring_generation: None,
+                    name: "Initial workflow".to_string(),
+                    description: Some("Initial description".to_string()),
+                    profile_type: "shared".to_string(),
+                    priority: 0,
+                    is_active: false,
+                    is_default: false,
+                    server_ids: Vec::new(),
+                    clone_from_id: None,
+                    profile_mode: Some(ProfileMode::Workflow),
+                    skill_name: Some("metadata-workflow".to_string()),
+                },
+                "test",
+            )
+            .await
+            .unwrap();
+        let profile_id = created.profile.id.unwrap();
+        let updated = service
+            .save(
+                ProfileAuthoringCommand {
+                    id: Some(profile_id),
+                    expected_authoring_generation: Some(created.profile.authoring_generation),
+                    name: "Updated workflow".to_string(),
+                    description: Some("Updated description".to_string()),
+                    profile_type: "shared".to_string(),
+                    priority: 0,
+                    is_active: false,
+                    is_default: false,
+                    server_ids: Vec::new(),
+                    clone_from_id: None,
+                    profile_mode: Some(ProfileMode::Workflow),
+                    skill_name: Some("metadata-workflow".to_string()),
+                },
+                "test",
+            )
+            .await
+            .unwrap();
+
+        let skill = std::fs::read_to_string(skills_root.path().join("metadata-workflow/SKILL.md")).unwrap();
+        assert!(skill.contains("description: Updated description"));
+        assert!(!skill.contains("Initial description"));
+
+        let skill_path = skills_root.path().join("metadata-workflow/SKILL.md");
+        std::fs::remove_file(&skill_path).unwrap();
+        std::fs::create_dir(&skill_path).unwrap();
+        let error = service
+            .save(
+                ProfileAuthoringCommand {
+                    id: updated.profile.id.clone(),
+                    expected_authoring_generation: Some(updated.profile.authoring_generation),
+                    name: "Must roll back".to_string(),
+                    description: Some("Must not persist".to_string()),
+                    profile_type: "shared".to_string(),
+                    priority: 0,
+                    is_active: false,
+                    is_default: false,
+                    server_ids: Vec::new(),
+                    clone_from_id: None,
+                    profile_mode: Some(ProfileMode::Workflow),
+                    skill_name: Some("metadata-workflow".to_string()),
+                },
+                "test",
+            )
+            .await
+            .expect_err("projection failure must roll back Profile metadata");
+        assert!(matches!(
+            error,
+            super::ProfileAuthoringError::WorkflowGuideProjection(_) | super::ProfileAuthoringError::SkillDirectory(_)
+        ));
+        let persisted_name: String = sqlx::query_scalar("SELECT name FROM profile WHERE id = ?")
+            .bind(updated.profile.id.unwrap())
+            .fetch_one(&service.pool)
+            .await
+            .unwrap();
+        assert_eq!(persisted_name, "Updated workflow");
+    }
 
     #[tokio::test]
     async fn save_with_one_connection_reads_default_mode_before_the_authoring_write_lock() {

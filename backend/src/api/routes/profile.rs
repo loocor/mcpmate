@@ -20,9 +20,8 @@ use crate::api::models::profile::{
     WorkflowGuideSaveReq, WorkflowGuideSaveResp, WorkflowGuideViewResp, WorkflowMaterialDeleteReq,
     WorkflowMaterialDeleteResp, WorkflowMaterialPreviewResp, WorkflowMaterialSaveReq, WorkflowMaterialSaveResp,
     WorkflowMaterialsReorderReq, WorkflowMaterialsReorderResp, WorkflowMaterialsViewResp,
-    WorkflowSpecificationDeleteReq, WorkflowSpecificationDeleteResp, WorkflowSpecificationPreviewResp,
-    WorkflowSpecificationSaveReq, WorkflowSpecificationSaveResp, WorkflowSpecificationViewResp,
-    WorkflowStepMaterialsSaveReq, WorkflowStepMaterialsSaveResp,
+    WorkflowSpecificationPreviewResp, WorkflowSpecificationViewResp, WorkflowStepMaterialsSaveReq,
+    WorkflowStepMaterialsSaveResp,
 };
 use crate::api::models::resp::ProfileApiErrorResp;
 use crate::api::models::token_estimate::{CapabilityTokenLedgerResponse, TokenEstimateQuery, TokenEstimateResponse};
@@ -50,20 +49,6 @@ pub fn routes(state: Arc<AppState>) -> ApiRouter {
             get_with(
                 workflow_specification_view_aide,
                 workflow_specification_view_contract_docs,
-            ),
-        )
-        .api_route(
-            "/mcp/profile/workflow/specification/save",
-            post_with(
-                workflow_specification_save_aide,
-                workflow_specification_save_contract_docs,
-            ),
-        )
-        .api_route(
-            "/mcp/profile/workflow/specification/delete",
-            delete_with(
-                workflow_specification_delete_aide,
-                workflow_specification_delete_contract_docs,
             ),
         )
         .api_route(
@@ -281,20 +266,6 @@ aide_wrapper_query!(
     "Load a Workflow Profile specification"
 );
 
-aide_wrapper_payload!(
-    profile::workflow_specification_save,
-    WorkflowSpecificationSaveReq,
-    WorkflowSpecificationSaveResp,
-    "Create or update a Workflow Profile specification"
-);
-
-aide_wrapper_payload!(
-    profile::workflow_specification_delete,
-    WorkflowSpecificationDeleteReq,
-    WorkflowSpecificationDeleteResp,
-    "Delete a Workflow Profile specification"
-);
-
 aide_wrapper_query!(
     profile::workflow_specification_preview,
     ProfileIdReq,
@@ -450,18 +421,6 @@ fn workflow_specification_view_contract_docs(
     op: aide::transform::TransformOperation
 ) -> aide::transform::TransformOperation {
     with_profile_not_found(workflow_specification_view_docs(op))
-}
-
-fn workflow_specification_save_contract_docs(
-    op: aide::transform::TransformOperation
-) -> aide::transform::TransformOperation {
-    with_profile_conflict(workflow_specification_save_docs(op))
-}
-
-fn workflow_specification_delete_contract_docs(
-    op: aide::transform::TransformOperation
-) -> aide::transform::TransformOperation {
-    with_profile_conflict(workflow_specification_delete_docs(op))
 }
 
 fn workflow_specification_preview_contract_docs(

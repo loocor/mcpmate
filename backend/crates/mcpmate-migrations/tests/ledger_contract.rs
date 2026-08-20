@@ -57,11 +57,8 @@ async fn preparation_applies_the_complete_config_stream_once() {
     }
     for table in [
         "workflow_profile_guides",
-        "workflow_profile_guide_steps",
-        "workflow_profile_capability_aliases",
         "workflow_profile_package_files",
         "workflow_profile_external_guides",
-        "workflow_profile_guide_step_package_files",
         "workflow_profile_skill_projections",
     ] {
         assert!(table_exists(&pool, table).await, "{table} should be created by v0016");

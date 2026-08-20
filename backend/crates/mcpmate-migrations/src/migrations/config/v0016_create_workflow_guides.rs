@@ -7,12 +7,9 @@ use super::super::{Migration, MigrationStep};
 const SCHEMA: &str = include_str!("v0016_create_workflow_guides.sql");
 const OWNED_TABLES: &[&str] = &[
     "workflow_profile_guides",
-    "workflow_profile_guide_steps",
-    "workflow_profile_capability_aliases",
     "workflow_profile_package_files",
     "workflow_profile_external_guides",
     "workflow_profile_skill_projections",
-    "workflow_profile_guide_step_package_files",
 ];
 
 pub(super) fn migration() -> Migration {

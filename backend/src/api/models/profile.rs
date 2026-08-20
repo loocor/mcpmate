@@ -10,7 +10,7 @@ use crate::core::profile::materials::{
     WorkflowMaterial, WorkflowMaterialKind, WorkflowMaterialsReorderCommand, WorkflowMaterialsView,
     WorkflowStepMaterialsSaveCommand,
 };
-use crate::core::profile::workflow::{WorkflowSpecification, WorkflowSpecificationPreview, WorkflowStepCommand};
+use crate::core::profile::workflow::{WorkflowSpecification, WorkflowSpecificationPreview};
 use crate::core::profile::workflow_guide::{
     RenderedWorkflowSkill, WorkflowGuideCapability, WorkflowGuideExternalDocument, WorkflowGuidePackageFile,
     WorkflowGuideView,
@@ -447,8 +447,6 @@ pub struct ProfileAuthoringSaveReq {
     pub profile_mode: Option<ProfileMode>,
     #[serde(default)]
     pub skill_name: Option<String>,
-    #[serde(default)]
-    pub workflow_specification: Option<WorkflowSpecificationSaveReq>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -457,34 +455,9 @@ pub struct ProfileAuthoringSaveData {
     pub profile_mode: ProfileMode,
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct WorkflowSpecificationSaveReq {
-    pub profile_id: String,
-    pub expected_specification_revision: Option<i64>,
-    pub validation_notes: Option<String>,
-    pub avoid_rules: Option<String>,
-    pub steps: Vec<WorkflowStepCommand>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct WorkflowSpecificationDeleteReq {
-    pub profile_id: String,
-    pub expected_specification_revision: i64,
-}
-
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct WorkflowSpecificationViewData {
     pub specification: WorkflowSpecification,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct WorkflowSpecificationSaveData {
-    pub specification: WorkflowSpecification,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct WorkflowSpecificationDeleteData {
-    pub profile_id: String,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -497,7 +470,6 @@ pub struct WorkflowGuideSaveReq {
     pub profile_id: String,
     pub expected_guide_revision: i64,
     pub markdown: String,
-    pub capabilities: Vec<WorkflowGuideCapabilitySaveReq>,
     pub reclamation_confirmation: Option<WorkflowGuideReclamationConfirmationReq>,
 }
 
@@ -506,21 +478,12 @@ pub struct WorkflowGuidePreviewReq {
     pub profile_id: String,
     pub relative_path: Option<String>,
     pub markdown: String,
-    pub capabilities: Vec<WorkflowGuideCapabilitySaveReq>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct WorkflowGuideCapabilitySaveReq {
-    pub alias: String,
-    pub display_name: String,
-    pub ref_id: String,
-    pub binding_policy: crate::core::profile::workflow::WorkflowBindingPolicy,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct WorkflowGuideReclamationConfirmationReq {
     pub package_files: Vec<WorkflowGuidePackageFileRevisionReq>,
-    pub capability_aliases: Vec<String>,
+    pub capability_names: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -806,16 +769,6 @@ api_resp!(
     WorkflowSpecificationViewResp,
     WorkflowSpecificationViewData,
     "Workflow specification view API response"
-);
-api_resp!(
-    WorkflowSpecificationSaveResp,
-    WorkflowSpecificationSaveData,
-    "Workflow specification save API response"
-);
-api_resp!(
-    WorkflowSpecificationDeleteResp,
-    WorkflowSpecificationDeleteData,
-    "Workflow specification delete API response"
 );
 api_resp!(
     WorkflowSpecificationPreviewResp,
